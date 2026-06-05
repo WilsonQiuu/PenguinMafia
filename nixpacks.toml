@@ -5,3 +5,6 @@ aptPkgs = [
     "fonts-liberation"
 ]
 
+[variables]
+FONTCONFIG_FILE = "/app/fontconfig/fonts.conf"
+FONTCONFIG_PATH = "/app/fontconfig"
