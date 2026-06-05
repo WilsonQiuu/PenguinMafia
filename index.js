@@ -1432,4 +1432,39 @@ client.on(Events.InviteDelete, async invite => {
     }
 });
 
+let shutdownStarted = false;
+
+async function shutdown(signal) {
+    if (shutdownStarted) {
+        return;
+    }
+
+    shutdownStarted = true;
+    console.log(`Received ${signal}. Shutting down Penguin Mafia bot cleanly...`);
+
+    try {
+        client.destroy();
+    } catch (error) {
+        console.error('Discord client shutdown failed:');
+        console.error(error);
+    }
+
+    try {
+        await sql.end({ timeout: 5 });
+    } catch (error) {
+        console.error('Database pool shutdown failed:');
+        console.error(error);
+    }
+
+    process.exit(0);
+}
+
+process.on('SIGTERM', () => {
+    shutdown('SIGTERM');
+});
+
+process.on('SIGINT', () => {
+    shutdown('SIGINT');
+});
+
 client.login(process.env.BOT_TOKEN);
