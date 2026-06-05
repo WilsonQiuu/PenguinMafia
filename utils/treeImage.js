@@ -1,3 +1,16 @@
+const fs = require('fs');
+const path = require('path');
+
+const localFontConfig = path.join(__dirname, '..', 'fontconfig', 'fonts.conf');
+
+if (!process.env.FONTCONFIG_FILE && fs.existsSync(localFontConfig)) {
+    process.env.FONTCONFIG_FILE = localFontConfig;
+}
+
+if (!process.env.FONTCONFIG_PATH && fs.existsSync(path.dirname(localFontConfig))) {
+    process.env.FONTCONFIG_PATH = path.dirname(localFontConfig);
+}
+
 const sharp = require('sharp');
 
 const RANK_STYLES = {
