@@ -481,7 +481,7 @@ function renderSvg(root, recruits) {
                     <feDropShadow dx="0" dy="12" stdDeviation="10" flood-color="#000000" flood-opacity="0.32"/>
                 </filter>
                 <style>
-                    text { font-family: Arial, Helvetica, sans-serif; font-style: normal; }
+                    text { font-family: "DejaVu Sans", "Liberation Sans", Arial, Helvetica, sans-serif; font-style: normal; }
                 </style>
             </defs>
             <rect width="${width}" height="${height}" fill="url(#bg)"/>
