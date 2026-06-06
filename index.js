@@ -226,6 +226,55 @@ function logMemberSyncProgress(guild, state, processedCount, totalCount) {
     }
 }
 
+async function removeMissingCaptainsWithoutChildren(guild, members) {
+    const memberIds = [...members.keys()];
+
+    if (memberIds.length === 0) {
+        return [];
+    }
+
+    const removedRows = await sql`
+        with missing_players as (
+            select
+                player.discord_id,
+                player.discord_display_name,
+                player.discord_username,
+                player.rank_name
+            from players player
+            where player.rank_name = 'Penguin Captain'
+                and player.discord_id not in ${sql(memberIds)}
+                and not exists (
+                    select 1
+                    from players child
+                    where child.parent_discord_id = player.discord_id
+                )
+        )
+        delete from players
+        using missing_players
+        where players.discord_id = missing_players.discord_id
+        returning
+            players.discord_id,
+            players.discord_display_name,
+            players.discord_username,
+            players.rank_name
+    `;
+
+    if (removedRows.length > 0) {
+        const removedNames = removedRows.map(player => {
+            return player.discord_display_name ||
+                player.discord_username ||
+                player.discord_id;
+        });
+
+        console.log(
+            `Removed ${removedRows.length} missing Penguin Captain${removedRows.length === 1 ? '' : 's'} ` +
+            `without children from ${guild.name}: ${removedNames.join(', ')}`
+        );
+    }
+
+    return removedRows;
+}
+
 async function syncGuildMembersOnStartup(startupContext) {
     const {
         guild,
@@ -448,13 +497,23 @@ async function syncGuildMembersOnStartup(startupContext) {
     }
     logStartupStep(`member sync loop complete (${members.size} fetched)`);
 
+    const removedMissingCaptains = await removeMissingCaptainsWithoutChildren(guild, members);
+    logStartupStep(`missing captain cleanup complete (${removedMissingCaptains.length} removed)`);
+
+    if (removedMissingCaptains.length > 0) {
+        await updateLeaderboardsForGuild(guild, sql).catch(error => {
+            console.error('Leaderboard refresh failed after missing captain cleanup:');
+            console.error(error);
+        });
+    }
+
     console.log(
         `Startup sync complete for ${guild.name}: ` +
         `roles created=${rolesCreated}, roles updated=${rolesUpdated}, ` +
         `staff roles created=${staffRolesCreated}, staff roles updated=${staffRolesUpdated}, ` +
         `players added=${addedCount}, players updated=${updatedCount}, ` +
         `rank roles assigned=${rankRolesAssigned}, staff ranks synced=${staffRanksSynced}, onboarding started=${onboardingStarted}, ` +
-        `bots skipped=${skippedBots}, member sync failures=${failedMemberSyncs}.`
+        `bots skipped=${skippedBots}, member sync failures=${failedMemberSyncs}, missing captains removed=${removedMissingCaptains.length}.`
     );
 }
 
@@ -1217,6 +1276,57 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
 });
 
 client.on(Events.GuildMemberRemove, async member => {
+    if (!member.user.bot) {
+        try {
+            const removedRows = await sql`
+                with leaving_player as (
+                    select
+                        discord_id,
+                        discord_display_name,
+                        discord_username,
+                        rank_name
+                    from players
+                    where discord_id = ${member.user.id}
+                        and rank_name in ('Penguin Soldier', 'Penguin Captain')
+                        and not exists (
+                            select 1
+                            from players child
+                            where child.parent_discord_id = players.discord_id
+                        )
+                    limit 1
+                )
+                delete from players
+                using leaving_player
+                where players.discord_id = leaving_player.discord_id
+                returning
+                    players.discord_display_name,
+                    players.discord_username,
+                    players.rank_name
+            `;
+
+            if (removedRows.length > 0) {
+                const removedPlayer = removedRows[0];
+                const removedName =
+                    removedPlayer.discord_display_name ||
+                    removedPlayer.discord_username ||
+                    member.user.tag;
+
+                console.log(
+                    `Removed ${removedName} from database after leaving: ` +
+                    `${removedPlayer.rank_name}, no direct recruits.`
+                );
+
+                await updateLeaderboardsForGuild(member.guild, sql).catch(error => {
+                    console.error('Leaderboard refresh failed after leave cleanup:');
+                    console.error(error);
+                });
+            }
+        } catch (error) {
+            console.error(`Could not clean up leaving member ${member.user.tag} from database:`);
+            console.error(error);
+        }
+    }
+
     try {
         const auditLogs = await member.guild.fetchAuditLogs({
             type: AuditLogEvent.MemberKick,

@@ -507,6 +507,7 @@ async function ensureDatabaseSchema(sql) {
                     update players
                     set
                         direct_recruits_count = greatest(direct_recruits_count - 1, 0),
+                        weekly_direct_recruits_count = greatest(weekly_direct_recruits_count - 1, 0),
                         updated_at = now()
                     where discord_id = old.parent_discord_id;
                 end if;
