@@ -68,6 +68,7 @@ const WELCOME_CATEGORY_NAME = '🐧-penguin-processing';
 const LEADERBOARD_CATEGORY_NAME = '🏆-leaderboards';
 const STAFF_CATEGORY_NAME = '🛡️-staff';
 const MOD_LOG_CHANNEL_NAME = 'mod-log';
+const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || '1512488393232355522';
 const ROLE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 function createBootstrapTimer(label) {
@@ -871,10 +872,19 @@ async function ensureManagedChannel(guild, name, type, permissionOverwrites, opt
     const channelNames = new Set([name, ...(options.aliases || [])].map(channelName => {
         return channelName.toLowerCase();
     }));
-    let channel = channels.find(existingChannel => {
-        return existingChannel?.type === type &&
-            channelNames.has(existingChannel.name.toLowerCase());
-    });
+    let channel = options.channelId ? channels.get(options.channelId) : null;
+
+    if (channel && channel.type !== type) {
+        console.log(`Configured channel ID for ${name} points to the wrong channel type: ${options.channelId}`);
+        channel = null;
+    }
+
+    if (!channel && !options.channelId) {
+        channel = channels.find(existingChannel => {
+            return existingChannel?.type === type &&
+                channelNames.has(existingChannel.name.toLowerCase());
+        });
+    }
 
     const channelOptions = {
         name,
@@ -1232,6 +1242,7 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null) {
         {
             parent: managedStaffCategory,
             reason: 'Penguin Mafia moderation log channel setup',
+            channelId: MOD_LOG_CHANNEL_ID,
             channelCache
         }
     );
@@ -1335,6 +1346,7 @@ module.exports = {
     DEFAULT_RANK_NAME,
     DONATIONS_LEADERBOARD_CHANNEL_ID,
     DONATIONS_LEADERBOARD_CHANNEL_NAME,
+    MOD_LOG_CHANNEL_ID,
     MOD_LOG_CHANNEL_NAME,
     PROMOTION_EVENTS_CHANNEL_ID,
     PROMOTION_EVENTS_CHANNEL_NAME,

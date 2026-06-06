@@ -4,6 +4,7 @@ const {
 } = require('discord.js');
 
 const {
+    MOD_LOG_CHANNEL_ID,
     MOD_LOG_CHANNEL_NAME
 } = require('./bootstrap.js');
 
@@ -191,21 +192,16 @@ function formatTimestamp(date = Date.now()) {
 }
 
 async function findModLogChannel(guild) {
-    const cachedChannel = guild.channels.cache.find(channel => {
-        return channel.name === MOD_LOG_CHANNEL_NAME &&
-            channel.type === ChannelType.GuildText;
-    });
+    const cachedChannel = guild.channels.cache.get(MOD_LOG_CHANNEL_ID);
 
-    if (cachedChannel) {
+    if (cachedChannel?.type === ChannelType.GuildText) {
         return cachedChannel;
     }
 
     const channels = await guild.channels.fetch();
+    const channel = channels.get(MOD_LOG_CHANNEL_ID);
 
-    return channels.find(channel => {
-        return channel?.name === MOD_LOG_CHANNEL_NAME &&
-            channel.type === ChannelType.GuildText;
-    }) || null;
+    return channel?.type === ChannelType.GuildText ? channel : null;
 }
 
 async function postModLog(guild, title, fields = []) {
@@ -216,7 +212,7 @@ async function postModLog(guild, title, fields = []) {
     const channel = await findModLogChannel(guild);
 
     if (!channel) {
-        console.warn(`Mod log channel "${MOD_LOG_CHANNEL_NAME}" not found in ${guild.name}.`);
+        console.warn(`Mod log channel "${MOD_LOG_CHANNEL_NAME}" was not found by ID ${MOD_LOG_CHANNEL_ID} in ${guild.name}.`);
         return false;
     }
 
