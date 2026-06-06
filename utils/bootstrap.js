@@ -65,8 +65,6 @@ const PROMOTION_EVENTS_CHANNEL_ID = process.env.PROMOTION_EVENTS_CHANNEL_ID || '
 const WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID = process.env.WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID || '1512488377490870392';
 const DONATIONS_LEADERBOARD_CHANNEL_ID = process.env.DONATIONS_LEADERBOARD_CHANNEL_ID || '1512488380280082493';
 const WELCOME_CATEGORY_NAME = '🐧-penguin-processing';
-const LEADERBOARD_CATEGORY_NAME = '🏆-leaderboards';
-const STAFF_CATEGORY_NAME = '🛡️-staff';
 const MOD_LOG_CHANNEL_NAME = 'mod-log';
 const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || '1512488393232355522';
 const ROLE_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -841,32 +839,6 @@ async function setPermissionOverwritesIfNeeded(channel, permissionOverwrites, re
     return true;
 }
 
-async function ensureCategory(guild, name, permissionOverwrites = [], options = {}) {
-    const channels = await getGuildChannels(guild, options);
-    let category = channels.find(existingChannel => {
-        return existingChannel?.type === ChannelType.GuildCategory &&
-            existingChannel.name === name;
-    });
-
-    if (!category) {
-        category = await guild.channels.create({
-            name,
-            type: ChannelType.GuildCategory,
-            permissionOverwrites,
-            reason: 'Penguin Mafia channel organization setup'
-        });
-        rememberChannel(options, category);
-    } else {
-        await setPermissionOverwritesIfNeeded(
-            category,
-            permissionOverwrites,
-            'Penguin Mafia category permissions'
-        );
-    }
-
-    return category;
-}
-
 async function ensureManagedChannel(guild, name, type, permissionOverwrites, options = {}) {
     const channels = await getGuildChannels(guild, options);
     const channelNames = new Set([name, ...(options.aliases || [])].map(channelName => {
@@ -1073,17 +1045,6 @@ function staffReadOnlyOverwrites(guild, allowedRoles) {
     return overwrites;
 }
 
-async function maybeMoveChannel(channel, parent) {
-    if (channel.parentId !== parent.id) {
-        await channel.setParent(parent.id, {
-            lockPermissions: false,
-            reason: 'Penguin Mafia channel organization'
-        });
-    }
-
-    return channel;
-}
-
 function welcomeCategoryIndex(name) {
     if (name === WELCOME_CATEGORY_NAME) {
         return 1;
@@ -1181,36 +1142,6 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null) {
             `Promotions and donation announcements will appear here when penguins make moves.`
     };
 
-    logChannelSetupStep('starting leaderboard category');
-    const managedLeaderboardCategory = await ensureCategory(guild, LEADERBOARD_CATEGORY_NAME, publicReadOverwrites(guild, rankRoles, staffRoles), sharedChannelOptions);
-    logChannelSetupStep('leaderboard category ready');
-
-    const managedStaffCategoryOverwrites = [
-        {
-            id: guild.roles.everyone.id,
-            type: OverwriteType.Role,
-            deny: [
-                PermissionFlagsBits.ViewChannel
-            ]
-        },
-        botOverwrite(guild),
-        ...allStaffRoles(staffRoles).map(role => roleOverwrite(role, [
-            PermissionFlagsBits.ViewChannel
-        ]))
-    ];
-    const managedStaffCategoryDon = donOverwrite([
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.ManageChannels
-    ]);
-
-    if (managedStaffCategoryDon) {
-        managedStaffCategoryOverwrites.push(managedStaffCategoryDon);
-    }
-
-    logChannelSetupStep('starting staff category');
-    const managedStaffCategory = await ensureCategory(guild, STAFF_CATEGORY_NAME, managedStaffCategoryOverwrites, sharedChannelOptions);
-    logChannelSetupStep('staff category ready');
-
     logChannelSetupStep('starting promotion events channel');
     const managedPromotionEventsChannel = await ensureInfoChannel(guild, PROMOTION_EVENTS_CHANNEL_NAME, managedPromotionEvents, rankRoles, {
         channelId: PROMOTION_EVENTS_CHANNEL_ID,
@@ -1240,7 +1171,6 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null) {
         ChannelType.GuildText,
         staffReadOnlyOverwrites(guild, allStaffRoles(staffRoles)),
         {
-            parent: managedStaffCategory,
             reason: 'Penguin Mafia moderation log channel setup',
             channelId: MOD_LOG_CHANNEL_ID,
             channelCache
@@ -1248,16 +1178,12 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null) {
     );
     logChannelSetupStep('mod log channel ready');
 
-    await maybeMoveChannel(managedPromotionEventsChannel, managedLeaderboardCategory);
-    await maybeMoveChannel(managedWeeklyRecruitsChannel, managedLeaderboardCategory);
-    await maybeMoveChannel(managedDonationsLeaderboardChannel, managedLeaderboardCategory);
-
     return {
         donationsLeaderboardChannel: managedDonationsLeaderboardChannel,
-        leaderboardCategory: managedLeaderboardCategory,
+        leaderboardCategory: null,
         modLogChannel: managedModLogChannel,
         promotionEventsChannel: managedPromotionEventsChannel,
-        staffCategory: managedStaffCategory,
+        staffCategory: null,
         weeklyRecruitsChannel: managedWeeklyRecruitsChannel
     };
 }
