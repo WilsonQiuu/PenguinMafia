@@ -28,8 +28,12 @@ function buttonId(action, userId, isTest = false) {
     return `${BUTTON_PREFIX}:${action}:${userId}:${isTest ? 'test' : 'live'}`;
 }
 
-function modalId(userId, isTest = false) {
-    return `${MODAL_PREFIX}:${userId}:${isTest ? 'test' : 'live'}`;
+function ignModalId(userId, edition, isTest = false) {
+    return `${MODAL_PREFIX}:${userId}:${edition}:${isTest ? 'test' : 'live'}`;
+}
+
+function minecraftEditionLabel(edition) {
+    return edition === 'bedrock' ? 'Bedrock' : 'Java';
 }
 
 function scopedButton(action, userId, label, style = ButtonStyle.Primary, isTest = false) {
@@ -165,19 +169,21 @@ function ignMessage(userId, isTest = false) {
             `Events can pay real penguins. 🐧💸\n\n` +
             `We need your Minecraft IGN so the Don knows who gets paid.\n\n` +
             `🔎 No IGN = unpaid commissions saved\n` +
-            `✅ Linked IGN = easier payouts`,
+            `✅ Linked IGN = easier payouts\n\n` +
+            `Choose your Minecraft edition first:`,
         components: [
             row(
-                scopedButton('enter_ign', userId, 'Enter IGN', ButtonStyle.Success, isTest),
+                scopedButton('enter_ign_java', userId, 'Java', ButtonStyle.Success, isTest),
+                scopedButton('enter_ign_bedrock', userId, 'Bedrock', ButtonStyle.Success, isTest),
                 scopedButton('skip_ign', userId, "I'll do this later", ButtonStyle.Danger, isTest)
             )
         ]
     };
 }
 
-function finalMessage(userId, linkedIgn = null, isTest = false) {
+function finalMessage(userId, linkedIgn = null, edition = null, isTest = false) {
     const linkedLine = linkedIgn
-        ? `✅ IGN linked: **${linkedIgn}**`
+        ? `✅ IGN linked: **${linkedIgn}**${edition ? ` (${minecraftEditionLabel(edition)})` : ''}`
         : `⏭️ IGN skipped. Use \`/link\` before events.`;
     const roleLine = isTest
         ? `🧪 Test mode: no role, IGN, or DB changes.`
@@ -364,12 +370,13 @@ async function cleanupWelcomeChannelsForMissingMembers(guild, members) {
     return deletedChannels;
 }
 
-async function completeOnboarding(member, linkedIgn = null) {
+async function completeOnboarding(member, linkedIgn = null, minecraftEdition = null) {
     await sql`
         update players
         set
             welcome_completed = true,
             minecraft_ign = coalesce(${linkedIgn}, minecraft_ign),
+            minecraft_edition = coalesce(${minecraftEdition}, minecraft_edition),
             updated_at = now()
         where discord_id = ${member.id}
     `;
@@ -382,11 +389,12 @@ async function completeOnboarding(member, linkedIgn = null) {
     }
 }
 
-async function saveOnboardingIgn(member, linkedIgn) {
+async function saveOnboardingIgn(member, linkedIgn, minecraftEdition) {
     await sql`
         update players
         set
             minecraft_ign = ${linkedIgn},
+            minecraft_edition = ${minecraftEdition},
             updated_at = now()
         where discord_id = ${member.id}
     `;
@@ -431,10 +439,11 @@ async function handleWelcomeButton(interaction) {
         return true;
     }
 
-    if (action === 'enter_ign') {
+    if (action === 'enter_ign_java' || action === 'enter_ign_bedrock') {
+        const minecraftEdition = action === 'enter_ign_bedrock' ? 'bedrock' : 'java';
         const modal = new ModalBuilder()
-            .setCustomId(modalId(targetUserId, isTest))
-            .setTitle('Link Minecraft IGN');
+            .setCustomId(ignModalId(targetUserId, minecraftEdition, isTest))
+            .setTitle(`Link ${minecraftEditionLabel(minecraftEdition)} IGN`);
 
         const ignInput = new TextInputBuilder()
             .setCustomId('minecraft_ign')
@@ -452,7 +461,7 @@ async function handleWelcomeButton(interaction) {
     }
 
     if (action === 'skip_ign') {
-        await interaction.update(finalMessage(targetUserId, null, isTest));
+        await interaction.update(finalMessage(targetUserId, null, null, isTest));
         return true;
     }
 
@@ -480,7 +489,8 @@ async function handleWelcomeModal(interaction) {
 
     const parts = interaction.customId.split(':');
     const targetUserId = parts[1];
-    const isTest = parts[2] === 'test';
+    const minecraftEdition = ['java', 'bedrock'].includes(parts[2]) ? parts[2] : null;
+    const isTest = ['java', 'bedrock'].includes(parts[2]) ? parts[3] === 'test' : parts[2] === 'test';
 
     if (interaction.user.id !== targetUserId) {
         await interaction.reply({
@@ -505,14 +515,14 @@ async function handleWelcomeModal(interaction) {
 
     const member = await interaction.guild.members.fetch(targetUserId);
     if (!isTest) {
-        const nicknameUpdated = await saveOnboardingIgn(member, minecraftIgn);
-        console.log(`Welcome IGN link for ${member.user.tag}: ${minecraftIgn}. Nickname updated=${nicknameUpdated ? 'yes' : 'no'}.`);
+        const nicknameUpdated = await saveOnboardingIgn(member, minecraftIgn, minecraftEdition);
+        console.log(`Welcome IGN link for ${member.user.tag}: ${minecraftIgn}${minecraftEdition ? ` (${minecraftEditionLabel(minecraftEdition)})` : ''}. Nickname updated=${nicknameUpdated ? 'yes' : 'no'}.`);
     }
 
     if (interaction.isFromMessage?.()) {
-        await interaction.update(finalMessage(targetUserId, minecraftIgn, isTest));
+        await interaction.update(finalMessage(targetUserId, minecraftIgn, minecraftEdition, isTest));
     } else {
-        await interaction.reply(finalMessage(targetUserId, minecraftIgn, isTest));
+        await interaction.reply(finalMessage(targetUserId, minecraftIgn, minecraftEdition, isTest));
     }
 
     return true;

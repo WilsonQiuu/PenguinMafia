@@ -220,6 +220,7 @@ async function ensureDatabaseSchema(sql) {
             discord_username text,
             discord_display_name text,
             minecraft_ign text,
+            minecraft_edition text check (minecraft_edition in ('java', 'bedrock')),
             parent_discord_id text references players(discord_id) on delete set null,
             claims_available int not null default 0,
             donations bigint not null default 0 check (donations >= 0),
@@ -243,6 +244,11 @@ async function ensureDatabaseSchema(sql) {
     await sql`
         alter table players
         add column if not exists minecraft_ign text
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists minecraft_edition text check (minecraft_edition in ('java', 'bedrock'))
     `;
 
     await sql`
