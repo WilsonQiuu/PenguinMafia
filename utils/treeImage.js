@@ -90,6 +90,61 @@ function compareNodesByBranchSize(first, second) {
     return playerName(first.player).localeCompare(playerName(second.player));
 }
 
+function nodeComesBefore(first, second) {
+    return compareNodesByBranchSize(first, second) < 0;
+}
+
+function heapPush(heap, node) {
+    heap.push(node);
+
+    let index = heap.length - 1;
+
+    while (index > 0) {
+        const parentIndex = Math.floor((index - 1) / 2);
+
+        if (!nodeComesBefore(heap[index], heap[parentIndex])) {
+            break;
+        }
+
+        [heap[index], heap[parentIndex]] = [heap[parentIndex], heap[index]];
+        index = parentIndex;
+    }
+}
+
+function heapPop(heap) {
+    if (heap.length <= 1) {
+        return heap.pop();
+    }
+
+    const top = heap[0];
+    heap[0] = heap.pop();
+
+    let index = 0;
+
+    while (true) {
+        const leftIndex = index * 2 + 1;
+        const rightIndex = leftIndex + 1;
+        let bestIndex = index;
+
+        if (leftIndex < heap.length && nodeComesBefore(heap[leftIndex], heap[bestIndex])) {
+            bestIndex = leftIndex;
+        }
+
+        if (rightIndex < heap.length && nodeComesBefore(heap[rightIndex], heap[bestIndex])) {
+            bestIndex = rightIndex;
+        }
+
+        if (bestIndex === index) {
+            break;
+        }
+
+        [heap[index], heap[bestIndex]] = [heap[bestIndex], heap[index]];
+        index = bestIndex;
+    }
+
+    return top;
+}
+
 function buildHierarchy(root, recruits) {
     const childrenByRecruiter = new Map();
 
@@ -117,14 +172,19 @@ function buildHierarchy(root, recruits) {
 
 function selectVisiblePlayerIds(rootNode) {
     const visibleIds = new Set([rootNode.player.discord_id]);
-    const queue = [...rootNode.children];
+    const queue = [];
+
+    for (const child of rootNode.children) {
+        heapPush(queue, child);
+    }
 
     while (queue.length > 0 && visibleIds.size < MAX_FULL_PLAYER_CARDS) {
-        queue.sort(compareNodesByBranchSize);
-
-        const node = queue.shift();
+        const node = heapPop(queue);
         visibleIds.add(node.player.discord_id);
-        queue.push(...node.children);
+
+        for (const child of node.children) {
+            heapPush(queue, child);
+        }
     }
 
     return visibleIds;
