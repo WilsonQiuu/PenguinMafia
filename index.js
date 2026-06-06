@@ -226,7 +226,7 @@ function logMemberSyncProgress(guild, state, processedCount, totalCount) {
     }
 }
 
-async function removeMissingCaptainsWithoutChildren(guild, members) {
+async function removeMissingSoldiers(guild, members) {
     const memberIds = [...members.keys()];
 
     if (memberIds.length === 0) {
@@ -241,13 +241,8 @@ async function removeMissingCaptainsWithoutChildren(guild, members) {
                 player.discord_username,
                 player.rank_name
             from players player
-            where player.rank_name = 'Penguin Captain'
+            where player.rank_name = 'Penguin Soldier'
                 and player.discord_id not in ${sql(memberIds)}
-                and not exists (
-                    select 1
-                    from players child
-                    where child.parent_discord_id = player.discord_id
-                )
         )
         delete from players
         using missing_players
@@ -267,8 +262,8 @@ async function removeMissingCaptainsWithoutChildren(guild, members) {
         });
 
         console.log(
-            `Removed ${removedRows.length} missing Penguin Captain${removedRows.length === 1 ? '' : 's'} ` +
-            `without children from ${guild.name}: ${removedNames.join(', ')}`
+            `Removed ${removedRows.length} missing Penguin Soldier${removedRows.length === 1 ? '' : 's'} ` +
+            `from ${guild.name}: ${removedNames.join(', ')}`
         );
     }
 
@@ -497,12 +492,12 @@ async function syncGuildMembersOnStartup(startupContext) {
     }
     logStartupStep(`member sync loop complete (${members.size} fetched)`);
 
-    const removedMissingCaptains = await removeMissingCaptainsWithoutChildren(guild, members);
-    logStartupStep(`missing captain cleanup complete (${removedMissingCaptains.length} removed)`);
+    const removedMissingSoldiers = await removeMissingSoldiers(guild, members);
+    logStartupStep(`missing soldier cleanup complete (${removedMissingSoldiers.length} removed)`);
 
-    if (removedMissingCaptains.length > 0) {
+    if (removedMissingSoldiers.length > 0) {
         await updateLeaderboardsForGuild(guild, sql).catch(error => {
-            console.error('Leaderboard refresh failed after missing captain cleanup:');
+            console.error('Leaderboard refresh failed after missing soldier cleanup:');
             console.error(error);
         });
     }
@@ -513,7 +508,7 @@ async function syncGuildMembersOnStartup(startupContext) {
         `staff roles created=${staffRolesCreated}, staff roles updated=${staffRolesUpdated}, ` +
         `players added=${addedCount}, players updated=${updatedCount}, ` +
         `rank roles assigned=${rankRolesAssigned}, staff ranks synced=${staffRanksSynced}, onboarding started=${onboardingStarted}, ` +
-        `bots skipped=${skippedBots}, member sync failures=${failedMemberSyncs}, missing captains removed=${removedMissingCaptains.length}.`
+        `bots skipped=${skippedBots}, member sync failures=${failedMemberSyncs}, missing soldiers removed=${removedMissingSoldiers.length}.`
     );
 }
 
