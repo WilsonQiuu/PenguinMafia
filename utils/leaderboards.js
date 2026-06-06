@@ -1,5 +1,7 @@
 const {
+    DONATIONS_LEADERBOARD_CHANNEL_ID,
     DONATIONS_LEADERBOARD_CHANNEL_NAME,
+    WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
     WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME
 } = require('./bootstrap.js');
 const {
@@ -20,14 +22,12 @@ function leaderboardLine(index, player, value, suffix) {
     return `${marker} **${leaderboardName(player)}** - **${value}** ${suffix}`;
 }
 
-async function updateLeaderboardChannel(guild, channelName, marker, content) {
+async function updateLeaderboardChannel(guild, channelId, channelName, marker, content) {
     const channels = await guild.channels.fetch();
-    const channel = channels.find(existingChannel => {
-        return existingChannel?.name === channelName;
-    });
+    const channel = channels.get(channelId);
 
     if (!channel) {
-        console.log(`Leaderboard channel ${channelName} does not exist yet. Run /setup.`);
+        console.log(`Leaderboard channel ${channelName} was not found by ID ${channelId}.`);
         return false;
     }
 
@@ -71,6 +71,7 @@ async function updateWeeklyRecruitsLeaderboardForGuild(guild, sql) {
 
     return updateLeaderboardChannel(
         guild,
+        WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
         WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME,
         'Penguin Mafia Weekly Recruit Leaderboard',
         `🏆🐧 **Penguin Mafia Weekly Recruit Leaderboard** 🐧🏆\n\n` +
@@ -101,6 +102,7 @@ async function updateDonationLeaderboardForGuild(guild, sql) {
 
     return updateLeaderboardChannel(
         guild,
+        DONATIONS_LEADERBOARD_CHANNEL_ID,
         DONATIONS_LEADERBOARD_CHANNEL_NAME,
         'Penguin Mafia Top Donators',
         `💎🐧 **Penguin Mafia Top Donators** 🐧💎\n\n` +

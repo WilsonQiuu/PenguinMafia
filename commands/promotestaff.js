@@ -281,7 +281,7 @@ module.exports = {
 
             if (!eventPosted) {
                 await interaction.followUp({
-                    content: '⚠️ Staff promotion succeeded, but I could not post it in `🎉-promotion-events`. Run `/setup` if that channel is missing.',
+                    content: '⚠️ Staff promotion succeeded, but I could not post it in the configured promotion events channel. Check the channel ID.',
                     flags: MessageFlags.Ephemeral
                 });
             }

@@ -2,6 +2,7 @@ const {
     ChannelType
 } = require('discord.js');
 const {
+    PROMOTION_EVENTS_CHANNEL_ID,
     PROMOTION_EVENTS_CHANNEL_NAME
 } = require('./bootstrap.js');
 const {
@@ -15,10 +16,9 @@ const {
 
 async function findPromotionEventsChannel(guild) {
     const channels = await guild.channels.fetch();
+    const channel = channels.get(PROMOTION_EVENTS_CHANNEL_ID);
 
-    return channels.find(channel => {
-        return channel?.type === ChannelType.GuildText && channel.name === PROMOTION_EVENTS_CHANNEL_NAME;
-    });
+    return channel?.type === ChannelType.GuildText ? channel : null;
 }
 
 function uniqueMentions(...ids) {
@@ -35,7 +35,7 @@ async function postPromotionEvent(guild, {
     const channel = await findPromotionEventsChannel(guild);
 
     if (!channel) {
-        console.log(`Promotion event channel ${PROMOTION_EVENTS_CHANNEL_NAME} does not exist yet. It will be created on startup or by /setup.`);
+        console.log(`Promotion event channel ${PROMOTION_EVENTS_CHANNEL_NAME} was not found by ID ${PROMOTION_EVENTS_CHANNEL_ID}.`);
         return false;
     }
 
@@ -67,7 +67,7 @@ async function postStaffPromotionEvent(guild, {
     const channel = await findPromotionEventsChannel(guild);
 
     if (!channel) {
-        console.log(`Promotion event channel ${PROMOTION_EVENTS_CHANNEL_NAME} does not exist yet. It will be created on startup or by /setup.`);
+        console.log(`Promotion event channel ${PROMOTION_EVENTS_CHANNEL_NAME} was not found by ID ${PROMOTION_EVENTS_CHANNEL_ID}.`);
         return false;
     }
 
@@ -96,7 +96,7 @@ async function postFirstRecruitEvent(guild, db, {
     const channel = await findPromotionEventsChannel(guild);
 
     if (!channel) {
-        console.log(`Promotion event channel ${PROMOTION_EVENTS_CHANNEL_NAME} does not exist yet. It will be created on startup or by /setup.`);
+        console.log(`Promotion event channel ${PROMOTION_EVENTS_CHANNEL_NAME} was not found by ID ${PROMOTION_EVENTS_CHANNEL_ID}.`);
         return false;
     }
 
@@ -173,7 +173,7 @@ async function postDonationEvent(guild, {
     const channel = await findPromotionEventsChannel(guild);
 
     if (!channel) {
-        console.log(`Promotion event channel ${PROMOTION_EVENTS_CHANNEL_NAME} does not exist yet. It will be created on startup or by /setup.`);
+        console.log(`Promotion event channel ${PROMOTION_EVENTS_CHANNEL_NAME} was not found by ID ${PROMOTION_EVENTS_CHANNEL_ID}.`);
         return false;
     }
 

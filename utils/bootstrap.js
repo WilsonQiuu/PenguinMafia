@@ -61,6 +61,9 @@ const DEFAULT_RANK_NAME = 'Penguin Soldier';
 const PROMOTION_EVENTS_CHANNEL_NAME = '🎉-promotion-events';
 const WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME = '🏆-weekly-recruits';
 const DONATIONS_LEADERBOARD_CHANNEL_NAME = '💎-top-donators';
+const PROMOTION_EVENTS_CHANNEL_ID = process.env.PROMOTION_EVENTS_CHANNEL_ID || '1512488373145702430';
+const WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID = process.env.WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID || '1512488377490870392';
+const DONATIONS_LEADERBOARD_CHANNEL_ID = process.env.DONATIONS_LEADERBOARD_CHANNEL_ID || '1512488380280082493';
 const WELCOME_CATEGORY_NAME = '🐧-penguin-processing';
 const LEADERBOARD_CATEGORY_NAME = '🏆-leaderboards';
 const STAFF_CATEGORY_NAME = '🛡️-staff';
@@ -658,9 +661,18 @@ async function ensureStaffRoles(guild, options = {}) {
 
 async function ensureInfoChannel(guild, name, content, rankRoles, options = {}) {
     const channels = await getGuildChannels(guild, options);
-    let channel = channels.find(existingChannel => {
-        return existingChannel?.type === ChannelType.GuildText && existingChannel.name === name;
-    });
+    let channel = options.channelId ? channels.get(options.channelId) : null;
+
+    if (channel && channel.type !== ChannelType.GuildText) {
+        console.log(`Configured channel ID for ${name} points to a non-text channel: ${options.channelId}`);
+        channel = null;
+    }
+
+    if (!channel && !options.channelId) {
+        channel = channels.find(existingChannel => {
+            return existingChannel?.type === ChannelType.GuildText && existingChannel.name === name;
+        });
+    }
 
     const rankRolePermissions = [...rankRoles.values()].map(role => ({
         id: role.id,
@@ -1191,17 +1203,24 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null) {
 
     logChannelSetupStep('starting promotion events channel');
     const managedPromotionEventsChannel = await ensureInfoChannel(guild, PROMOTION_EVENTS_CHANNEL_NAME, managedPromotionEvents, rankRoles, {
+        channelId: PROMOTION_EVENTS_CHANNEL_ID,
         pinInfoMessage: true,
         channelCache
     });
     logChannelSetupStep('promotion events channel ready');
 
     logChannelSetupStep('starting weekly recruits leaderboard channel');
-    const managedWeeklyRecruitsChannel = await ensureInfoChannel(guild, WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME, managedWeeklyRecruitsLeaderboard, rankRoles, sharedChannelOptions);
+    const managedWeeklyRecruitsChannel = await ensureInfoChannel(guild, WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME, managedWeeklyRecruitsLeaderboard, rankRoles, {
+        ...sharedChannelOptions,
+        channelId: WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID
+    });
     logChannelSetupStep('weekly recruits leaderboard channel ready');
 
     logChannelSetupStep('starting donations leaderboard channel');
-    const managedDonationsLeaderboardChannel = await ensureInfoChannel(guild, DONATIONS_LEADERBOARD_CHANNEL_NAME, managedDonationsLeaderboard, rankRoles, sharedChannelOptions);
+    const managedDonationsLeaderboardChannel = await ensureInfoChannel(guild, DONATIONS_LEADERBOARD_CHANNEL_NAME, managedDonationsLeaderboard, rankRoles, {
+        ...sharedChannelOptions,
+        channelId: DONATIONS_LEADERBOARD_CHANNEL_ID
+    });
     logChannelSetupStep('donations leaderboard channel ready');
 
     logChannelSetupStep('starting mod log channel');
@@ -1314,11 +1333,14 @@ async function syncMemberStaffRankFromRoles(sql, member, staffRoles) {
 
 module.exports = {
     DEFAULT_RANK_NAME,
+    DONATIONS_LEADERBOARD_CHANNEL_ID,
     DONATIONS_LEADERBOARD_CHANNEL_NAME,
     MOD_LOG_CHANNEL_NAME,
+    PROMOTION_EVENTS_CHANNEL_ID,
     PROMOTION_EVENTS_CHANNEL_NAME,
     RANKS,
     STAFF_RANKS,
+    WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
     WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME,
     WELCOME_CATEGORY_NAME,
     ensureDatabaseSchema,

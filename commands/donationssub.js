@@ -117,7 +117,7 @@ module.exports = {
 
             if (!leaderboardUpdated) {
                 await interaction.followUp({
-                    content: '⚠️ Donations were subtracted, but I could not refresh `💎-top-donators`. Run `/setup` if that channel is missing.',
+                    content: '⚠️ Donations were subtracted, but I could not refresh the configured top donators channel. Check the channel ID.',
                     flags: MessageFlags.Ephemeral
                 });
             }

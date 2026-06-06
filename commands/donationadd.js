@@ -133,7 +133,7 @@ module.exports = {
 
             if (!eventPosted) {
                 await interaction.followUp({
-                    content: '⚠️ Donation was added, but I could not post it in `🎉-promotion-events`. Run `/setup` if that channel is missing.',
+                    content: '⚠️ Donation was added, but I could not post it in the configured promotion events channel. Check the channel ID.',
                     flags: MessageFlags.Ephemeral
                 });
             }
@@ -146,7 +146,7 @@ module.exports = {
 
             if (!leaderboardUpdated) {
                 await interaction.followUp({
-                    content: '⚠️ Donation was added, but I could not refresh `💎-top-donators`. Run `/setup` if that channel is missing.',
+                    content: '⚠️ Donation was added, but I could not refresh the configured top donators channel. Check the channel ID.',
                     flags: MessageFlags.Ephemeral
                 });
             }
