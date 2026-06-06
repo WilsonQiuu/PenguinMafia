@@ -332,6 +332,38 @@ async function startOnboardingForMember(member, context = {}) {
     return channel;
 }
 
+async function cleanupWelcomeChannelsForMissingMembers(guild, members) {
+    const memberIds = new Set([...members.keys()]);
+    const channels = await guild.channels.fetch();
+    const staleWelcomeChannels = channels.filter(channel => {
+        if (channel?.type !== ChannelType.GuildText) {
+            return false;
+        }
+
+        const match = String(channel.topic || '').match(/^Penguin Mafia onboarding:(\d{15,25})$/);
+
+        return match && !memberIds.has(match[1]);
+    });
+    const deletedChannels = [];
+
+    for (const [, channel] of staleWelcomeChannels) {
+        try {
+            if (!channel.deletable) {
+                console.log(`Could not delete stale welcome channel ${channel.name} (${channel.id}): channel is not deletable.`);
+                continue;
+            }
+
+            await channel.delete('Penguin Mafia stale onboarding cleanup');
+            deletedChannels.push(channel);
+        } catch (error) {
+            console.error(`Could not delete stale welcome channel ${channel.name} (${channel.id}):`);
+            console.error(error);
+        }
+    }
+
+    return deletedChannels;
+}
+
 async function completeOnboarding(member, linkedIgn = null) {
     await sql`
         update players
@@ -487,6 +519,7 @@ async function handleWelcomeModal(interaction) {
 }
 
 module.exports = {
+    cleanupWelcomeChannelsForMissingMembers,
     recruitingMessage,
     startOnboardingForMember,
     handleWelcomeButton,

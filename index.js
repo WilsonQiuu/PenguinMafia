@@ -22,6 +22,7 @@ const {
     postFirstRecruitEvent
 } = require('./utils/events.js');
 const {
+    cleanupWelcomeChannelsForMissingMembers,
     handleWelcomeButton,
     handleWelcomeModal,
     startOnboardingForMember
@@ -510,6 +511,9 @@ async function syncGuildMembersOnStartup(startupContext) {
         `rank roles assigned=${rankRolesAssigned}, staff ranks synced=${staffRanksSynced}, onboarding started=${onboardingStarted}, ` +
         `bots skipped=${skippedBots}, member sync failures=${failedMemberSyncs}, missing soldiers removed=${removedMissingSoldiers.length}.`
     );
+
+    const deletedWelcomeChannels = await cleanupWelcomeChannelsForMissingMembers(guild, members);
+    logStartupStep(`stale welcome cleanup complete (${deletedWelcomeChannels.length} channels deleted)`);
 }
 
 async function syncMemberRoleFromDatabase(member) {

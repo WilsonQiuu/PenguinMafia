@@ -32,6 +32,12 @@ const RANK_STYLES = {
     }
 };
 const MAX_FULL_PLAYER_CARDS = 50;
+const RANK_PRIORITY = new Map([
+    ['Penguin Soldier', 0],
+    ['Penguin Captain', 1],
+    ['Penguin General', 2],
+    ['Emperor Penguin', 3]
+]);
 
 function playerName(player, fallback = 'Unknown Player') {
     return player.minecraft_ign ||
@@ -72,6 +78,13 @@ function truncateText(value, maxLength) {
 function compareNodesByBranchSize(first, second) {
     if (second.subtreeSize !== first.subtreeSize) {
         return second.subtreeSize - first.subtreeSize;
+    }
+
+    const firstRankPriority = RANK_PRIORITY.get(first.player?.rank_name) ?? -1;
+    const secondRankPriority = RANK_PRIORITY.get(second.player?.rank_name) ?? -1;
+
+    if (secondRankPriority !== firstRankPriority) {
+        return secondRankPriority - firstRankPriority;
     }
 
     return playerName(first.player).localeCompare(playerName(second.player));
