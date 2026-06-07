@@ -384,6 +384,7 @@ async function syncGuildMembersOnStartup(startupContext) {
                 updated_at = now()
             returning
                 rank_name,
+                parent_discord_id,
                 welcome_completed,
                 (xmax = 0) as inserted
         `;
@@ -451,7 +452,8 @@ async function syncGuildMembersOnStartup(startupContext) {
             }
 
             await startOnboardingForMember(member, {
-                channelCache: await getStartupChannelCache()
+                channelCache: await getStartupChannelCache(),
+                recruiterId: rows[0].parent_discord_id
             });
 
             if (shouldLogMemberSync) {
@@ -569,7 +571,7 @@ async function startOnboardingForMembersMissingRankRole(guild, rankRoles) {
             process.env.DON_DISCORD_ID &&
             member.user.id === process.env.DON_DISCORD_ID;
 
-        await sql`
+        const rows = await sql`
             insert into players (
                 discord_id,
                 discord_username,
@@ -598,6 +600,7 @@ async function startOnboardingForMembersMissingRankRole(guild, rankRoles) {
                 discord_display_name = excluded.discord_display_name,
                 welcome_completed = false,
                 updated_at = now()
+            returning parent_discord_id
         `;
 
         if (!channelCache) {
@@ -605,7 +608,8 @@ async function startOnboardingForMembersMissingRankRole(guild, rankRoles) {
         }
 
         await startOnboardingForMember(member, {
-            channelCache
+            channelCache,
+            recruiterId: rows[0]?.parent_discord_id
         });
         onboardingStarted++;
     }
@@ -734,6 +738,7 @@ async function saveMemberWithParent(guild, member, inviter) {
     `;
 
     return {
+        inviterId: inviter.id,
         inviterDisplayName,
         welcomeCompleted: rows[0]?.welcome_completed
     };
@@ -876,6 +881,7 @@ async function processJoinBatch(guild) {
             const inviter = inviteChanges[0].invite.inviter;
 
             const {
+                inviterId,
                 inviterDisplayName,
                 welcomeCompleted
             } = await saveMemberWithParent(guild, member, inviter);
@@ -884,6 +890,7 @@ async function processJoinBatch(guild) {
                 await syncMemberRoleFromDatabase(member);
             } else {
                 await startOnboardingForMember(member, {
+                    recruiterId: inviterId,
                     inviterDisplayName
                 });
             }

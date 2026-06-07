@@ -4,6 +4,7 @@ const {
     ButtonStyle,
     ChannelType,
     ModalBuilder,
+    OverwriteType,
     PermissionFlagsBits,
     TextInputBuilder,
     TextInputStyle,
@@ -86,7 +87,7 @@ function isWelcomeFlowMessage(message, userId) {
 function introMessage(member, context = {}) {
     const isTest = Boolean(context.isTest);
     const parentLine = context.inviterDisplayName
-        ? `Our bots detected **${context.inviterDisplayName}** as your recruiter.`
+        ? `Our bots detected ${context.recruiterId ? `<@${context.recruiterId}>` : `**${context.inviterDisplayName}**`} as your recruiter. They can see this room and help if you get stuck.`
         : `Our bots could not safely detect your recruiter, so you are an orphaned penguin for now. You can fix that later with \`/join recruiter:@YourRecruiter\`.`;
     const testLine = isTest
         ? `\n\n🧪 **Test mode:** finishing this will not change your DB welcome status, save your IGN, or give you the ${DEFAULT_RANK_NAME} role.`
@@ -102,6 +103,9 @@ function introMessage(member, context = {}) {
             `${parentLine}\n\n` +
             `Tap below to start training.` +
             testLine,
+        allowedMentions: {
+            users: [member.id, context.recruiterId].filter(Boolean)
+        },
         components: [
             row(scopedButton('start', member.id, 'Next', ButtonStyle.Success, isTest))
         ]
@@ -276,12 +280,14 @@ async function ensureWelcomeChannel(member, context = {}) {
     const permissionOverwrites = [
         {
             id: guild.roles.everyone.id,
+            type: OverwriteType.Role,
             deny: [
                 PermissionFlagsBits.ViewChannel
             ]
         },
         {
             id: member.id,
+            type: OverwriteType.Member,
             allow: [
                 PermissionFlagsBits.ViewChannel,
                 PermissionFlagsBits.SendMessages,
@@ -290,16 +296,31 @@ async function ensureWelcomeChannel(member, context = {}) {
         }
     ];
 
-    if (process.env.DON_DISCORD_ID) {
+    const addMemberOverwrite = (userId, allow) => {
+        if (!userId || permissionOverwrites.some(overwrite => overwrite.id === userId)) {
+            return;
+        }
+
         permissionOverwrites.push({
-            id: process.env.DON_DISCORD_ID,
-            allow: [
-                PermissionFlagsBits.ViewChannel,
-                PermissionFlagsBits.SendMessages,
-                PermissionFlagsBits.ReadMessageHistory,
-                PermissionFlagsBits.ManageMessages
-            ]
+            id: userId,
+            type: OverwriteType.Member,
+            allow
         });
+    };
+
+    addMemberOverwrite(context.recruiterId, [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory
+    ]);
+
+    if (process.env.DON_DISCORD_ID) {
+        addMemberOverwrite(process.env.DON_DISCORD_ID, [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.ManageMessages
+        ]);
     }
 
     if (!channel) {
