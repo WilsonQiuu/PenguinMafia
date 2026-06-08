@@ -310,6 +310,35 @@ async function clearLatestFinishedElectionBoard(guild, db = sql) {
     return true;
 }
 
+async function ensureElectionStartingSoonBoard(guild, db = sql) {
+    const active = await getActiveElection(db);
+
+    if (active) {
+        return false;
+    }
+
+    const channel = await getChannelById(guild, ELECTION_LEADERBOARD_CHANNEL_ID, 'leaderboard');
+
+    if (!channel) {
+        return false;
+    }
+
+    const recentMessages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
+    const existingMessage = recentMessages?.find(message => {
+        return message.author.id === guild.client.user.id &&
+            message.content.includes('PENGUIN MAFIA ELECTION STARTING SOON');
+    });
+    const payload = renderPreStartAnnouncement();
+
+    if (existingMessage) {
+        await existingMessage.edit(payload);
+    } else {
+        await channel.send(payload);
+    }
+
+    return true;
+}
+
 async function postVoteEvent(guild, content, userIds = []) {
     const channel = await getChannelById(guild, ELECTION_EVENTS_CHANNEL_ID, 'events');
 
@@ -637,6 +666,7 @@ module.exports = {
     castElectionVote,
     clearLatestFinishedElectionBoard,
     endElection,
+    ensureElectionStartingSoonBoard,
     finishExpiredElectionsForGuild,
     getActiveElection,
     getElectionScores,
