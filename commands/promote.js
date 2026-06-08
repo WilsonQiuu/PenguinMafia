@@ -11,6 +11,9 @@ const {
     postPromotionEvent
 } = require('../utils/events.js');
 const {
+    updateElectionLeaderboard
+} = require('../utils/elections.js');
+const {
     RANK_NAMES,
     evaluateEligibility,
     getNextRank,
@@ -338,6 +341,11 @@ module.exports = {
                     flags: MessageFlags.Ephemeral
                 });
             }
+
+            await updateElectionLeaderboard(interaction.guild, sql).catch(error => {
+                console.error('Election leaderboard refresh failed after /promote:');
+                console.error(error);
+            });
         } catch (error) {
             logCommandError(interaction, '/promote', error);
 

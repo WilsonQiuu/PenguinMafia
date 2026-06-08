@@ -8,6 +8,9 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
+    updateElectionLeaderboard
+} = require('../utils/elections.js');
+const {
     getRankIndex,
     getPreviousRank,
     playerName,
@@ -160,6 +163,11 @@ module.exports = {
                 fallLine +
                 `Discord role synced: **${syncedRole ? 'yes' : 'no'}**`
             );
+
+            await updateElectionLeaderboard(interaction.guild, sql).catch(error => {
+                console.error('Election leaderboard refresh failed after /demote:');
+                console.error(error);
+            });
         } catch (error) {
             logCommandError(interaction, '/demote', error);
 

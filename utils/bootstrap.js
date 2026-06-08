@@ -273,6 +273,41 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        create table if not exists elections (
+            id bigserial primary key,
+            status text not null default 'active' check (status in ('active', 'ended', 'cancelled')),
+            started_at timestamptz not null default now(),
+            ends_at timestamptz not null,
+            created_by_discord_id text not null,
+            ended_at timestamptz,
+            ended_by_discord_id text,
+            leaderboard_message_id text,
+            pre_start_message_id text
+        )
+    `;
+
+    await sql`
+        create table if not exists election_votes (
+            election_id bigint not null references elections(id) on delete cascade,
+            voter_discord_id text not null references players(discord_id) on delete cascade,
+            target_discord_id text not null references players(discord_id) on delete cascade,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            primary key (election_id, voter_discord_id)
+        )
+    `;
+
+    await sql`
+        create table if not exists election_exclusions (
+            election_id bigint not null references elections(id) on delete cascade,
+            player_discord_id text not null references players(discord_id) on delete cascade,
+            removed_by_discord_id text not null,
+            created_at timestamptz not null default now(),
+            primary key (election_id, player_discord_id)
+        )
+    `;
+
+    await sql`
         alter table players
         add column if not exists welcome_completed boolean not null default true
     `;

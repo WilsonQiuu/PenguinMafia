@@ -22,6 +22,11 @@ const {
     postFirstRecruitEvent
 } = require('./utils/events.js');
 const {
+    finishExpiredElectionsForGuild,
+    removePlayerFromActiveElection,
+    updateElectionLeaderboard
+} = require('./utils/elections.js');
+const {
     cleanupWelcomeChannelsForMissingMembers,
     handleWelcomeButton,
     handleWelcomeModal,
@@ -1119,6 +1124,17 @@ client.once(Events.ClientReady, async () => {
     await updateAllLeaderboards();
     logReadyStep('leaderboards refreshed');
 
+    for (const [, guild] of client.guilds.cache) {
+        try {
+            await finishExpiredElectionsForGuild(guild, sql);
+            await updateElectionLeaderboard(guild, sql);
+            logReadyStep(`election leaderboard refreshed for ${guild.name}`);
+        } catch (error) {
+            console.error(`Election refresh failed for ${guild.name}:`);
+            console.error(error);
+        }
+    }
+
     const statusType = process.env.BOT_STATUS || 'Online';
     const activityType = process.env.ACTIVITY_TYPE || 'PLAYING';
     const activityName = process.env.ACTIVITY_NAME || 'Discord';
@@ -1158,6 +1174,21 @@ client.once(Events.ClientReady, async () => {
             console.error(error);
         }
     }
+
+    setInterval(async () => {
+        for (const [, guild] of client.guilds.cache) {
+            try {
+                const ended = await finishExpiredElectionsForGuild(guild, sql);
+
+                if (ended.length > 0) {
+                    console.log(`Ended ${ended.length} expired election(s) for ${guild.name}.`);
+                }
+            } catch (error) {
+                console.error(`Election timer check failed for ${guild.name}:`);
+                console.error(error);
+            }
+        }
+    }, 60_000);
 });
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -1284,6 +1315,18 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
 client.on(Events.GuildMemberRemove, async member => {
     if (!member.user.bot) {
         try {
+            await removePlayerFromActiveElection(member.guild, member.user.id, member.user.id, sql, {
+                removeCastVotes: true
+            });
+            console.log(`Removed ${member.user.tag} from active election after leaving the server.`);
+        } catch (error) {
+            if (!String(error.message || '').includes('There is no active election')) {
+                console.error(`Could not remove leaving member ${member.user.tag} from active election:`);
+                console.error(error);
+            }
+        }
+
+        try {
             const removedRows = await sql`
                 with leaving_player as (
                     select
@@ -1324,6 +1367,11 @@ client.on(Events.GuildMemberRemove, async member => {
 
                 await updateLeaderboardsForGuild(member.guild, sql).catch(error => {
                     console.error('Leaderboard refresh failed after leave cleanup:');
+                    console.error(error);
+                });
+
+                await updateElectionLeaderboard(member.guild, sql).catch(error => {
+                    console.error('Election leaderboard refresh failed after leave cleanup:');
                     console.error(error);
                 });
             }
@@ -1371,6 +1419,18 @@ client.on(Events.GuildMemberRemove, async member => {
 });
 
 client.on(Events.GuildBanAdd, async ban => {
+    try {
+        await removePlayerFromActiveElection(ban.guild, ban.user.id, ban.user.id, sql, {
+            removeCastVotes: true
+        });
+        console.log(`Removed ${ban.user.tag} from active election after ban.`);
+    } catch (error) {
+        if (!String(error.message || '').includes('There is no active election')) {
+            console.error(`Could not remove banned user ${ban.user.tag} from active election:`);
+            console.error(error);
+        }
+    }
+
     try {
         const executor = await findRecentAuditExecutor(
             ban.guild,
