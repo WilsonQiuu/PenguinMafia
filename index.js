@@ -22,6 +22,7 @@ const {
     postFirstRecruitEvent
 } = require('./utils/events.js');
 const {
+    ensureElectionCommandsBoard,
     ensureElectionStartingSoonBoard,
     finishExpiredElectionsForGuild,
     removePlayerFromActiveElection,
@@ -1127,6 +1128,7 @@ client.once(Events.ClientReady, async () => {
 
     for (const [, guild] of client.guilds.cache) {
         try {
+            await ensureElectionCommandsBoard(guild);
             await finishExpiredElectionsForGuild(guild, sql);
             const refreshed = await updateElectionLeaderboard(guild, sql);
 
@@ -1134,7 +1136,7 @@ client.once(Events.ClientReady, async () => {
                 await ensureElectionStartingSoonBoard(guild, sql);
             }
 
-            logReadyStep(`election leaderboard refreshed for ${guild.name}`);
+            logReadyStep(`election channels refreshed for ${guild.name}`);
         } catch (error) {
             console.error(`Election refresh failed for ${guild.name}:`);
             console.error(error);

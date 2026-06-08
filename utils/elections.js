@@ -2,12 +2,13 @@ const sql = require('../db.js');
 
 const ELECTION_LEADERBOARD_CHANNEL_ID = process.env.ELECTION_LEADERBOARD_CHANNEL_ID || '1513392373437169664';
 const ELECTION_EVENTS_CHANNEL_ID = process.env.ELECTION_EVENTS_CHANNEL_ID || '1513393832845115453';
+const ELECTION_COMMANDS_CHANNEL_ID = process.env.ELECTION_COMMANDS_CHANNEL_ID || '1513405907051221092';
 
 const VOTE_WEIGHTS = new Map([
     ['Penguin Soldier', 1],
     ['Penguin Captain', 3],
-    ['Penguin General', 9],
-    ['Emperor Penguin', 15]
+    ['Penguin General', 5],
+    ['Emperor Penguin', 10]
 ]);
 
 function playerName(player, fallback = 'Unknown Penguin') {
@@ -78,8 +79,8 @@ async function getElectionScores(electionId, db = sql) {
             coalesce(sum(case voter.rank_name
                 when 'Penguin Soldier' then 1
                 when 'Penguin Captain' then 3
-                when 'Penguin General' then 9
-                when 'Emperor Penguin' then 15
+                when 'Penguin General' then 5
+                when 'Emperor Penguin' then 10
                 else 0
             end), 0)::int as votes
         from election_votes vote
@@ -100,8 +101,8 @@ async function getElectionScores(electionId, db = sql) {
         having coalesce(sum(case voter.rank_name
             when 'Penguin Soldier' then 1
             when 'Penguin Captain' then 3
-            when 'Penguin General' then 9
-            when 'Emperor Penguin' then 15
+            when 'Penguin General' then 5
+            when 'Emperor Penguin' then 10
             else 0
         end), 0) > 0
         order by votes desc, target.discord_display_name asc nulls last, target.discord_username asc nulls last
@@ -127,6 +128,37 @@ function renderPreStartAnnouncement() {
         allowedMentions: {
             parse: ['everyone']
         }
+    };
+}
+
+function renderElectionCommandsMessage() {
+    return {
+        content:
+            `# 🐧🗳️ PENGUIN MAFIA VOTING COMMANDS\n\n` +
+            `The election ice can get slippery, so here is the official flipper guide.\n\n` +
+            `## 🗳️ Player Commands\n` +
+            `\`/vote player:@Player\`\n` +
+            `Cast all of your vote power for one penguin.\n\n` +
+            `\`/transfervotes player:@Player\`\n` +
+            `Move all of your vote power to another candidate.\n\n` +
+            `\`/election\`\n` +
+            `Check the current election, time left, and top penguins.\n\n` +
+            `\`/electionremove\`\n` +
+            `Leave the candidate ice so players cannot vote for you.\n\n` +
+            `\`/electionjoin\`\n` +
+            `Rejoin the candidate ice. Lost votes do **not** come back.\n\n` +
+            `## 👑 Don Commands\n` +
+            `\`/startelection\` - Start a new 1-week election. If one is active, it cancels the old election and resets votes.\n` +
+            `\`/endelection\` - End the election and show the winner.\n` +
+            `\`/electioncancel\` - Cancel the election with no winner.\n` +
+            `\`/electionclear\` - Clear a finished board back to the starting-soon message.\n` +
+            `\`/electionvotes player:@Player\` - Check who voted for a player and how many votes they give.\n\n` +
+            `## 🧊 Vote Power\n` +
+            `${rankVoteLine('Penguin Soldier')}\n` +
+            `${rankVoteLine('Penguin Captain')}\n` +
+            `${rankVoteLine('Penguin General')}\n` +
+            `${rankVoteLine('Emperor Penguin')}\n\n` +
+            `All of your votes go to **one** player. You can vote for yourself. You can change your vote before the election ends. 🐧✨`
     };
 }
 
@@ -329,6 +361,29 @@ async function ensureElectionStartingSoonBoard(guild, db = sql) {
             message.content.includes('PENGUIN MAFIA ELECTION STARTING SOON');
     });
     const payload = renderPreStartAnnouncement();
+
+    if (existingMessage) {
+        await existingMessage.edit(payload);
+    } else {
+        await channel.send(payload);
+    }
+
+    return true;
+}
+
+async function ensureElectionCommandsBoard(guild) {
+    const channel = await getChannelById(guild, ELECTION_COMMANDS_CHANNEL_ID, 'commands');
+
+    if (!channel) {
+        return false;
+    }
+
+    const recentMessages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
+    const existingMessage = recentMessages?.find(message => {
+        return message.author.id === guild.client.user.id &&
+            message.content.includes('PENGUIN MAFIA VOTING COMMANDS');
+    });
+    const payload = renderElectionCommandsMessage();
 
     if (existingMessage) {
         await existingMessage.edit(payload);
@@ -636,8 +691,8 @@ async function getVotesForPlayer(playerId, db = sql) {
             case voter.rank_name
                 when 'Penguin Soldier' then 1
                 when 'Penguin Captain' then 3
-                when 'Penguin General' then 9
-                when 'Emperor Penguin' then 15
+                when 'Penguin General' then 5
+                when 'Emperor Penguin' then 10
                 else 0
             end as votes
         from election_votes vote
@@ -660,12 +715,14 @@ async function getVotesForPlayer(playerId, db = sql) {
 }
 
 module.exports = {
+    ELECTION_COMMANDS_CHANNEL_ID,
     ELECTION_EVENTS_CHANNEL_ID,
     ELECTION_LEADERBOARD_CHANNEL_ID,
     VOTE_WEIGHTS,
     castElectionVote,
     clearLatestFinishedElectionBoard,
     endElection,
+    ensureElectionCommandsBoard,
     ensureElectionStartingSoonBoard,
     finishExpiredElectionsForGuild,
     getActiveElection,
