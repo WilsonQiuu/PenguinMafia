@@ -343,6 +343,46 @@ async function ensureWelcomeChannel(member, context = {}) {
     return channel;
 }
 
+async function sendOneTimeWelcomeReminder(member, channel) {
+    const rows = await sql`
+        select welcome_completed, welcome_reminder_sent_at
+        from players
+        where discord_id = ${member.id}
+        limit 1
+    `;
+    const player = rows[0];
+
+    if (!player || player.welcome_completed || player.welcome_reminder_sent_at) {
+        return false;
+    }
+
+    const channelLink = `https://discord.com/channels/${member.guild.id}/${channel.id}`;
+
+    try {
+        await member.send({
+            content:
+                `🐧 Hey! You still need to finish your **Penguin Mafia** welcome setup.\n\n` +
+                `Please go to ${channel} and press **Next** until you finish.\n\n` +
+                `Direct link: ${channelLink}\n\n` +
+                `Once you complete it, you’ll get your **${DEFAULT_RANK_NAME}** role and full server access.`
+        });
+
+        await sql`
+            update players
+            set
+                welcome_reminder_sent_at = now(),
+                updated_at = now()
+            where discord_id = ${member.id}
+        `;
+
+        console.log(`Welcome reminder DM sent to ${member.user.tag} for ${channel.name} (${channel.id}).`);
+        return true;
+    } catch (error) {
+        console.log(`Could not DM welcome reminder to ${member.user.tag}: ${error.message}`);
+        return false;
+    }
+}
+
 async function startOnboardingForMember(member, context = {}) {
     const channel = await ensureWelcomeChannel(member, context);
     const isTest = Boolean(context.isTest);
@@ -350,6 +390,10 @@ async function startOnboardingForMember(member, context = {}) {
     const alreadyStarted = recentMessages?.some(message => {
         return isWelcomeFlowMessage(message, member.id);
     });
+
+    if (!isTest) {
+        await sendOneTimeWelcomeReminder(member, channel);
+    }
 
     if (alreadyStarted && !isTest) {
         return channel;

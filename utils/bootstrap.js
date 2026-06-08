@@ -229,6 +229,7 @@ async function ensureDatabaseSchema(sql) {
             staff_rank_name text references staff_ranks(name),
             ban_points_remaining int not null default 0 check (ban_points_remaining >= 0),
             status text not null default 'active',
+            welcome_reminder_sent_at timestamptz,
             created_at timestamptz not null default now(),
             updated_at timestamptz not null default now(),
             constraint player_cannot_be_own_parent
@@ -264,6 +265,11 @@ async function ensureDatabaseSchema(sql) {
     await sql`
         alter table players
         add column if not exists unpaid_commissions bigint not null default 0 check (unpaid_commissions >= 0)
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists welcome_reminder_sent_at timestamptz
     `;
 
     await sql`
