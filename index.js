@@ -22,6 +22,9 @@ const {
     postFirstRecruitEvent
 } = require('./utils/events.js');
 const {
+    ensureRecruitCommandInfoBoard
+} = require('./utils/commandInfo.js');
+const {
     ensureElectionCommandsBoard,
     ensureElectionStartingSoonBoard,
     finishExpiredElectionsForGuild,
@@ -1128,6 +1131,7 @@ client.once(Events.ClientReady, async () => {
 
     for (const [, guild] of client.guilds.cache) {
         try {
+            await ensureRecruitCommandInfoBoard(guild);
             await ensureElectionCommandsBoard(guild);
             await finishExpiredElectionsForGuild(guild, sql);
             const refreshed = await updateElectionLeaderboard(guild, sql);
