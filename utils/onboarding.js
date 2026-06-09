@@ -170,8 +170,8 @@ function ignMessage(userId, isTest = false) {
     return {
         content:
             `# 💰 LINK YOUR IGN\n\n` +
-            `Events can pay real penguins. 🐧💸\n\n` +
-            `We need your Minecraft IGN so the Don knows who gets paid.\n\n` +
+            `Your Minecraft IGN is **not necessary** to finish welcome.\n\n` +
+            `Linking it helps the Don know who gets paid during events. 🐧💸\n\n` +
             `🔎 No IGN = unpaid commissions saved\n` +
             `✅ Linked IGN = easier payouts\n\n` +
             `Choose your Minecraft edition first:`,
@@ -179,7 +179,7 @@ function ignMessage(userId, isTest = false) {
             row(
                 scopedButton('enter_ign_java', userId, 'Java', ButtonStyle.Success, isTest),
                 scopedButton('enter_ign_bedrock', userId, 'Bedrock', ButtonStyle.Success, isTest),
-                scopedButton('skip_ign', userId, "I'll do this later", ButtonStyle.Danger, isTest)
+                scopedButton('skip_ign', userId, 'Skip', ButtonStyle.Secondary, isTest)
             )
         ]
     };
