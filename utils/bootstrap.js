@@ -1182,19 +1182,18 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null) {
             `This leaderboard tracks all-time donations.`
     };
 
-    const managedPromotionEvents = {
-        marker: 'Penguin Mafia Promotion Events',
-        body:
-            `🎉🐧 **Penguin Mafia Promotion Events** 🐧🎉\n\n` +
-            `Promotions and donation announcements will appear here when penguins make moves.`
-    };
-
     logChannelSetupStep('starting promotion events channel');
-    const managedPromotionEventsChannel = await ensureInfoChannel(guild, PROMOTION_EVENTS_CHANNEL_NAME, managedPromotionEvents, rankRoles, {
-        channelId: PROMOTION_EVENTS_CHANNEL_ID,
-        pinInfoMessage: true,
-        channelCache
-    });
+    const managedPromotionEventsChannel = await ensureManagedChannel(
+        guild,
+        PROMOTION_EVENTS_CHANNEL_NAME,
+        ChannelType.GuildText,
+        publicReadOverwrites(guild, rankRoles, staffRoles),
+        {
+            reason: 'Penguin Mafia promotion events channel setup',
+            channelId: PROMOTION_EVENTS_CHANNEL_ID,
+            channelCache
+        }
+    );
     logChannelSetupStep('promotion events channel ready');
 
     logChannelSetupStep('starting weekly recruits leaderboard channel');

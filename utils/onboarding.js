@@ -96,8 +96,10 @@ function introMessage(member, context = {}) {
     return {
         content:
             `# WELCOME TO THE PENGUIN MAFIA\n\n` +
-            `${member}\n\n` +
+            `## The ice gates have opened for ${member}\n\n` +
+            `You have entered the colony. Keep your flippers sharp and your loyalty colder than the iceberg.\n\n` +
             `${parentLine}\n\n` +
+            `Press **Next** to begin your training.` +
             testLine,
         allowedMentions: {
             users: [member.id, context.recruiterId].filter(Boolean)
@@ -113,7 +115,8 @@ function rankIntroMessage(userId, isTest = false) {
         content:
             `# CONGRATULATIONS\n` +
             `# YOU RECEIVED YOUR FIRST RANK\n\n` +
-            `# PENGUIN SOLDIER`,
+            `# PENGUIN SOLDIER\n\n` +
+            `Your first badge is on the coat. Every empire starts with one loyal penguin.`,
         components: [
             row(scopedButton('ranks', userId, 'Next', ButtonStyle.Success, isTest))
         ]
@@ -125,9 +128,13 @@ function ranksMessage(userId, isTest = false) {
         content:
             `# HERE ARE ALL THE RANKS YOU CAN REACH\n\n` +
             `## Penguin Soldier\n` +
+            `Fresh on the ice.\n\n` +
             `## Penguin Captain\n` +
+            `A leader of recruits.\n\n` +
             `## Penguin General\n` +
-            `## Emperor Penguin`,
+            `A builder of branches.\n\n` +
+            `## Emperor Penguin\n` +
+            `Top of the iceberg.`,
         components: [
             row(scopedButton('recruit', userId, 'Next', ButtonStyle.Success, isTest))
         ]
@@ -139,7 +146,8 @@ function recruitingMessage(userId, isTest = false) {
         content:
             `# LET'S HELP YOU BUILD YOUR TEAM\n\n` +
             `Anyone you invite to this server will automatically be detected by our Penguin bot and placed into your team.\n\n` +
-            `You will be their leader.`,
+            `You will be their leader.\n\n` +
+            `Bring in penguins, grow your branch, and make your name show up on the tree.`,
         components: [
             row(scopedButton('ign', userId, 'Next', ButtonStyle.Success, isTest))
         ]
@@ -152,7 +160,8 @@ function ignMessage(userId, isTest = false) {
             `# LINK YOUR MINECRAFT IGN\n\n` +
             `We host giveaways, so if you want to earn money you can link your Minecraft IGN.\n\n` +
             `This is **not necessary** to finish welcome.\n\n` +
-            `Choose **Java**, **Bedrock**, or **Skip**.`,
+            `Choose **Java**, **Bedrock**, or **Skip**.\n\n` +
+            `No pressure. The iceberg lets you come back later with \`/link\`.`,
         components: [
             row(
                 scopedButton('enter_ign_java', userId, 'Java', ButtonStyle.Success, isTest),
@@ -170,10 +179,11 @@ function finalMessage(userId, linkedIgn = null, edition = null, isTest = false) 
     return {
         content:
             `# WELCOME SOLDIER\n\n` +
+            `Training is almost complete.\n\n` +
             `${linkedLine}\n\n` +
             `${isTest ? `🧪 Test mode: no role, IGN, or DB changes.\n\n` : ''}` +
             `Click **Done** to complete your training.\n\n` +
-            `This room will self destruct. 💣`,
+            `This room will self destruct, and the colony doors will open. 💣`,
         components: [
             row(scopedButton('done', userId, 'Done', ButtonStyle.Success, isTest))
         ]
