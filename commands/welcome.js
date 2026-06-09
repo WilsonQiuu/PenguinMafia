@@ -1,6 +1,5 @@
 const {
     SlashCommandBuilder,
-    PermissionFlagsBits,
     MessageFlags
 } = require('discord.js');
 
@@ -14,29 +13,12 @@ const {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('welcome')
-        .setDescription('Open a private test welcome flow. Don only.')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        .setDescription('Open a private test welcome flow.'),
 
     async execute(interaction) {
         await interaction.deferReply({
             flags: MessageFlags.Ephemeral
         });
-
-        const donDiscordId = process.env.DON_DISCORD_ID;
-
-        if (!donDiscordId) {
-            await interaction.editReply(
-                '❌ DON_DISCORD_ID is missing from your `.env` file.'
-            );
-            return;
-        }
-
-        if (interaction.user.id !== donDiscordId) {
-            await interaction.editReply(
-                '❌ Only the Don can use `/welcome`.'
-            );
-            return;
-        }
 
         try {
             const channel = await startOnboardingForMember(interaction.member, {
