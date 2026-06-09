@@ -95,13 +95,9 @@ function introMessage(member, context = {}) {
 
     return {
         content:
-            `# 🐧 WELCOME, ${member}! 🎉\n\n` +
-            `## PENGUIN MAFIA\n` +
-            `👑 Loyal to the Don\n` +
-            `🧊 Loyal to the ice\n` +
-            `🐧 Loyal to the colony\n\n` +
+            `# WELCOME TO THE PENGUIN MAFIA\n\n` +
+            `${member}\n\n` +
             `${parentLine}\n\n` +
-            `Tap below to start training.` +
             testLine,
         allowedMentions: {
             users: [member.id, context.recruiterId].filter(Boolean)
@@ -115,14 +111,9 @@ function introMessage(member, context = {}) {
 function rankIntroMessage(userId, isTest = false) {
     return {
         content:
-            `# 🎖️ YOUR FIRST RANK\n\n` +
-            `## 🧊 Penguin Soldier\n` +
-            `Fresh on the ice. Official Mafia penguin. 🐧\n\n` +
-            `Ranks mean:\n` +
-            `💰 Better commissions\n` +
-            `👑 More respect\n` +
-            `🐧 More recruit power\n\n` +
-            `Recruiting is how you climb. Build your colony. 🌲`,
+            `# CONGRATULATIONS\n` +
+            `# YOU RECEIVED YOUR FIRST RANK\n\n` +
+            `# PENGUIN SOLDIER`,
         components: [
             row(scopedButton('ranks', userId, 'Next', ButtonStyle.Success, isTest))
         ]
@@ -132,16 +123,11 @@ function rankIntroMessage(userId, isTest = false) {
 function ranksMessage(userId, isTest = false) {
     return {
         content:
-            `# 🐧 RANK LADDER\n\n` +
-            `🧊 **Soldier**\n` +
-            `Start here. Join the colony.\n\n` +
-            `🎩 **Captain**\n` +
-            `Need **3 direct recruits**.\n\n` +
-            `⭐ **General**\n` +
-            `Need **3 direct Captains+**.\n\n` +
-            `👑 **Emperor Penguin**\n` +
-            `Need **2 Generals+** and **1 Captain+**.\n\n` +
-            `## 🐧 Recruit = Rank Up`,
+            `# HERE ARE ALL THE RANKS YOU CAN REACH\n\n` +
+            `## Penguin Soldier\n` +
+            `## Penguin Captain\n` +
+            `## Penguin General\n` +
+            `## Emperor Penguin`,
         components: [
             row(scopedButton('recruit', userId, 'Next', ButtonStyle.Success, isTest))
         ]
@@ -151,15 +137,9 @@ function ranksMessage(userId, isTest = false) {
 function recruitingMessage(userId, isTest = false) {
     return {
         content:
-            `# 📣 RECRUITING\n\n` +
-            `## 🍩 Find players on DonutSMP\n\n` +
-            `Rule #1: **Penguins only.** 🐧✅\n\n` +
-            `1. They put on **any penguin skin**\n` +
-            `2. Send your invite link\n` +
-            `3. Bot detects your recruit 🤖\n\n` +
-            `If detection fails:\n` +
-            `\`/join recruiter:@YourDiscord\`\n\n` +
-            `Need this later? Use \`/recruit\`.`,
+            `# LET'S HELP YOU BUILD YOUR TEAM\n\n` +
+            `Anyone you invite to this server will automatically be detected by our Penguin bot and placed into your team.\n\n` +
+            `You will be their leader.`,
         components: [
             row(scopedButton('ign', userId, 'Next', ButtonStyle.Success, isTest))
         ]
@@ -169,12 +149,10 @@ function recruitingMessage(userId, isTest = false) {
 function ignMessage(userId, isTest = false) {
     return {
         content:
-            `# 💰 LINK YOUR IGN\n\n` +
-            `Your Minecraft IGN is **not necessary** to finish welcome.\n\n` +
-            `Linking it helps the Don know who gets paid during events. 🐧💸\n\n` +
-            `🔎 No IGN = unpaid commissions saved\n` +
-            `✅ Linked IGN = easier payouts\n\n` +
-            `Choose your Minecraft edition first:`,
+            `# LINK YOUR MINECRAFT IGN\n\n` +
+            `We host giveaways, so if you want to earn money you can link your Minecraft IGN.\n\n` +
+            `This is **not necessary** to finish welcome.\n\n` +
+            `Choose **Java**, **Bedrock**, or **Skip**.`,
         components: [
             row(
                 scopedButton('enter_ign_java', userId, 'Java', ButtonStyle.Success, isTest),
@@ -189,19 +167,13 @@ function finalMessage(userId, linkedIgn = null, edition = null, isTest = false) 
     const linkedLine = linkedIgn
         ? `✅ IGN linked: **${linkedIgn}**${edition ? ` (${minecraftEditionLabel(edition)})` : ''}`
         : `⏭️ IGN skipped. Use \`/link\` before events.`;
-    const roleLine = isTest
-        ? `🧪 Test mode: no role, IGN, or DB changes.`
-        : `🎖️ Role ready: **${DEFAULT_RANK_NAME}**`;
-
     return {
         content:
-            `# 🐧 WELCOME TO THE\n# PENGUIN MAFIA 🎉\n\n` +
-            `👑 The Don approves.\n` +
-            `🧊 The ice gates open.\n` +
-            `🐧 The colony awaits.\n\n` +
+            `# WELCOME SOLDIER\n\n` +
             `${linkedLine}\n\n` +
-            `${roleLine}\n\n` +
-            `Press **Done** to enter. The training room will self destruct. 💣`,
+            `${isTest ? `🧪 Test mode: no role, IGN, or DB changes.\n\n` : ''}` +
+            `Click **Done** to complete your training.\n\n` +
+            `This room will self destruct. 💣`,
         components: [
             row(scopedButton('done', userId, 'Done', ButtonStyle.Success, isTest))
         ]
