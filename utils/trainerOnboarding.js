@@ -11,6 +11,7 @@ const {
     ensureTrainerRole,
     ensureWelcomeCategory
 } = require('./bootstrap.js');
+const sql = require('../db.js');
 
 const BUTTON_PREFIX = 'trainer';
 
@@ -60,12 +61,18 @@ function introMessage(member) {
 function welcomeRecruitsMessage(userId) {
     return {
         content:
-            `# 1 • WELCOME NEW RECRUITS\n\n` +
-            `When a new player joins from welcome, greet them in the server.\n\n` +
-            `Say hi, make them feel seen, and help them get comfortable.\n\n` +
-            `After they are welcomed, move them into the **Recruit Training VC**.`,
+            `# 🐧 TRAINING\n\n` +
+            `Use \`/training\` anytime to come back here.\n\n` +
+            `## Part 1 • First Recruit\n\n` +
+            `Do **not** explain everything at once.\n\n` +
+            `First goal only:\n` +
+            `🐧 Find **1 recruit**\n` +
+            `🎨 They put on **any penguin skin**\n` +
+            `🔗 They join with your invite\n\n` +
+            `If the bot misses it, have them use:\n` +
+            `\`/join recruiter:@YourDiscord\``,
         components: [
-            row(button('graphs', userId))
+            row(button('graphs', userId, 'Part 2'))
         ]
     };
 }
@@ -73,12 +80,15 @@ function welcomeRecruitsMessage(userId) {
 function graphTrainingMessage(userId) {
     return {
         content:
-            `# 2 • SHOW THEM THE TREE\n\n` +
-            `Have the recruit run \`/graph\` so they can see their team.\n\n` +
-            `Their graph will probably be empty at first. That is okay.\n\n` +
-            `Then show them a graph of another player with a few recruits, and another player with an even bigger team.`,
+            `# 🎩 Part 2 • Captain Goal\n\n` +
+            `After they get recruit #1, reveal the next step.\n\n` +
+            `Goal:\n` +
+            `🐧 Recruit **2 more penguins**\n` +
+            `📊 Reach **3 direct recruits total**\n` +
+            `🎩 Become **Penguin Captain**\n\n` +
+            `Keep it simple. One iceberg at a time.`,
         components: [
-            row(button('team', userId))
+            row(button('team', userId, 'Part 3'))
         ]
     };
 }
@@ -86,12 +96,18 @@ function graphTrainingMessage(userId) {
 function teamBuildingMessage(userId) {
     return {
         content:
-            `# 3 • HELP THEM BUILD\n\n` +
-            `Explain that we can help them build their own team, and they will lead that team.\n\n` +
-            `Their first goal is simple: find their **first recruit**.\n\n` +
-            `Let them go recruit. When they come back, help them understand the next step.`,
+            `# 🎓 Part 3 • Train A Captain\n\n` +
+            `After Captain, their job is not just recruiting.\n\n` +
+            `Goal:\n` +
+            `🐧 Get more recruits\n` +
+            `🎩 Train **at least 1 recruit** to Captain\n` +
+            `🎓 Unlock the option to accept **Penguin Trainer**\n\n` +
+            `Trainer is a side role. It does not replace Penguin rank.`,
         components: [
-            row(button('rankpath', userId))
+            row(
+                button('accept_trainer', userId, 'Accept Trainer', ButtonStyle.Primary),
+                button('rankpath', userId, 'Part 4')
+            )
         ]
     };
 }
@@ -99,13 +115,14 @@ function teamBuildingMessage(userId) {
 function rankPathMessage(userId) {
     return {
         content:
-            `# 4 • EXPLAIN THE PATH\n\n` +
-            `After their first recruit, they need **2 more recruits** to become **Penguin Captain**.\n\n` +
-            `After Captain, their next goal is to help one of their own recruits become Captain. That unlocks the option to become a Trainer.\n\n` +
-            `After that, they help **2 more recruits** become Captain to reach **Penguin General**.\n\n` +
-            `After General, they help **2 recruits** reach General to finally become **Emperor Penguin**.`,
+            `# ⭐ Part 4 • General Goal\n\n` +
+            `Now they are building leaders.\n\n` +
+            `Goal:\n` +
+            `🎩 Help **2 more recruits** become Captains\n` +
+            `📊 Reach **3 direct Captains total**\n` +
+            `⭐ Become **Penguin General**`,
         components: [
-            row(button('powers', userId))
+            row(button('powers', userId, 'Part 5'))
         ]
     };
 }
@@ -113,13 +130,14 @@ function rankPathMessage(userId) {
 function powersMessage(userId) {
     return {
         content:
-            `# 5 • TRAINER TOOLS\n\n` +
-            `Trainer does **not** replace your Penguin rank.\n\n` +
-            `You can be Captain + Trainer, General + Trainer, or Emperor + Trainer.\n\n` +
-            `As a Trainer, you can move new recruits into separate voice channels and mute disruptive players who interrupt training.\n\n` +
-            `Use that power to keep training clean, not to show off.`,
+            `# 👑 Part 5 • Emperor Goal\n\n` +
+            `Final climb. Biggest iceberg.\n\n` +
+            `Goal:\n` +
+            `⭐ Help **2 recruits** become Generals\n` +
+            `👑 Become **Emperor Penguin**\n\n` +
+            `Train slowly. Reveal the next goal only when they finish the current one.`,
         components: [
-            row(button('finish', userId))
+            row(button('finish', userId, 'Finish'))
         ]
     };
 }
@@ -252,15 +270,17 @@ async function ensureTrainerOnboardingChannel(member, context = {}) {
     return channel;
 }
 
-function isTrainerFlowMessage(message, userId) {
+function isTrainerOfferMessage(message, userId) {
     if (message.author.id !== message.client.user.id) {
         return false;
     }
 
     return message.components.some(actionRow => {
         return actionRow.components.some(component => {
-            return component.customId?.startsWith(`${BUTTON_PREFIX}:`) &&
-                component.customId.includes(`:${userId}`);
+            return (
+                component.customId === buttonId('accept', userId) ||
+                component.customId === buttonId('reject', userId)
+            );
         });
     });
 }
@@ -268,16 +288,34 @@ function isTrainerFlowMessage(message, userId) {
 async function startTrainerOnboardingForMember(member, context = {}) {
     const channel = await ensureTrainerOnboardingChannel(member, context);
     const recentMessages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
-    const alreadyStarted = recentMessages?.some(message => {
-        return isTrainerFlowMessage(message, member.id);
+    const offerAlreadyStarted = recentMessages?.some(message => {
+        return isTrainerOfferMessage(message, member.id);
     });
 
-    if (alreadyStarted) {
+    if (offerAlreadyStarted) {
         return channel;
     }
 
     await channel.send(introMessage(member));
     return channel;
+}
+
+async function startTrainerTrainingForMember(member, context = {}) {
+    const channel = await ensureTrainerOnboardingChannel(member, context);
+
+    await channel.send(welcomeRecruitsMessage(member.id));
+    return channel;
+}
+
+async function hasDirectCaptain(playerId) {
+    const rows = await sql`
+        select count(*)::int as count
+        from players
+        where parent_discord_id = ${playerId}
+            and rank_name in ('Penguin Captain', 'Penguin General', 'Emperor Penguin')
+    `;
+
+    return Number(rows[0]?.count || 0) >= 1;
 }
 
 async function handleTrainerButton(interaction) {
@@ -327,6 +365,32 @@ async function handleTrainerButton(interaction) {
         return true;
     }
 
+    if (action === 'accept_trainer') {
+        const member = await interaction.guild.members.fetch(targetUserId);
+
+        if (!(await hasDirectCaptain(targetUserId))) {
+            await interaction.reply({
+                content:
+                    `🐧 Not yet.\n\n` +
+                    `To accept **Penguin Trainer**, you need at least **1 direct recruit** at **Penguin Captain or higher**.`,
+                flags: MessageFlags.Ephemeral
+            });
+            return true;
+        }
+
+        const { trainerRole } = await ensureTrainerRole(interaction.guild);
+
+        if (!member.roles.cache.has(trainerRole.id)) {
+            await member.roles.add(trainerRole, 'Penguin Mafia Trainer accepted from /training');
+        }
+
+        await interaction.reply({
+            content: `✅ **Penguin Trainer accepted.**\n\nYou now have the **${trainerRole.name}** role.`,
+            flags: MessageFlags.Ephemeral
+        });
+        return true;
+    }
+
     if (action === 'rankpath') {
         await interaction.update(rankPathMessage(targetUserId));
         return true;
@@ -356,5 +420,6 @@ async function handleTrainerButton(interaction) {
 
 module.exports = {
     handleTrainerButton,
-    startTrainerOnboardingForMember
+    startTrainerOnboardingForMember,
+    startTrainerTrainingForMember
 };
