@@ -57,6 +57,23 @@ const STAFF_RANKS = [
     }
 ];
 
+const RANK_ROLE_IDS = new Map([
+    ['Penguin Soldier', process.env.PENGUIN_SOLDIER_ROLE_ID || '1512488337905291286'],
+    ['Penguin Captain', process.env.PENGUIN_CAPTAIN_ROLE_ID || '1512488339046010930'],
+    ['Penguin General', process.env.PENGUIN_GENERAL_ROLE_ID || '1512488340673269872'],
+    ['Emperor Penguin', process.env.EMPEROR_PENGUIN_ROLE_ID || '1512488341541486683']
+]);
+
+const STAFF_ROLE_IDS = new Map([
+    ['Trial Mod', process.env.TRIAL_MOD_ROLE_ID || '1512488342980395230'],
+    ['Moderator', process.env.MODERATOR_ROLE_ID || '1512488343768793360'],
+    ['Sr Moderator', process.env.SR_MODERATOR_ROLE_ID || '1512488344440016936'],
+    ['Admin', process.env.ADMIN_ROLE_ID || '1512488345312170237']
+]);
+
+const TRAINER_ROLE_NAME = 'Penguin Trainer';
+const TRAINER_ROLE_ID = process.env.PENGUIN_TRAINER_ROLE_ID || '1514334462186492116';
+
 const DEFAULT_RANK_NAME = 'Penguin Soldier';
 const PROMOTION_EVENTS_CHANNEL_NAME = '🎉-promotion-events';
 const WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME = '🏆-weekly-recruits';
@@ -128,6 +145,20 @@ function rememberRole(guild, role, options = {}) {
     if (cache.guildRoles) {
         cache.guildRoles.set(role.id, role);
     }
+}
+
+function findConfiguredRole(guildRoles, roleName, roleId, label) {
+    if (roleId) {
+        const roleById = guildRoles.get(roleId);
+
+        if (roleById) {
+            return roleById;
+        }
+
+        console.warn(`${label} role ID ${roleId} for "${roleName}" was not found. Falling back to role name lookup.`);
+    }
+
+    return guildRoles.find(existingRole => existingRole.name === roleName);
 }
 
 function invalidateGuildRoleCache(guild) {
@@ -230,6 +261,9 @@ async function ensureDatabaseSchema(sql) {
             ban_points_remaining int not null default 0 check (ban_points_remaining >= 0),
             status text not null default 'active',
             welcome_reminder_sent_at timestamptz,
+            first_captain_branch_notified_at timestamptz,
+            first_general_branch_notified_at timestamptz,
+            first_emperor_branch_notified_at timestamptz,
             created_at timestamptz not null default now(),
             updated_at timestamptz not null default now(),
             constraint player_cannot_be_own_parent
@@ -270,6 +304,21 @@ async function ensureDatabaseSchema(sql) {
     await sql`
         alter table players
         add column if not exists welcome_reminder_sent_at timestamptz
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists first_captain_branch_notified_at timestamptz
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists first_general_branch_notified_at timestamptz
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists first_emperor_branch_notified_at timestamptz
     `;
 
     await sql`
@@ -599,7 +648,7 @@ async function ensureRankRoles(guild, options = {}) {
     let rolesUpdated = 0;
 
     for (const rank of RANKS) {
-        let role = guildRoles.find(existingRole => existingRole.name === rank.name);
+        let role = findConfiguredRole(guildRoles, rank.name, RANK_ROLE_IDS.get(rank.name), 'Penguin rank');
 
         if (!role) {
             role = await guild.roles.create({
@@ -657,7 +706,7 @@ async function ensureStaffRoles(guild, options = {}) {
     let rolesUpdated = 0;
 
     for (const staffRank of STAFF_RANKS) {
-        let role = guildRoles.find(existingRole => existingRole.name === staffRank.name);
+        let role = findConfiguredRole(guildRoles, staffRank.name, STAFF_ROLE_IDS.get(staffRank.name), 'Staff rank');
         const requiredPermissions = staffRank.permissions || 0n;
 
         if (!role) {
@@ -702,6 +751,43 @@ async function ensureStaffRoles(guild, options = {}) {
         staffRoles,
         rolesCreated,
         rolesUpdated
+    };
+}
+
+async function ensureTrainerRole(guild, options = {}) {
+    const guildRoles = await getGuildRoles(guild, options);
+    let role = findConfiguredRole(guildRoles, TRAINER_ROLE_NAME, TRAINER_ROLE_ID, 'Trainer');
+    let roleCreated = false;
+    let roleUpdated = false;
+
+    if (!role) {
+        role = await guild.roles.create({
+            name: TRAINER_ROLE_NAME,
+            colors: {
+                primaryColor: 0x2ECC71
+            },
+            hoist: true,
+            reason: 'Penguin Mafia trainer role setup'
+        });
+        roleCreated = true;
+    } else if (
+        role.name !== TRAINER_ROLE_NAME ||
+        !role.hoist
+    ) {
+        role = await role.edit({
+            name: TRAINER_ROLE_NAME,
+            hoist: true,
+            reason: 'Penguin Mafia trainer role setup'
+        });
+        roleUpdated = true;
+    }
+
+    rememberRole(guild, role, options);
+
+    return {
+        trainerRole: role,
+        roleCreated,
+        roleUpdated
     };
 }
 
@@ -1322,8 +1408,12 @@ module.exports = {
     MOD_LOG_CHANNEL_NAME,
     PROMOTION_EVENTS_CHANNEL_ID,
     PROMOTION_EVENTS_CHANNEL_NAME,
+    RANK_ROLE_IDS,
     RANKS,
+    STAFF_ROLE_IDS,
     STAFF_RANKS,
+    TRAINER_ROLE_ID,
+    TRAINER_ROLE_NAME,
     WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
     WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME,
     WELCOME_CATEGORY_NAME,
@@ -1332,6 +1422,7 @@ module.exports = {
     ensureWelcomeCategory,
     ensureRankRoles,
     ensureStaffRoles,
+    ensureTrainerRole,
     getMemberStaffRankName,
     invalidateGuildRoleCache,
     removeMemberRankRoles,

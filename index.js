@@ -10,6 +10,7 @@ const {
     ensureInfoChannels,
     ensureRankRoles,
     ensureStaffRoles,
+    ensureTrainerRole,
     invalidateGuildRoleCache,
     removeMemberRankRoles,
     syncMemberRankRole,
@@ -19,6 +20,7 @@ const {
     updateLeaderboardsForGuild
 } = require('./utils/leaderboards.js');
 const {
+    postBranchMilestoneEvents,
     postFirstRecruitEvent
 } = require('./utils/events.js');
 const {
@@ -40,6 +42,9 @@ const {
 const {
     handleTrialModButton
 } = require('./utils/trialModOnboarding.js');
+const {
+    handleTrainerButton
+} = require('./utils/trainerOnboarding.js');
 const {
     formatChannel,
     formatUser,
@@ -203,13 +208,20 @@ async function setupGuildOnStartup(guild) {
     } = await ensureStaffRoles(guild);
     logStartupStep('staff roles ready');
 
+    const {
+        roleCreated: trainerRoleCreated,
+        roleUpdated: trainerRoleUpdated
+    } = await ensureTrainerRole(guild);
+    logStartupStep('trainer role ready');
+
     await ensureInfoChannels(guild, rankRoles, staffRoles);
     logStartupStep('managed channels ready');
 
     console.log(
         `Startup setup complete for ${guild.name}: ` +
         `roles created=${rolesCreated}, roles updated=${rolesUpdated}, ` +
-        `staff roles created=${staffRolesCreated}, staff roles updated=${staffRolesUpdated}. ` +
+        `staff roles created=${staffRolesCreated}, staff roles updated=${staffRolesUpdated}, ` +
+        `trainer role created=${trainerRoleCreated ? 1 : 0}, trainer role updated=${trainerRoleUpdated ? 1 : 0}. ` +
         `Member sync will run last.`
     );
 
@@ -922,6 +934,12 @@ async function processJoinBatch(guild) {
                 return false;
             });
 
+            await postBranchMilestoneEvents(guild, sql, inviter.id).catch(error => {
+                console.error('Branch milestone event failed after invite join:');
+                console.error(error);
+                return [];
+            });
+
             await updateLeaderboardsForGuild(guild, sql);
 
             console.log(`${member.user.tag} was safely assigned to ${inviter.tag}.`);
@@ -1206,6 +1224,9 @@ client.once(Events.ClientReady, async () => {
 client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isButton()) {
         try {
+            const trainerHandled = await handleTrainerButton(interaction);
+            if (trainerHandled) return;
+
             const trialModHandled = await handleTrialModButton(interaction);
             if (trialModHandled) return;
 

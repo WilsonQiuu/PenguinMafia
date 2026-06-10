@@ -8,6 +8,9 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
+    postBranchMilestoneEvents
+} = require('../utils/events.js');
+const {
     updateElectionLeaderboard
 } = require('../utils/elections.js');
 const {
@@ -72,7 +75,10 @@ async function moveHigherRecruitsUpAfterDemotion(sql, playerDiscordId, demotedRa
         where discord_id in ${sql(higherRecruits.map(recruit => recruit.discord_id))}
     `;
 
-    return higherRecruits;
+    return higherRecruits.map(recruit => ({
+        ...recruit,
+        parent_discord_id: player.parent_discord_id
+    }));
 }
 
 module.exports = {
@@ -115,6 +121,7 @@ module.exports = {
                     discord_id,
                     discord_username,
                     discord_display_name,
+                    parent_discord_id,
                     rank_name
                 from players
                 where discord_id = ${playerUser.id}
@@ -163,6 +170,19 @@ module.exports = {
                 fallLine +
                 `Discord role synced: **${syncedRole ? 'yes' : 'no'}**`
             );
+
+            const milestoneRecruiterIds = new Set([
+                player.parent_discord_id,
+                ...falls.map(fall => fall.parent_discord_id)
+            ].filter(Boolean));
+
+            for (const recruiterId of milestoneRecruiterIds) {
+                await postBranchMilestoneEvents(interaction.guild, sql, recruiterId).catch(error => {
+                    console.error('Branch milestone event failed after /demote:');
+                    console.error(error);
+                    return [];
+                });
+            }
 
             await updateElectionLeaderboard(interaction.guild, sql).catch(error => {
                 console.error('Election leaderboard refresh failed after /demote:');

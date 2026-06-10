@@ -165,6 +165,109 @@ async function postFirstRecruitEvent(guild, db, {
     return true;
 }
 
+const BRANCH_MILESTONES = [
+    {
+        rankName: 'Penguin Captain',
+        columnName: 'first_captain_branch_notified_at',
+        title: '🟢⭐ FIRST CAPTAIN BRANCH! ⭐🟢',
+        line: 'now has their first **Penguin Captain** under them.',
+        flavor: 'The colony is growing. That branch has leadership energy. 🐧🌲'
+    },
+    {
+        rankName: 'Penguin General',
+        columnName: 'first_general_branch_notified_at',
+        title: '🟡⭐ FIRST GENERAL BRANCH! ⭐🟡',
+        line: 'now has their first **Penguin General** under them.',
+        flavor: 'That branch is getting powerful. The ice noticed. 🐧⚡'
+    },
+    {
+        rankName: 'Emperor Penguin',
+        columnName: 'first_emperor_branch_notified_at',
+        title: '🟣⭐ FIRST EMPEROR BRANCH! ⭐🟣',
+        line: 'now has their first **Emperor Penguin** under them.',
+        flavor: 'Royal ice energy detected. The tree is officially serious. 👑🐧'
+    }
+];
+
+async function postBranchMilestoneEvents(guild, db, recruiterId) {
+    if (!recruiterId) {
+        return [];
+    }
+
+    const channel = await findPromotionEventsChannel(guild);
+
+    if (!channel) {
+        console.log(`Promotion event channel ${PROMOTION_EVENTS_CHANNEL_NAME} was not found by ID ${PROMOTION_EVENTS_CHANNEL_ID}.`);
+        return [];
+    }
+
+    const recruiterRows = await db`
+        select
+            discord_id,
+            discord_username,
+            discord_display_name,
+            minecraft_ign,
+            rank_name,
+            first_captain_branch_notified_at,
+            first_general_branch_notified_at,
+            first_emperor_branch_notified_at
+        from players
+        where discord_id = ${recruiterId}
+        limit 1
+    `;
+    const recruiter = recruiterRows[0];
+
+    if (!recruiter) {
+        return [];
+    }
+
+    const children = await db`
+        select rank_name, count(*)::int as count
+        from players
+        where parent_discord_id = ${recruiterId}
+            and rank_name in ('Penguin Captain', 'Penguin General', 'Emperor Penguin')
+        group by rank_name
+    `;
+    const counts = new Map(children.map(row => [row.rank_name, Number(row.count)]));
+    const posted = [];
+
+    for (const milestone of BRANCH_MILESTONES) {
+        if (recruiter[milestone.columnName] || (counts.get(milestone.rankName) || 0) < 1) {
+            continue;
+        }
+
+        const updatedRows = await db`
+            update players
+            set
+                ${db(milestone.columnName)} = now(),
+                updated_at = now()
+            where discord_id = ${recruiterId}
+                and ${db(milestone.columnName)} is null
+            returning discord_id
+        `;
+
+        if (updatedRows.length === 0) {
+            continue;
+        }
+
+        await channel.send({
+            content:
+                `${milestone.title}\n\n` +
+                `<@${recruiterId}> ${milestone.line}\n` +
+                `Penguin: **${playerName(recruiter, 'Unknown Player')}**\n` +
+                `Current rank: **${recruiter.rank_name}**\n\n` +
+                `${milestone.flavor}`,
+            allowedMentions: {
+                users: uniqueMentions(recruiterId)
+            }
+        });
+
+        posted.push(milestone.rankName);
+    }
+
+    return posted;
+}
+
 async function postDonationEvent(guild, {
     playerId,
     amount,
@@ -192,6 +295,7 @@ async function postDonationEvent(guild, {
 }
 
 module.exports = {
+    postBranchMilestoneEvents,
     postDonationEvent,
     postFirstRecruitEvent,
     postPromotionEvent,

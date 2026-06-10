@@ -8,6 +8,7 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
+    postBranchMilestoneEvents,
     postPromotionEvent
 } = require('../utils/events.js');
 const {
@@ -341,6 +342,12 @@ module.exports = {
                     flags: MessageFlags.Ephemeral
                 });
             }
+
+            await postBranchMilestoneEvents(interaction.guild, sql, currentRecruiterRows[0]?.parent_discord_id).catch(error => {
+                console.error('Branch milestone event failed after /promote:');
+                console.error(error);
+                return [];
+            });
 
             await updateElectionLeaderboard(interaction.guild, sql).catch(error => {
                 console.error('Election leaderboard refresh failed after /promote:');

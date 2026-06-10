@@ -11,6 +11,7 @@ const {
     updateWeeklyRecruitsLeaderboardForGuild
 } = require('../utils/leaderboards.js');
 const {
+    postBranchMilestoneEvents,
     postFirstRecruitEvent
 } = require('../utils/events.js');
 const {
@@ -188,6 +189,12 @@ module.exports = {
                 console.error('First recruit promotion event failed after /join:');
                 console.error(error);
                 return false;
+            });
+
+            await postBranchMilestoneEvents(interaction.guild, sql, parentUser.id).catch(error => {
+                console.error('Branch milestone event failed after /join:');
+                console.error(error);
+                return [];
             });
         } catch (error) {
             logCommandError(interaction, '/join', error);
