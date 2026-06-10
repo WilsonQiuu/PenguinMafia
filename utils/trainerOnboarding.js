@@ -60,14 +60,14 @@ function introMessage(member) {
 function welcomeRecruitsMessage(userId) {
     return {
         content:
-            `# 🐧 TRAINING\n\n` +
-            `Use \`/training\` anytime to come back here.\n\n` +
+            `# 🐧 TRAINER GUIDE\n\n` +
+            `Use \`/training\` anytime to bring this guide back.\n\n` +
             `## Part 1 • First Recruit\n\n` +
-            `Do **not** explain everything at once.\n\n` +
-            `First goal only:\n` +
-            `🐧 Find **1 recruit**\n` +
-            `🎨 They put on **any penguin skin**\n` +
-            `🔗 They join with your invite\n\n` +
+            `Do **not** explain the whole rank path yet.\n\n` +
+            `Help the new recruit focus on one mission:\n` +
+            `🐧 Get their **first recruit**\n` +
+            `🎨 That recruit puts on **any penguin skin**\n` +
+            `🔗 That recruit joins with their invite\n\n` +
             `If the bot misses it, have them use:\n` +
             `\`/join recruiter:@YourDiscord\``,
         components: [
@@ -80,8 +80,8 @@ function graphTrainingMessage(userId) {
     return {
         content:
             `# 🎩 Part 2 • Captain Goal\n\n` +
-            `After they get recruit #1, reveal the next step.\n\n` +
-            `Goal:\n` +
+            `Only teach this after they finish Part 1.\n\n` +
+            `Help the recruit:\n` +
             `🐧 Recruit **2 more penguins**\n` +
             `📊 Reach **3 direct recruits total**\n` +
             `🎩 Become **Penguin Captain**\n\n` +
@@ -96,12 +96,12 @@ function teamBuildingMessage(userId) {
     return {
         content:
             `# 🎓 Part 3 • Train A Captain\n\n` +
-            `After Captain, their job is not just recruiting.\n\n` +
-            `Goal:\n` +
-            `🐧 Get more recruits\n` +
-            `🎩 Train **at least 1 recruit** to Captain\n` +
+            `Only teach this after they become Captain.\n\n` +
+            `Now help them learn leadership:\n` +
+            `🐧 Keep recruiting\n` +
+            `🎩 Help **1 of their recruits** become Captain\n` +
             `🎓 This is when Penguin Trainer can be offered\n\n` +
-            `Trainer is a side role. It does not replace Penguin rank.`,
+            `Remind them: Trainer is a side role. It does not replace Penguin rank.`,
         components: [
             row(button('rankpath', userId, 'Part 4'))
         ]
@@ -112,8 +112,8 @@ function rankPathMessage(userId) {
     return {
         content:
             `# ⭐ Part 4 • General Goal\n\n` +
-            `Now they are building leaders.\n\n` +
-            `Goal:\n` +
+            `Only teach this after they have trained 1 Captain.\n\n` +
+            `Help them build more leaders:\n` +
             `🎩 Help **2 more recruits** become Captains\n` +
             `📊 Reach **3 direct Captains total**\n` +
             `⭐ Become **Penguin General**`,
@@ -127,11 +127,11 @@ function powersMessage(userId) {
     return {
         content:
             `# 👑 Part 5 • Emperor Goal\n\n` +
-            `Final climb. Biggest iceberg.\n\n` +
-            `Goal:\n` +
-            `⭐ Help **2 recruits** become Generals\n` +
-            `👑 Become **Emperor Penguin**\n\n` +
-            `Train slowly. Reveal the next goal only when they finish the current one.`,
+            `Only teach this after they become General.\n\n` +
+            `Final coaching goal:\n` +
+            `⭐ Help **2 of their recruits** become Generals\n` +
+            `👑 They become **Emperor Penguin**\n\n` +
+            `Train slowly. Reveal the next goal only after they finish the current one.`,
         components: [
             row(button('finish', userId, 'Finish'))
         ]
@@ -142,7 +142,7 @@ function finalMessage(userId) {
     return {
         content:
             `# ✅ TRAINER TRAINING COMPLETE\n\n` +
-            `You are ready to train new recruits.\n\n` +
+            `You are ready to guide recruits one step at a time.\n\n` +
             `Press **Done** to close this room.`,
         components: [
             row(button('done', userId, 'Done'))

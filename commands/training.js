@@ -7,6 +7,10 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
+    TRAINER_ROLE_NAME,
+    ensureTrainerRole
+} = require('../utils/bootstrap.js');
+const {
     startTrainerTrainingForMember
 } = require('../utils/trainerOnboarding.js');
 
@@ -21,11 +25,20 @@ module.exports = {
         });
 
         try {
+            const { trainerRole } = await ensureTrainerRole(interaction.guild);
+
+            if (!interaction.member.roles.cache.has(trainerRole.id)) {
+                await interaction.editReply(
+                    `❌ Only **${TRAINER_ROLE_NAME}** members can use \`/training\`.`
+                );
+                return;
+            }
+
             const channel = await startTrainerTrainingForMember(interaction.member);
 
             await interaction.editReply(
                 `✅ Training opened in ${channel}.\n\n` +
-                `Use \`/training\` anytime to come back to the staged Penguin training.`
+                `Use \`/training\` anytime to come back to the trainer guide.`
             );
         } catch (error) {
             logCommandError(interaction, '/training', error);
