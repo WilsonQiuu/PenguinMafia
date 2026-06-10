@@ -11,7 +11,6 @@ const {
     ensureTrainerRole,
     ensureWelcomeCategory
 } = require('./bootstrap.js');
-const sql = require('../db.js');
 
 const BUTTON_PREFIX = 'trainer';
 
@@ -101,13 +100,10 @@ function teamBuildingMessage(userId) {
             `Goal:\n` +
             `🐧 Get more recruits\n` +
             `🎩 Train **at least 1 recruit** to Captain\n` +
-            `🎓 Unlock the option to accept **Penguin Trainer**\n\n` +
+            `🎓 This is when Penguin Trainer can be offered\n\n` +
             `Trainer is a side role. It does not replace Penguin rank.`,
         components: [
-            row(
-                button('accept_trainer', userId, 'Accept Trainer', ButtonStyle.Primary),
-                button('rankpath', userId, 'Part 4')
-            )
+            row(button('rankpath', userId, 'Part 4'))
         ]
     };
 }
@@ -307,17 +303,6 @@ async function startTrainerTrainingForMember(member, context = {}) {
     return channel;
 }
 
-async function hasDirectCaptain(playerId) {
-    const rows = await sql`
-        select count(*)::int as count
-        from players
-        where parent_discord_id = ${playerId}
-            and rank_name in ('Penguin Captain', 'Penguin General', 'Emperor Penguin')
-    `;
-
-    return Number(rows[0]?.count || 0) >= 1;
-}
-
 async function handleTrainerButton(interaction) {
     const parts = interaction.customId.split(':');
 
@@ -362,32 +347,6 @@ async function handleTrainerButton(interaction) {
 
     if (action === 'team') {
         await interaction.update(teamBuildingMessage(targetUserId));
-        return true;
-    }
-
-    if (action === 'accept_trainer') {
-        const member = await interaction.guild.members.fetch(targetUserId);
-
-        if (!(await hasDirectCaptain(targetUserId))) {
-            await interaction.reply({
-                content:
-                    `🐧 Not yet.\n\n` +
-                    `To accept **Penguin Trainer**, you need at least **1 direct recruit** at **Penguin Captain or higher**.`,
-                flags: MessageFlags.Ephemeral
-            });
-            return true;
-        }
-
-        const { trainerRole } = await ensureTrainerRole(interaction.guild);
-
-        if (!member.roles.cache.has(trainerRole.id)) {
-            await member.roles.add(trainerRole, 'Penguin Mafia Trainer accepted from /training');
-        }
-
-        await interaction.reply({
-            content: `✅ **Penguin Trainer accepted.**\n\nYou now have the **${trainerRole.name}** role.`,
-            flags: MessageFlags.Ephemeral
-        });
         return true;
     }
 
