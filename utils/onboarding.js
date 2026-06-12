@@ -152,7 +152,7 @@ function recruitingMessage(userId, isTest = false) {
     return {
         content:
             `# 📣 RECRUITING\n\n` +
-            `## 🍩 Find players on DonutSMP\n\n` +
+            `## 🎮 Find a Minecraft player\n\n` +
             `Rule #1: **Penguins only.** 🐧✅\n\n` +
             `1. They put on **any penguin skin**\n` +
             `2. Send your invite link\n` +

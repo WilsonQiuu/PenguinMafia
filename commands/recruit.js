@@ -17,7 +17,7 @@ module.exports = {
             await interaction.reply({
                 content:
                     `📣🐧 **HOW TO RECRUIT MORE PENGUINS** 🐧📣\n\n` +
-                    `Your mission: find players on the DonutSMP who have the heart of a penguin. Brave players. Funny players. Players ready to join the waddling empire. 🍩❄️\n\n` +
+                    `Your mission: find a Minecraft player who has the heart of a penguin. Brave players. Funny players. Players ready to join the waddling empire. 🎮❄️\n\n` +
                     `There is one sacred rule: **they must become a penguin first.** 🐧✅\n\n` +
                     `Ask them to change their Minecraft skin to any penguin skin. Fancy penguin, tiny penguin, royal penguin, business penguin, sleepy penguin, all are accepted. The Mafia is for penguins only. 🐧🎩\n\n` +
                     `Once they are officially penguin-shaped, invite them to the Discord using your invite link. Our bots will try to detect that they came from you and mark them as your recruit automatically. 🤖📨\n\n` +
