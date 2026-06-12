@@ -11,6 +11,9 @@ const {
     ensureTrainerRole,
     ensureWelcomeCategory
 } = require('./bootstrap.js');
+const {
+    postTrainerPromotionEvent
+} = require('./events.js');
 
 const BUTTON_PREFIX = 'trainer';
 
@@ -62,16 +65,15 @@ function welcomeRecruitsMessage(userId) {
         content:
             `# 🐧 TRAINER GUIDE\n\n` +
             `Use \`/training\` anytime to bring this guide back.\n\n` +
-            `## Part 1 • First Recruit\n\n` +
-            `Do **not** explain the whole rank path yet.\n\n` +
-            `Help the new recruit focus on one mission:\n` +
-            `🐧 Get their **first recruit**\n` +
-            `🎨 That recruit puts on **any penguin skin**\n` +
-            `🔗 That recruit joins with their invite\n\n` +
-            `If the bot misses it, have them use:\n` +
-            `\`/join recruiter:@YourDiscord\``,
+            `## Before Part 1 • Welcome Them\n\n` +
+            `Welcome the new recruit to the server first.\n\n` +
+            `Make them feel seen:\n` +
+            `👋 Say hi\n` +
+            `🐧 Welcome them to the Penguin Mafia\n` +
+            `🧊 Let them know you will guide them step by step\n\n` +
+            `Do **not** explain the whole rank path yet.`,
         components: [
-            row(button('graphs', userId, 'Part 2'))
+            row(button('graphs', userId, 'Part 1'))
         ]
     };
 }
@@ -79,20 +81,42 @@ function welcomeRecruitsMessage(userId) {
 function graphTrainingMessage(userId) {
     return {
         content:
+            `# 📊 Part 1 • Show The Graph\n\n` +
+            `Do **not** explain the whole rank path yet.\n\n` +
+            `First, teach \`/graph\`:\n` +
+            `🐧 Have them use \`/graph\` on themselves\n` +
+            `🌱 Show them their starting tree\n` +
+            `🌲 Use \`/graph\` on someone with a bigger tree\n\n` +
+            `Then explain the first mission:\n\n` +
+            `Help the new recruit focus on one mission:\n` +
+            `🐧 Get their **first recruit**\n` +
+            `🎨 That recruit puts on **any penguin skin**\n` +
+            `🔗 That recruit joins with their invite\n\n` +
+            `If the bot misses it, have them use:\n` +
+            `\`/join recruiter:@YourDiscord\``,
+        components: [
+            row(button('team', userId, 'Part 2'))
+        ]
+    };
+}
+
+function teamBuildingMessage(userId) {
+    return {
+        content:
             `# 🎩 Part 2 • Captain Goal\n\n` +
-            `Only teach this after they finish Part 1.\n\n` +
+            `Only teach this after they get their first recruit.\n\n` +
             `Help the recruit:\n` +
             `🐧 Recruit **2 more penguins**\n` +
             `📊 Reach **3 direct recruits total**\n` +
             `🎩 Become **Penguin Captain**\n\n` +
             `Keep it simple. One iceberg at a time.`,
         components: [
-            row(button('team', userId, 'Part 3'))
+            row(button('rankpath', userId, 'Part 3'))
         ]
     };
 }
 
-function teamBuildingMessage(userId) {
+function rankPathMessage(userId) {
     return {
         content:
             `# 🎓 Part 3 • Train A Captain\n\n` +
@@ -103,12 +127,12 @@ function teamBuildingMessage(userId) {
             `🎓 This is when Penguin Trainer can be offered\n\n` +
             `Remind them: Trainer is a side role. It does not replace Penguin rank.`,
         components: [
-            row(button('rankpath', userId, 'Part 4'))
+            row(button('powers', userId, 'Part 4'))
         ]
     };
 }
 
-function rankPathMessage(userId) {
+function powersMessage(userId) {
     return {
         content:
             `# ⭐ Part 4 • General Goal\n\n` +
@@ -118,12 +142,12 @@ function rankPathMessage(userId) {
             `📊 Reach **3 direct Captains total**\n` +
             `⭐ Become **Penguin General**`,
         components: [
-            row(button('powers', userId, 'Part 5'))
+            row(button('finish', userId, 'Part 5'))
         ]
     };
 }
 
-function powersMessage(userId) {
+function finalPathMessage(userId) {
     return {
         content:
             `# 👑 Part 5 • Emperor Goal\n\n` +
@@ -133,7 +157,7 @@ function powersMessage(userId) {
             `👑 They become **Emperor Penguin**\n\n` +
             `Train slowly. Reveal the next goal only after they finish the current one.`,
         components: [
-            row(button('finish', userId, 'Finish'))
+            row(button('complete', userId, 'Finish'))
         ]
     };
 }
@@ -331,9 +355,18 @@ async function handleTrainerButton(interaction) {
     if (action === 'accept') {
         const member = await interaction.guild.members.fetch(targetUserId);
         const { trainerRole } = await ensureTrainerRole(interaction.guild);
+        const wasAlreadyTrainer = member.roles.cache.has(trainerRole.id);
 
-        if (!member.roles.cache.has(trainerRole.id)) {
+        if (!wasAlreadyTrainer) {
             await member.roles.add(trainerRole, 'Penguin Mafia Trainer accepted onboarding');
+
+            await postTrainerPromotionEvent(interaction.guild, {
+                playerId: targetUserId
+            }).catch(error => {
+                console.error('Promotion event channel post failed after Trainer acceptance:');
+                console.error(error);
+                return false;
+            });
         }
 
         await interaction.update(welcomeRecruitsMessage(targetUserId));
@@ -361,6 +394,11 @@ async function handleTrainerButton(interaction) {
     }
 
     if (action === 'finish') {
+        await interaction.update(finalPathMessage(targetUserId));
+        return true;
+    }
+
+    if (action === 'complete') {
         await interaction.update(finalMessage(targetUserId));
         return true;
     }

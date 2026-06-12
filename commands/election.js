@@ -47,7 +47,8 @@ module.exports = {
                 `# 🗳️ Penguin Mafia DON Election\n\n` +
                 `Voting ends <t:${endsAt}:R>.\n` +
                 `Leaderboard: <#${ELECTION_LEADERBOARD_CHANNEL_ID}>\n\n` +
-                `Use \`/vote player:@Player\` or \`/transfervotes player:@Player\`.\n\n` +
+                `Use \`/vote player:@Player\` to cast your vote.\n` +
+                `Use \`/transfervotes player:@Player\` to transfer votes cast for you.\n\n` +
                 `## Top Penguins\n${topLines}`
             );
         } catch (error) {

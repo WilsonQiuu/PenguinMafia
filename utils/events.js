@@ -89,6 +89,29 @@ async function postStaffPromotionEvent(guild, {
     return true;
 }
 
+async function postTrainerPromotionEvent(guild, {
+    playerId
+}) {
+    const channel = await findPromotionEventsChannel(guild);
+
+    if (!channel) {
+        console.log(`Promotion event channel ${PROMOTION_EVENTS_CHANNEL_NAME} was not found by ID ${PROMOTION_EVENTS_CHANNEL_ID}.`);
+        return false;
+    }
+
+    await channel.send({
+        content:
+            `🎓🐧 **NEW PENGUIN TRAINER!** 🐧🎓\n\n` +
+            `<@${playerId}> has accepted the **Penguin Trainer** role!\n\n` +
+            `They can now help guide fresh recruits one iceberg at a time. 🧊📚`,
+        allowedMentions: {
+            users: uniqueMentions(playerId)
+        }
+    });
+
+    return true;
+}
+
 async function postFirstRecruitEvent(guild, db, {
     recruiterId,
     recruitId
@@ -299,5 +322,6 @@ module.exports = {
     postDonationEvent,
     postFirstRecruitEvent,
     postPromotionEvent,
-    postStaffPromotionEvent
+    postStaffPromotionEvent,
+    postTrainerPromotionEvent
 };

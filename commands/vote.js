@@ -40,7 +40,7 @@ module.exports = {
             await interaction.editReply(
                 `✅ **Vote locked in!**\n\n` +
                 `You sent **${result.weight}** vote${result.weight === 1 ? '' : 's'} to ${targetUser} because you are **${result.rankName}**.\n\n` +
-                `You can change your vote any time with \`/vote\` or \`/transfervotes\`.`
+                `You can change your own vote any time with \`/vote\`.`
             );
         } catch (error) {
             logCommandError(interaction, '/vote', error);

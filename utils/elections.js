@@ -140,7 +140,7 @@ function renderElectionCommandsMessage() {
             `\`/vote player:@Player\`\n` +
             `Cast all of your vote power for one penguin.\n\n` +
             `\`/transfervotes player:@Player\`\n` +
-            `Move all of your vote power to another candidate.\n\n` +
+            `Transfer the votes cast **for you** to another candidate.\n\n` +
             `\`/election\`\n` +
             `Check the current election, time left, and top penguins.\n\n` +
             `\`/electionremove\`\n` +
@@ -177,8 +177,8 @@ function renderActiveLeaderboard(election, scores) {
             `We are voting for the next **DON**.\n\n` +
             `Voting ends <t:${endsAt}:R>.\n\n` +
             `Use \`/vote player:@Player\` to vote.\n` +
-            `Use \`/transfervotes player:@Player\` to move your vote power to a new candidate.\n` +
-            `All of your votes go to **one** player, and you can change your vote any time before the ice clock melts.\n\n` +
+            `Use \`/transfervotes player:@Player\` to transfer votes cast **for you** to another candidate.\n` +
+            `All of your own vote power goes to **one** player, and you can change your own vote with \`/vote\` before the ice clock melts.\n\n` +
             `## 🧊 Vote Power\n` +
             `${rankVoteLine('Penguin Soldier')}\n` +
             `${rankVoteLine('Penguin Captain')}\n` +
@@ -568,6 +568,103 @@ async function castElectionVote(guild, voterUser, targetUser, db = sql, options 
     };
 }
 
+async function transferReceivedElectionVotes(guild, sourceUser, targetUser, db = sql) {
+    const election = await getActiveElection(db);
+
+    if (!election) {
+        throw new Error('There is no active election right now. The ballot box is closed.');
+    }
+
+    if (new Date(election.ends_at).getTime() <= Date.now()) {
+        await endElection(guild, null, db, 'ended');
+        throw new Error('The election timer has ended. The ballot box just snapped shut.');
+    }
+
+    if (sourceUser.id === targetUser.id) {
+        throw new Error('You cannot transfer your received votes to yourself.');
+    }
+
+    const rows = await db`
+        select
+            source.discord_id as source_discord_id,
+            source.discord_username as source_username,
+            source.discord_display_name as source_display_name,
+            source.minecraft_ign as source_minecraft_ign,
+            target.discord_id as target_discord_id,
+            target.discord_username as target_username,
+            target.discord_display_name as target_display_name,
+            target.minecraft_ign as target_minecraft_ign,
+            excluded.player_discord_id as target_excluded
+        from players source
+        cross join players target
+        left join election_exclusions excluded
+            on excluded.election_id = ${election.id}
+            and excluded.player_discord_id = target.discord_id
+        where source.discord_id = ${sourceUser.id}
+            and target.discord_id = ${targetUser.id}
+        limit 1
+    `;
+    const row = rows[0];
+
+    if (!row) {
+        throw new Error('Both players need to be registered Penguin Mafia players.');
+    }
+
+    if (row.target_excluded) {
+        throw new Error('That penguin has left the election and cannot receive votes.');
+    }
+
+    const transferredVotes = await db`
+        with moved_votes as (
+            update election_votes
+            set
+                target_discord_id = ${targetUser.id},
+                updated_at = now()
+            where election_id = ${election.id}
+                and target_discord_id = ${sourceUser.id}
+            returning voter_discord_id
+        )
+        select
+            voter.discord_id,
+            voter.rank_name,
+            case voter.rank_name
+                when 'Penguin Soldier' then 1
+                when 'Penguin Captain' then 3
+                when 'Penguin General' then 5
+                when 'Emperor Penguin' then 10
+                else 0
+            end as votes
+        from moved_votes moved
+        join players voter
+            on voter.discord_id = moved.voter_discord_id
+    `;
+
+    if (transferredVotes.length === 0) {
+        throw new Error('You do not currently have any votes to transfer.');
+    }
+
+    const totalWeight = transferredVotes.reduce((sum, vote) => {
+        return sum + Number(vote.votes || 0);
+    }, 0);
+    const voterCount = transferredVotes.length;
+
+    await postVoteEvent(
+        guild,
+        `🔁🐧 **Received Votes Transferred!**\n\n` +
+        `${playerMention(sourceUser.id)} transferred **${totalWeight}** vote${totalWeight === 1 ? '' : 's'} they received to ${playerMention(targetUser.id)}.\n\n` +
+        `That came from **${voterCount}** voter${voterCount === 1 ? '' : 's'}. The voters themselves did not need to re-vote.`,
+        [sourceUser.id, targetUser.id]
+    );
+
+    await updateElectionLeaderboard(guild, db, { election });
+
+    return {
+        election,
+        voterCount,
+        totalWeight
+    };
+}
+
 async function removePlayerFromActiveElection(guild, playerId, removedById, db = sql, options = {}) {
     const election = await getActiveElection(db);
 
@@ -733,5 +830,6 @@ module.exports = {
     rejoinActiveElection,
     removePlayerFromActiveElection,
     startElection,
+    transferReceivedElectionVotes,
     updateElectionLeaderboard
 };
