@@ -2,6 +2,7 @@ const {
     SlashCommandBuilder,
     AttachmentBuilder
 } = require('discord.js');
+const crypto = require('crypto');
 
 const sql = require('../db.js');
 const {
@@ -16,6 +17,62 @@ function playerName(player, fallback = 'Unknown Player') {
         player.discord_display_name ||
         player.discord_username ||
         fallback;
+}
+
+const GRAPH_CACHE_VERSION = 1;
+const MAX_GRAPH_CACHE_ENTRIES = 50;
+const graphImageCache = new Map();
+
+function graphCacheFingerprint(root, recruits) {
+    const graphState = {
+        version: GRAPH_CACHE_VERSION,
+        root: pickGraphPlayerFields(root),
+        recruits: recruits.map(pickGraphPlayerFields)
+    };
+
+    return crypto
+        .createHash('sha256')
+        .update(JSON.stringify(graphState))
+        .digest('hex');
+}
+
+function pickGraphPlayerFields(player) {
+    return {
+        discord_id: player.discord_id,
+        discord_username: player.discord_username,
+        discord_display_name: player.discord_display_name,
+        minecraft_ign: player.minecraft_ign,
+        rank_name: player.rank_name,
+        parent_discord_id: player.parent_discord_id,
+        parent_minecraft_ign: player.parent_minecraft_ign,
+        parent_display_name: player.parent_display_name,
+        parent_username: player.parent_username,
+        depth: player.depth
+    };
+}
+
+function getCachedGraphImage(cacheKey, fingerprint) {
+    const cached = graphImageCache.get(cacheKey);
+
+    if (!cached || cached.fingerprint !== fingerprint) {
+        return null;
+    }
+
+    graphImageCache.delete(cacheKey);
+    graphImageCache.set(cacheKey, cached);
+    return cached.imageBuffer;
+}
+
+function setCachedGraphImage(cacheKey, fingerprint, imageBuffer) {
+    graphImageCache.set(cacheKey, {
+        fingerprint,
+        imageBuffer
+    });
+
+    while (graphImageCache.size > MAX_GRAPH_CACHE_ENTRIES) {
+        const oldestKey = graphImageCache.keys().next().value;
+        graphImageCache.delete(oldestKey);
+    }
 }
 
 module.exports = {
@@ -99,7 +156,16 @@ module.exports = {
                 root.parent_display_name ||
                 root.parent_username ||
                 'None / Orphan';
-            const imageBuffer = await renderRecruitTreeImage(root, recruits);
+            const fingerprint = graphCacheFingerprint(root, recruits);
+            const cacheKey = root.discord_id;
+            let imageBuffer = getCachedGraphImage(cacheKey, fingerprint);
+            const cacheHit = Boolean(imageBuffer);
+
+            if (!imageBuffer) {
+                imageBuffer = await renderRecruitTreeImage(root, recruits);
+                setCachedGraphImage(cacheKey, fingerprint, imageBuffer);
+            }
+
             const attachment = new AttachmentBuilder(imageBuffer, {
                 name: 'penguin-mafia-recruit-graph.png'
             });
@@ -111,6 +177,10 @@ module.exports = {
                 `🐧 **Recruit Graph: ${playerName(root, playerUser.username)}**\n` +
                 `Direct recruiter: \`${directRecruiter}\`\n` +
                 `Total recruits: **${recruits.length}**${largeTreeNotice}`;
+
+            if (cacheHit) {
+                console.log(`Graph cache hit for ${playerUser.tag || playerUser.id} (${playerUser.id}).`);
+            }
 
             await interaction.editReply({
                 content,
