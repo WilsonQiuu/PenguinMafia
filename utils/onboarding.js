@@ -24,6 +24,7 @@ const {
 
 const BUTTON_PREFIX = 'welcome';
 const MODAL_PREFIX = 'welcome_ign_submit';
+const WELCOME_REMINDER_INTERVAL_MS = 2 * 24 * 60 * 60 * 1000;
 
 function buttonId(action, userId, isTest = false) {
     return `${BUTTON_PREFIX}:${action}:${userId}:${isTest ? 'test' : 'live'}`;
@@ -340,7 +341,7 @@ async function ensureWelcomeChannel(member, context = {}) {
     return channel;
 }
 
-async function sendOneTimeWelcomeReminder(member, channel) {
+async function sendWelcomeReminderIfDue(member, channel) {
     const rows = await sql`
         select welcome_completed, welcome_reminder_sent_at
         from players
@@ -349,7 +350,15 @@ async function sendOneTimeWelcomeReminder(member, channel) {
     `;
     const player = rows[0];
 
-    if (!player || player.welcome_completed || player.welcome_reminder_sent_at) {
+    if (!player || player.welcome_completed) {
+        return false;
+    }
+
+    const lastReminderAt = player.welcome_reminder_sent_at
+        ? new Date(player.welcome_reminder_sent_at).getTime()
+        : 0;
+
+    if (lastReminderAt && Date.now() - lastReminderAt < WELCOME_REMINDER_INTERVAL_MS) {
         return false;
     }
 
@@ -389,7 +398,7 @@ async function startOnboardingForMember(member, context = {}) {
     });
 
     if (!isTest) {
-        await sendOneTimeWelcomeReminder(member, channel);
+        await sendWelcomeReminderIfDue(member, channel);
     }
 
     if (alreadyStarted && !isTest) {
@@ -398,6 +407,51 @@ async function startOnboardingForMember(member, context = {}) {
 
     await channel.send(introMessage(member, context));
     return channel;
+}
+
+async function remindIncompleteWelcomeMembers(guild) {
+    const rows = await sql`
+        select discord_id, parent_discord_id
+        from players
+        where welcome_completed = false
+            and (
+                welcome_reminder_sent_at is null
+                or welcome_reminder_sent_at <= now() - interval '2 days'
+            )
+    `;
+
+    if (rows.length === 0) {
+        return {
+            checked: 0,
+            sent: 0
+        };
+    }
+
+    const channelCache = await guild.channels.fetch();
+    let sent = 0;
+
+    for (const player of rows) {
+        const member = await guild.members.fetch(player.discord_id).catch(() => null);
+
+        if (!member || member.user.bot) {
+            continue;
+        }
+
+        const channel = await ensureWelcomeChannel(member, {
+            channelCache,
+            recruiterId: player.parent_discord_id
+        });
+        const reminderSent = await sendWelcomeReminderIfDue(member, channel);
+
+        if (reminderSent) {
+            sent++;
+        }
+    }
+
+    return {
+        checked: rows.length,
+        sent
+    };
 }
 
 async function cleanupWelcomeChannelsForMissingMembers(guild, members) {
@@ -593,6 +647,7 @@ async function handleWelcomeModal(interaction) {
 module.exports = {
     cleanupWelcomeChannelsForMissingMembers,
     recruitingMessage,
+    remindIncompleteWelcomeMembers,
     startOnboardingForMember,
     handleWelcomeButton,
     handleWelcomeModal

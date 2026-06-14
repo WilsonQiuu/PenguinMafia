@@ -37,6 +37,7 @@ const {
     cleanupWelcomeChannelsForMissingMembers,
     handleWelcomeButton,
     handleWelcomeModal,
+    remindIncompleteWelcomeMembers,
     startOnboardingForMember
 } = require('./utils/onboarding.js');
 const {
@@ -1204,6 +1205,23 @@ client.once(Events.ClientReady, async () => {
             console.error(error);
         }
     }
+
+    async function sendDueWelcomeReminders() {
+        for (const [, guild] of client.guilds.cache) {
+            try {
+                const result = await remindIncompleteWelcomeMembers(guild);
+
+                if (result.sent > 0) {
+                    console.log(`Welcome reminders sent for ${guild.name}: ${result.sent}/${result.checked} due member(s).`);
+                }
+            } catch (error) {
+                console.error(`Welcome reminder scan failed for ${guild.name}:`);
+                console.error(error);
+            }
+        }
+    }
+
+    setInterval(sendDueWelcomeReminders, 24 * 60 * 60 * 1000);
 
     setInterval(async () => {
         for (const [, guild] of client.guilds.cache) {
