@@ -35,23 +35,23 @@ const RANKS = [
 const STAFF_RANKS = [
     {
         name: 'Trial Mod',
-        color: 0x95A5A6,
+        color: 0x95FF99,
         banPoints: 0
     },
     {
         name: 'Moderator',
-        color: 0x3498DB,
+        color: 0x67FF4D,
         banPoints: 1
     },
     {
         name: 'Sr Moderator',
-        color: 0x2ECC71,
+        color: 0x06FF00,
         banPoints: 3,
         permissions: PermissionFlagsBits.ManageChannels
     },
     {
         name: 'Admin',
-        color: 0xE74C3C,
+        color: 0xF52813,
         banPoints: 5,
         permissions: PermissionFlagsBits.ManageChannels
     }
