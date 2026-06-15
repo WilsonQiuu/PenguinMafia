@@ -18,7 +18,7 @@ function isDon(userId) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('startelection')
-        .setDescription('Start a 1-week Penguin Mafia DON election. Don only.'),
+        .setDescription('Start a 2-day Penguin Mafia DON election. Don only.'),
 
     async execute(interaction) {
         await interaction.deferReply({

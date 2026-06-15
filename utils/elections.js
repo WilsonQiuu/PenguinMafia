@@ -148,7 +148,7 @@ function renderElectionCommandsMessage() {
             `\`/electionjoin\`\n` +
             `Rejoin the candidate ice. Lost votes do **not** come back.\n\n` +
             `## 👑 Don Commands\n` +
-            `\`/startelection\` - Start a new 1-week election. If one is active, it cancels the old election and resets votes.\n` +
+            `\`/startelection\` - Start a new 2-day election. If one is active, it cancels the old election and resets votes.\n` +
             `\`/endelection\` - End the election and show the winner.\n` +
             `\`/electioncancel\` - Cancel the election with no winner.\n` +
             `\`/electionclear\` - Clear a finished board back to the starting-soon message.\n` +
@@ -433,7 +433,7 @@ async function startElection(guild, createdById, db = sql) {
             )
             values (
                 ${createdById},
-                now() + interval '7 days',
+                now() + interval '2 days',
                 ${existing?.leaderboard_message_id || null}
             )
             returning *
