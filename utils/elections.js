@@ -138,7 +138,7 @@ function renderElectionCommandsMessage() {
             `The election ice can get slippery, so here is the official flipper guide.\n\n` +
             `## 🗳️ Player Commands\n` +
             `\`/vote player:@Player\`\n` +
-            `Cast all of your vote power for one penguin.\n\n` +
+            `Cast all of your vote power for one penguin. Voters stay anonymous.\n\n` +
             `\`/transfervotes player:@Player\`\n` +
             `Transfer the votes cast **for you** to another candidate.\n\n` +
             `\`/election\`\n` +
@@ -152,13 +152,13 @@ function renderElectionCommandsMessage() {
             `\`/endelection\` - End the election and show the winner.\n` +
             `\`/electioncancel\` - Cancel the election with no winner.\n` +
             `\`/electionclear\` - Clear a finished board back to the starting-soon message.\n` +
-            `\`/electionvotes player:@Player\` - Check who voted for a player and how many votes they give.\n\n` +
+            `\`/electionvotes player:@Player\` - Check anonymous vote totals for a player.\n\n` +
             `## 🧊 Vote Power\n` +
             `${rankVoteLine('Penguin Soldier')}\n` +
             `${rankVoteLine('Penguin Captain')}\n` +
             `${rankVoteLine('Penguin General')}\n` +
             `${rankVoteLine('Emperor Penguin')}\n\n` +
-            `All of your votes go to **one** player. You can vote for yourself. You can change your vote before the election ends. 🐧✨`
+            `All of your votes go to **one** player. You can vote for yourself. You can change your vote before the election ends. Voter names are not shown. 🐧✨`
     };
 }
 
@@ -411,6 +411,53 @@ async function postVoteEvent(guild, content, userIds = []) {
     return true;
 }
 
+async function postElectionStartedEvent(guild, election) {
+    const endsAt = Math.floor(new Date(election.ends_at).getTime() / 1000);
+
+    return postVoteEvent(
+        guild,
+        `🚨🐧 **DON ELECTION STARTED!** 🐧🚨\n\n` +
+        `The ballot box is open. Voting ends <t:${endsAt}:R>.\n\n` +
+        `Vote in <#${ELECTION_LEADERBOARD_CHANNEL_ID}> with \`/vote player:@Player\`.\n` +
+        `Need help? Check <#${ELECTION_COMMANDS_CHANNEL_ID}>.\n\n` +
+        `Votes are anonymous. The ice sees totals, not names. 🧊🗳️`
+    );
+}
+
+async function postElectionEndedEvent(guild, election, scores, status = 'ended') {
+    if (status === 'cancelled') {
+        return postVoteEvent(
+            guild,
+            `🧊🐧 **DON ELECTION CANCELLED** 🐧🧊\n\n` +
+            `The ballot box is closed and no winner was chosen.\n\n` +
+            `A new election can be started with \`/startelection\`.`
+        );
+    }
+
+    if (scores.length === 0) {
+        return postVoteEvent(
+            guild,
+            `🏁🐧 **DON ELECTION ENDED** 🐧🏁\n\n` +
+            `No votes were cast, so no winner was chosen.\n\n` +
+            `The crown stays on the ice for now. 👑🧊`
+        );
+    }
+
+    const topVotes = scores[0].votes;
+    const winners = scores.filter(player => player.votes === topVotes);
+    const winnerLine = winners.length === 1
+        ? `${playerMention(winners[0].discord_id)} wins with **${topVotes}** vote${topVotes === 1 ? '' : 's'}!`
+        : `${winners.map(player => playerMention(player.discord_id)).join(' and ')} tie with **${topVotes}** vote${topVotes === 1 ? '' : 's'}!`;
+
+    return postVoteEvent(
+        guild,
+        `🏁🐧 **DON ELECTION ENDED** 🐧🏁\n\n` +
+        `${winnerLine}\n\n` +
+        `Final results are posted in <#${ELECTION_LEADERBOARD_CHANNEL_ID}>. 👑`,
+        winners.map(player => player.discord_id)
+    );
+}
+
 async function startElection(guild, createdById, db = sql) {
     const existing = await getActiveElection(db);
     const election = await db.begin(async transaction => {
@@ -442,10 +489,12 @@ async function startElection(guild, createdById, db = sql) {
         return rows[0];
     });
 
+    election.restarted = Boolean(existing);
+
     await postElectionStartingSoon(guild, election.id, db);
     await updateElectionLeaderboard(guild, db, { election });
+    await postElectionStartedEvent(guild, election);
 
-    election.restarted = Boolean(existing);
     return election;
 }
 
@@ -530,31 +579,30 @@ async function castElectionVote(guild, voterUser, targetUser, db = sql, options 
     `;
 
     const weight = rankVoteWeight(row.voter_rank_name);
-    const voterMention = playerMention(voterUser.id);
     const targetMention = playerMention(targetUser.id);
 
     if (!oldVote) {
         await postVoteEvent(
             guild,
-            `🗳️🐧 **Vote Cast!**\n\n` +
-            `${voterMention} launched **${weight}** vote${weight === 1 ? '' : 's'} across the ice for ${targetMention}.\n\n` +
-            `Why so much power? ${voterMention} is **${row.voter_rank_name}**. Flippers officially counted.`,
-            [voterUser.id, targetUser.id]
+            `🗳️🐧 **Anonymous Vote Cast!**\n\n` +
+            `A secret penguin sent vote power to ${targetMention}.\n\n` +
+            `The ballot is private. The ice has counted it. 🧊🗳️`,
+            [targetUser.id]
         );
     } else if (oldVote.target_discord_id !== targetUser.id) {
         await postVoteEvent(
             guild,
-            `🔁🐧 **Vote Transfer!**\n\n` +
-            `${voterMention} slid **${weight}** vote${weight === 1 ? '' : 's'} from ${playerMention(oldVote.target_discord_id)} to ${targetMention}.\n\n` +
-            `Reason: ${voterMention} is **${row.voter_rank_name}**, and the ice allows vote changes until time runs out.`,
-            [voterUser.id, oldVote.target_discord_id, targetUser.id]
+            `🔁🐧 **Anonymous Vote Changed!**\n\n` +
+            `A secret penguin moved their vote power to ${targetMention}.\n\n` +
+            `The old ballot is private. The new ballot is counted. 🧊`,
+            [targetUser.id]
         );
     } else if (options.forceTransferMessage) {
         await postVoteEvent(
             guild,
-            `🐧🗳️ **Vote Re-Confirmed!**\n\n` +
-            `${voterMention} kept **${weight}** vote${weight === 1 ? '' : 's'} on ${targetMention}. The colony has been reminded.`,
-            [voterUser.id, targetUser.id]
+            `🐧🗳️ **Anonymous Vote Re-Confirmed!**\n\n` +
+            `A secret penguin kept their vote power on ${targetMention}.`,
+            [targetUser.id]
         );
     }
 
@@ -748,8 +796,12 @@ async function endElection(guild, endedById, db = sql, status = 'ended') {
         returning *
     `;
     const election = rows[0];
+    const scores = status === 'cancelled'
+        ? []
+        : await getElectionScores(election.id, db);
 
     await updateElectionLeaderboard(guild, db, { election });
+    await postElectionEndedEvent(guild, election, scores, status);
     return election;
 }
 
@@ -765,7 +817,9 @@ async function finishExpiredElectionsForGuild(guild, db = sql) {
     `;
 
     for (const election of rows) {
+        const scores = await getElectionScores(election.id, db);
         await updateElectionLeaderboard(guild, db, { election });
+        await postElectionEndedEvent(guild, election, scores, 'ended');
     }
 
     return rows;
@@ -780,18 +834,14 @@ async function getVotesForPlayer(playerId, db = sql) {
 
     const rows = await db`
         select
-            voter.discord_id,
-            voter.discord_username,
-            voter.discord_display_name,
-            voter.minecraft_ign,
-            voter.rank_name,
-            case voter.rank_name
+            count(*)::int as voter_count,
+            coalesce(sum(case voter.rank_name
                 when 'Penguin Soldier' then 1
                 when 'Penguin Captain' then 3
                 when 'Penguin General' then 5
                 when 'Emperor Penguin' then 10
                 else 0
-            end as votes
+            end), 0)::int as total
         from election_votes vote
         join players voter
             on voter.discord_id = vote.voter_discord_id
@@ -801,13 +851,16 @@ async function getVotesForPlayer(playerId, db = sql) {
         where vote.election_id = ${election.id}
             and vote.target_discord_id = ${playerId}
             and excluded.player_discord_id is null
-        order by votes desc, voter.discord_display_name asc nulls last, voter.discord_username asc nulls last
     `;
+    const totals = rows[0] || {
+        voter_count: 0,
+        total: 0
+    };
 
     return {
         election,
-        voters: rows,
-        total: rows.reduce((sum, row) => sum + Number(row.votes || 0), 0)
+        voterCount: Number(totals.voter_count || 0),
+        total: Number(totals.total || 0)
     };
 }
 

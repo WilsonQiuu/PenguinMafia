@@ -8,14 +8,13 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
-    getVotesForPlayer,
-    playerName
+    getVotesForPlayer
 } = require('../utils/elections.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('electionvotes')
-        .setDescription('Check who voted for a player in the active election.')
+        .setDescription('Check anonymous vote totals for a player in the active election.')
         .addUserOption(option =>
             option
                 .setName('player')
@@ -37,16 +36,14 @@ module.exports = {
 
         try {
             const result = await getVotesForPlayer(playerUser.id, sql);
-            const voterLines = result.voters.length > 0
-                ? result.voters.slice(0, 25).map(voter => {
-                    return `- **${playerName(voter, voter.discord_id)}** <@${voter.discord_id}>: **${voter.votes}** vote${voter.votes === 1 ? '' : 's'} (${voter.rank_name})`;
-                }).join('\n')
-                : 'No penguins are voting for this player yet.';
+            const voteLine = result.voterCount > 0
+                ? `Anonymous voters: **${result.voterCount}**`
+                : 'No anonymous votes are on this player yet.';
 
             await interaction.editReply(
-                `# 🧾 Votes For ${playerUser.username}\n\n` +
+                `# 🧾 Anonymous Votes For ${playerUser.username}\n\n` +
                 `Total: **${result.total}** vote${result.total === 1 ? '' : 's'}\n\n` +
-                `${voterLines}`
+                `${voteLine}`
             );
         } catch (error) {
             logCommandError(interaction, '/electionvotes', error);
