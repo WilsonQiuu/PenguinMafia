@@ -24,6 +24,7 @@ const {
     postFirstRecruitEvent
 } = require('./utils/events.js');
 const {
+    ensureGettingPromotedInfoBoard,
     ensureRecruitCommandInfoBoard
 } = require('./utils/commandInfo.js');
 const {
@@ -1548,6 +1549,7 @@ client.once(Events.ClientReady, async () => {
 
     for (const [, guild] of client.guilds.cache) {
         try {
+            await ensureGettingPromotedInfoBoard(guild);
             await ensureRecruitCommandInfoBoard(guild);
             await ensureElectionCommandsBoard(guild);
             await finishExpiredElectionsForGuild(guild, sql);

@@ -141,7 +141,7 @@ function ranksMessage(userId, isTest = false) {
             `⭐ **General**\n` +
             `Need **3 direct Captains+**.\n\n` +
             `👑 **Emperor Penguin**\n` +
-            `Need **2 Generals+** and **1 Captain+**.\n\n` +
+            `Need **2 direct Generals+**.\n\n` +
             `## 🐧 Recruit = Rank Up`,
         components: [
             row(scopedButton('recruit', userId, 'Next', ButtonStyle.Success, isTest))

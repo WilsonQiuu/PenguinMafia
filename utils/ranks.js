@@ -73,9 +73,8 @@ function evaluateEligibility(children, targetRank) {
         eligible = captainOrHigher >= 3;
         requirements.push(missingLine('Direct recruits at Penguin Captain or higher', captainOrHigher, 3));
     } else if (targetRank === 'Emperor Penguin') {
-        eligible = generalOrHigher >= 2 && captainOrHigher >= 3;
+        eligible = generalOrHigher >= 2;
         requirements.push(missingLine('Direct recruits at Penguin General or higher', generalOrHigher, 2));
-        requirements.push(missingLine('Total direct recruits at Penguin Captain or higher', captainOrHigher, 3));
     }
 
     return {

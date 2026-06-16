@@ -79,6 +79,7 @@ const PROMOTION_EVENTS_CHANNEL_NAME = '🎉-promotion-events';
 const WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME = '🏆-weekly-recruits';
 const DONATIONS_LEADERBOARD_CHANNEL_NAME = '💎-top-donators';
 const PROMOTION_EVENTS_CHANNEL_ID = process.env.PROMOTION_EVENTS_CHANNEL_ID || '1512488373145702430';
+const RANK_INFO_CHANNEL_ID = process.env.RANK_INFO_CHANNEL_ID || '1512488363788075250';
 const WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID = process.env.WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID || '1512488377490870392';
 const DONATIONS_LEADERBOARD_CHANNEL_ID = process.env.DONATIONS_LEADERBOARD_CHANNEL_ID || '1512488380280082493';
 const WELCOME_CATEGORY_NAME = '🐧-penguin-processing';
@@ -1268,6 +1269,24 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null) {
             `This leaderboard tracks all-time donations.`
     };
 
+    const managedRankInfo = {
+        marker: 'Penguin Mafia Rank Information',
+        body:
+            `🐧📜 **Penguin Mafia Rank Information** 📜🐧\n\n` +
+            `Welcome to the rank board, penguins. This is where waddlers become leaders. 🧊🎖️\n\n` +
+            `Recruiting is one of the biggest ways to rank up. Build your tree, help your penguins grow, and climb together. More penguins, more power. 🐧🌲🐧\n\n` +
+            `🧊 **Penguin Soldier** - Starting rank. Fresh on the ice. **40% commission**\n` +
+            `🎩 **Penguin Captain** - Requires 3 direct recruits at Penguin Soldier or higher. **60% commission**\n` +
+            `⭐ **Penguin General** - Requires 3 direct recruits at Penguin Captain or higher. **80% commission**\n` +
+            `👑 **Emperor Penguin** - Requires 2 direct recruits at Penguin General or higher. **90% commission**\n\n` +
+            `💰 **Commission Info**\n` +
+            `Rank commission is paid through \`/pay\`.\n` +
+            `Your rank sets your total commission rate. Uplines only receive the positive override above the rate already paid below them.\n` +
+            `If a payout reaches an Emperor Penguin, the chain stops there. Any remaining amount goes to that Emperor's direct recruiter when one exists; otherwise unallocated funds go to the Don.\n` +
+            `Players without a linked IGN have their payout saved as unpaid commissions.\n\n` +
+            `Use \`/eligible\` to check rank eligibility and \`/recruit\` to review recruiting training. Make the Don proud. 👑🐧`
+    };
+
     logChannelSetupStep('starting promotion events channel');
     const managedPromotionEventsChannel = await ensureManagedChannel(
         guild,
@@ -1281,6 +1300,13 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null) {
         }
     );
     logChannelSetupStep('promotion events channel ready');
+
+    logChannelSetupStep('starting rank info channel');
+    const managedRankInfoChannel = await ensureInfoChannel(guild, '📜-rank-info', managedRankInfo, rankRoles, {
+        ...sharedChannelOptions,
+        channelId: RANK_INFO_CHANNEL_ID
+    });
+    logChannelSetupStep('rank info channel ready');
 
     logChannelSetupStep('starting weekly recruits leaderboard channel');
     const managedWeeklyRecruitsChannel = await ensureInfoChannel(guild, WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME, managedWeeklyRecruitsLeaderboard, rankRoles, {
@@ -1315,6 +1341,7 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null) {
         leaderboardCategory: null,
         modLogChannel: managedModLogChannel,
         promotionEventsChannel: managedPromotionEventsChannel,
+        rankInfoChannel: managedRankInfoChannel,
         staffCategory: null,
         weeklyRecruitsChannel: managedWeeklyRecruitsChannel
     };
