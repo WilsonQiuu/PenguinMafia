@@ -216,6 +216,17 @@ async function postModLog(guild, title, fields = []) {
         return false;
     }
 
+    const embed = await buildModLogEmbed(guild, title, fields);
+
+    return channel.send({
+        embeds: [embed],
+        allowedMentions: {
+            parse: []
+        }
+    });
+}
+
+async function buildModLogEmbed(guild, title, fields = []) {
     const commandField = findField(fields, ['command']);
     const actorField = findField(fields, ['actor', 'executor', 'deleted by']);
     const thumbnailUrl = await resolveThumbnailUrl(guild, fields);
@@ -236,7 +247,17 @@ async function postModLog(guild, title, fields = []) {
         embed.setThumbnail(thumbnailUrl);
     }
 
-    await channel.send({
+    return embed;
+}
+
+async function editModLog(message, guild, title, fields = []) {
+    if (!message || !guild) {
+        return false;
+    }
+
+    const embed = await buildModLogEmbed(guild, title, fields);
+
+    await message.edit({
         embeds: [embed],
         allowedMentions: {
             parse: []
@@ -247,6 +268,8 @@ async function postModLog(guild, title, fields = []) {
 }
 
 module.exports = {
+    editModLog,
+    findModLogChannel,
     formatChannel,
     formatTimestamp,
     formatUser,

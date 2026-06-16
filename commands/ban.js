@@ -62,7 +62,7 @@ module.exports = {
             option
                 .setName('reason')
                 .setDescription('Reason for the Discord ban')
-                .setRequired(false)
+                .setRequired(true)
         ),
 
     async execute(interaction) {
@@ -88,7 +88,25 @@ module.exports = {
 
         const playerInput = interaction.options.getString('player');
         const playerDiscordId = parseDiscordId(playerInput);
-        const reason = interaction.options.getString('reason') || 'No reason provided';
+        const reason = interaction.options.getString('reason', true).trim();
+
+        if (!reason) {
+            await logBanCommand(interaction, 'Ban Failed', [
+                {
+                    name: 'Target Input',
+                    value: playerInput
+                },
+                {
+                    name: 'Reason',
+                    value: 'A ban reason is required.'
+                }
+            ]);
+
+            await interaction.editReply(
+                '❌ Please provide a reason for the Discord ban.'
+            );
+            return;
+        }
 
         if (!playerDiscordId) {
             await logBanCommand(interaction, 'Ban Failed', [

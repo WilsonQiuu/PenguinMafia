@@ -47,6 +47,8 @@ const {
     handleTrainerButton
 } = require('./utils/trainerOnboarding.js');
 const {
+    editModLog,
+    findModLogChannel,
     formatChannel,
     formatUser,
     postModLog,
@@ -67,7 +69,8 @@ const {
     PresenceUpdateStatus,
     Events,
     MessageFlags,
-    AuditLogEvent
+    AuditLogEvent,
+    ChannelType
 } = require('discord.js');
 
 const client = new Client({
@@ -1035,6 +1038,237 @@ async function findRecentAuditEntry(guild, type, targetId = null) {
     }
 }
 
+function formatRoleList(roles) {
+    if (!roles || roles.length === 0) {
+        return 'None';
+    }
+
+    return roles
+        .map(role => `${role.name} (${role.id})`)
+        .join('\n');
+}
+
+function roleDiff(oldMember, newMember) {
+    const oldRoles = oldMember.roles.cache;
+    const newRoles = newMember.roles.cache;
+
+    return {
+        added: newRoles
+            .filter(role => role.id !== newMember.guild.id && !oldRoles.has(role.id))
+            .map(role => role),
+        removed: oldRoles
+            .filter(role => role.id !== newMember.guild.id && !newRoles.has(role.id))
+            .map(role => role)
+    };
+}
+
+function channelTypeName(channel) {
+    const entry = Object.entries(ChannelType).find(([, value]) => value === channel?.type);
+
+    return entry ? entry[0] : String(channel?.type ?? 'Unknown');
+}
+
+function channelParentName(channel) {
+    if (!channel?.parentId) {
+        return 'None';
+    }
+
+    return channel.parent?.name
+        ? `${channel.parent.name} (${channel.parentId})`
+        : channel.parentId;
+}
+
+function channelOverwriteSnapshot(channel) {
+    return channel?.permissionOverwrites?.cache
+        ?.map(overwrite => `${overwrite.id}:${overwrite.type}:${overwrite.allow.bitfield}:${overwrite.deny.bitfield}`)
+        .sort()
+        .join('|') || '';
+}
+
+function pushChangedField(fields, name, oldValue, newValue) {
+    if (oldValue === newValue) {
+        return;
+    }
+
+    fields.push({
+        name,
+        value: `${oldValue ?? 'None'} → ${newValue ?? 'None'}`
+    });
+}
+
+async function logMemberRoleChanges(oldMember, newMember) {
+    const diff = roleDiff(oldMember, newMember);
+
+    if (diff.added.length === 0 && diff.removed.length === 0) {
+        return;
+    }
+
+    const auditEntry = await findRecentAuditEntry(
+        newMember.guild,
+        AuditLogEvent.MemberRoleUpdate,
+        newMember.user.id
+    );
+
+    await postModLog(newMember.guild, 'Member Roles Updated', [
+        {
+            name: 'Player',
+            value: formatUser(newMember)
+        },
+        {
+            name: 'Executor',
+            value: auditEntry?.executor ? formatUser(auditEntry.executor) : 'Unknown'
+        },
+        {
+            name: 'Roles Added',
+            value: formatRoleList(diff.added)
+        },
+        {
+            name: 'Roles Removed',
+            value: formatRoleList(diff.removed)
+        },
+        {
+            name: 'Reason',
+            value: auditEntry?.reason || 'No reason provided'
+        }
+    ]);
+}
+
+function channelUpdateFields(oldChannel, newChannel) {
+    const fields = [];
+
+    pushChangedField(fields, 'Name', oldChannel.name, newChannel.name);
+    pushChangedField(fields, 'Type', channelTypeName(oldChannel), channelTypeName(newChannel));
+    pushChangedField(fields, 'Category', channelParentName(oldChannel), channelParentName(newChannel));
+    pushChangedField(fields, 'Topic', oldChannel.topic, newChannel.topic);
+    pushChangedField(fields, 'NSFW', oldChannel.nsfw, newChannel.nsfw);
+    pushChangedField(fields, 'Slowmode Seconds', oldChannel.rateLimitPerUser, newChannel.rateLimitPerUser);
+    pushChangedField(fields, 'Bitrate', oldChannel.bitrate, newChannel.bitrate);
+    pushChangedField(fields, 'User Limit', oldChannel.userLimit, newChannel.userLimit);
+
+    if (channelOverwriteSnapshot(oldChannel) !== channelOverwriteSnapshot(newChannel)) {
+        fields.push({
+            name: 'Permission Overwrites',
+            value: 'Changed'
+        });
+    }
+
+    return fields;
+}
+
+function roleUpdateFields(oldRole, newRole) {
+    const fields = [];
+
+    pushChangedField(fields, 'Name', oldRole.name, newRole.name);
+    pushChangedField(fields, 'Color', oldRole.hexColor, newRole.hexColor);
+    pushChangedField(fields, 'Hoisted', oldRole.hoist, newRole.hoist);
+    pushChangedField(fields, 'Mentionable', oldRole.mentionable, newRole.mentionable);
+
+    if (oldRole.permissions.bitfield !== newRole.permissions.bitfield) {
+        fields.push({
+            name: 'Permissions',
+            value: 'Changed'
+        });
+    }
+
+    return fields;
+}
+
+async function logChannelUpdate(oldChannel, newChannel) {
+    if (!newChannel.guild) {
+        return;
+    }
+
+    const changedFields = channelUpdateFields(oldChannel, newChannel);
+
+    if (changedFields.length === 0) {
+        return;
+    }
+
+    const auditEntry = await findRecentAuditEntry(
+        newChannel.guild,
+        AuditLogEvent.ChannelUpdate,
+        newChannel.id
+    );
+
+    await postModLog(newChannel.guild, 'Channel Updated', [
+        {
+            name: 'Channel',
+            value: formatChannel(newChannel)
+        },
+        {
+            name: 'Executor',
+            value: auditEntry?.executor ? formatUser(auditEntry.executor) : 'Unknown'
+        },
+        ...changedFields,
+        {
+            name: 'Reason',
+            value: auditEntry?.reason || 'No reason provided'
+        }
+    ]);
+}
+
+async function logChannelCreate(channel) {
+    if (!channel.guild) {
+        return;
+    }
+
+    const auditEntry = await findRecentAuditEntry(
+        channel.guild,
+        AuditLogEvent.ChannelCreate,
+        channel.id
+    );
+
+    await postModLog(channel.guild, 'Channel Created', [
+        {
+            name: 'Channel',
+            value: formatChannel(channel)
+        },
+        {
+            name: 'Type',
+            value: channelTypeName(channel)
+        },
+        {
+            name: 'Executor',
+            value: auditEntry?.executor ? formatUser(auditEntry.executor) : 'Unknown'
+        },
+        {
+            name: 'Reason',
+            value: auditEntry?.reason || 'No reason provided'
+        }
+    ]);
+}
+
+async function logChannelDelete(channel) {
+    if (!channel.guild) {
+        return;
+    }
+
+    const auditEntry = await findRecentAuditEntry(
+        channel.guild,
+        AuditLogEvent.ChannelDelete,
+        channel.id
+    );
+
+    await postModLog(channel.guild, 'Channel Deleted', [
+        {
+            name: 'Channel',
+            value: formatChannel(channel)
+        },
+        {
+            name: 'Type',
+            value: channelTypeName(channel)
+        },
+        {
+            name: 'Executor',
+            value: auditEntry?.executor ? formatUser(auditEntry.executor) : 'Unknown'
+        },
+        {
+            name: 'Reason',
+            value: auditEntry?.reason || 'No reason provided'
+        }
+    ]);
+}
+
 async function logTimeoutChanges(oldMember, newMember) {
     const oldTimeout = oldMember.communicationDisabledUntilTimestamp || null;
     const newTimeout = newMember.communicationDisabledUntilTimestamp || null;
@@ -1051,8 +1285,7 @@ async function logTimeoutChanges(oldMember, newMember) {
     const title = newTimeout
         ? oldTimeout ? 'Timeout Updated' : 'Timeout Applied'
         : 'Timeout Removed';
-
-    await postModLog(newMember.guild, title, [
+    const fields = [
         {
             name: 'Player',
             value: formatUser(newMember)
@@ -1067,9 +1300,92 @@ async function logTimeoutChanges(oldMember, newMember) {
         },
         {
             name: 'Reason',
-            value: auditEntry?.reason || 'No reason provided'
+            value: auditEntry?.reason || 'Waiting for moderator reason.'
         }
-    ]);
+    ];
+
+    const modLogMessage = await postModLog(newMember.guild, title, fields);
+
+    if (!newTimeout || auditEntry?.reason || !auditEntry?.executor || !modLogMessage) {
+        return;
+    }
+
+    await promptForTimeoutReason(newMember, auditEntry.executor, modLogMessage, title, fields);
+}
+
+async function promptForTimeoutReason(member, executor, modLogMessage, title, fields) {
+    const channel = modLogMessage.channel || await findModLogChannel(member.guild);
+
+    if (!channel?.isTextBased?.()) {
+        return;
+    }
+
+    const prompt = await channel.send({
+        content:
+            `${executor}, please reply in this channel with the timeout reason for ${member}.\n` +
+            `You have 5 minutes. The reason will be added to the mod log.`,
+        allowedMentions: {
+            users: [executor.id],
+            parse: []
+        }
+    });
+
+    try {
+        const collected = await channel.awaitMessages({
+            filter: message => message.author.id === executor.id && message.content.trim().length > 0,
+            max: 1,
+            time: 5 * 60 * 1000,
+            errors: ['time']
+        });
+        const reasonMessage = collected.first();
+        const reason = truncateValue(reasonMessage.content.trim(), 700);
+        const updatedFields = fields.map(field => {
+            if (field.name !== 'Reason') {
+                return field;
+            }
+
+            return {
+                ...field,
+                value: reason
+            };
+        });
+
+        await editModLog(modLogMessage, member.guild, title, [
+            ...updatedFields,
+            {
+                name: 'Reason Added By',
+                value: formatUser(reasonMessage.author)
+            }
+        ]);
+
+        await prompt.edit({
+            content: `✅ Timeout reason added for ${member}.`,
+            allowedMentions: {
+                parse: []
+            }
+        });
+    } catch {
+        await editModLog(modLogMessage, member.guild, title, [
+            ...fields,
+            {
+                name: 'Reason Prompt',
+                value: 'Expired after 5 minutes.'
+            }
+        ]).catch(error => {
+            console.error('Could not mark timeout reason prompt as expired:');
+            console.error(error);
+        });
+
+        await prompt.edit({
+            content: `⏰ Timeout reason prompt expired for ${member}.`,
+            allowedMentions: {
+                parse: []
+            }
+        }).catch(error => {
+            console.error('Could not edit expired timeout prompt:');
+            console.error(error);
+        });
+    }
 }
 
 async function logVoiceMuteChange(oldState, newState) {
@@ -1105,6 +1421,46 @@ async function logVoiceMuteChange(oldState, newState) {
         {
             name: 'Channel',
             value: formatChannel(newState.channel || oldState.channel)
+        }
+    ]);
+}
+
+async function logVoiceDisconnectChange(oldState, newState) {
+    if (!oldState.channelId || newState.channelId) {
+        return;
+    }
+
+    const member = oldState.member || newState.member;
+
+    if (!member || member.user.bot) {
+        return;
+    }
+
+    const auditEntry = await findRecentAuditEntry(
+        oldState.guild,
+        AuditLogEvent.MemberDisconnect
+    );
+
+    if (!auditEntry) {
+        return;
+    }
+
+    await postModLog(oldState.guild, 'Voice Kick', [
+        {
+            name: 'Player',
+            value: formatUser(member)
+        },
+        {
+            name: 'Executor',
+            value: auditEntry.executor ? formatUser(auditEntry.executor) : 'Unknown'
+        },
+        {
+            name: 'Channel',
+            value: formatChannel(oldState.channel)
+        },
+        {
+            name: 'Reason',
+            value: auditEntry.reason || 'No reason provided'
         }
     ]);
 }
@@ -1321,19 +1677,104 @@ client.on(Events.GuildMemberAdd, async member => {
     }, 3000);
 });
 
-client.on(Events.GuildRoleCreate, role => {
+client.on(Events.GuildRoleCreate, async role => {
     invalidateGuildRoleCache(role.guild);
     console.log(`[cache:${role.guild.name}] role cache invalidated after role create: ${role.name}`);
+
+    try {
+        const auditEntry = await findRecentAuditEntry(
+            role.guild,
+            AuditLogEvent.RoleCreate,
+            role.id
+        );
+
+        await postModLog(role.guild, 'Role Created', [
+            {
+                name: 'Role',
+                value: `${role.name} (${role.id})`
+            },
+            {
+                name: 'Executor',
+                value: auditEntry?.executor ? formatUser(auditEntry.executor) : 'Unknown'
+            },
+            {
+                name: 'Reason',
+                value: auditEntry?.reason || 'No reason provided'
+            }
+        ]);
+    } catch (error) {
+        console.error('Could not log role create:');
+        console.error(error);
+    }
 });
 
-client.on(Events.GuildRoleUpdate, (oldRole, newRole) => {
+client.on(Events.GuildRoleUpdate, async (oldRole, newRole) => {
     invalidateGuildRoleCache(newRole.guild);
     console.log(`[cache:${newRole.guild.name}] role cache invalidated after role update: ${oldRole.name} -> ${newRole.name}`);
+
+    try {
+        const changedFields = roleUpdateFields(oldRole, newRole);
+
+        if (changedFields.length === 0) {
+            return;
+        }
+
+        const auditEntry = await findRecentAuditEntry(
+            newRole.guild,
+            AuditLogEvent.RoleUpdate,
+            newRole.id
+        );
+
+        await postModLog(newRole.guild, 'Role Updated', [
+            {
+                name: 'Role',
+                value: `${newRole.name} (${newRole.id})`
+            },
+            {
+                name: 'Executor',
+                value: auditEntry?.executor ? formatUser(auditEntry.executor) : 'Unknown'
+            },
+            ...changedFields,
+            {
+                name: 'Reason',
+                value: auditEntry?.reason || 'No reason provided'
+            }
+        ]);
+    } catch (error) {
+        console.error('Could not log role update:');
+        console.error(error);
+    }
 });
 
-client.on(Events.GuildRoleDelete, role => {
+client.on(Events.GuildRoleDelete, async role => {
     invalidateGuildRoleCache(role.guild);
     console.log(`[cache:${role.guild.name}] role cache invalidated after role delete: ${role.name}`);
+
+    try {
+        const auditEntry = await findRecentAuditEntry(
+            role.guild,
+            AuditLogEvent.RoleDelete,
+            role.id
+        );
+
+        await postModLog(role.guild, 'Role Deleted', [
+            {
+                name: 'Role',
+                value: `${role.name} (${role.id})`
+            },
+            {
+                name: 'Executor',
+                value: auditEntry?.executor ? formatUser(auditEntry.executor) : 'Unknown'
+            },
+            {
+                name: 'Reason',
+                value: auditEntry?.reason || 'No reason provided'
+            }
+        ]);
+    } catch (error) {
+        console.error('Could not log role delete:');
+        console.error(error);
+    }
 });
 
 client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
@@ -1359,6 +1800,40 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
         await logTimeoutChanges(oldMember, newMember);
     } catch (error) {
         console.error(`Could not log member moderation change for ${newMember.user.tag}:`);
+        console.error(error);
+    }
+
+    try {
+        await logMemberRoleChanges(oldMember, newMember);
+    } catch (error) {
+        console.error(`Could not log member role change for ${newMember.user.tag}:`);
+        console.error(error);
+    }
+});
+
+client.on(Events.ChannelCreate, async channel => {
+    try {
+        await logChannelCreate(channel);
+    } catch (error) {
+        console.error('Could not log channel create:');
+        console.error(error);
+    }
+});
+
+client.on(Events.ChannelUpdate, async (oldChannel, newChannel) => {
+    try {
+        await logChannelUpdate(oldChannel, newChannel);
+    } catch (error) {
+        console.error('Could not log channel update:');
+        console.error(error);
+    }
+});
+
+client.on(Events.ChannelDelete, async channel => {
+    try {
+        await logChannelDelete(channel);
+    } catch (error) {
+        console.error('Could not log channel delete:');
         console.error(error);
     }
 });
@@ -1536,6 +2011,7 @@ client.on(Events.GuildBanRemove, async ban => {
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
     try {
         await logVoiceMuteChange(oldState, newState);
+        await logVoiceDisconnectChange(oldState, newState);
     } catch (error) {
         console.error('Could not log voice state update:');
         console.error(error);
