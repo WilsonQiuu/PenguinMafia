@@ -998,27 +998,6 @@ async function processJoinBatch(guild) {
     }
 }
 
-async function findRecentAuditExecutor(guild, type, targetId = null) {
-    try {
-        const auditLogs = await guild.fetchAuditLogs({
-            type,
-            limit: 6
-        });
-        const now = Date.now();
-
-        const entry = auditLogs.entries.find(logEntry => {
-            const targetMatches = !targetId || logEntry.target?.id === targetId;
-            const isRecent = now - logEntry.createdTimestamp < 15_000;
-
-            return targetMatches && isRecent;
-        });
-
-        return entry?.executor || null;
-    } catch (error) {
-        return null;
-    }
-}
-
 async function findRecentAuditEntry(guild, type, targetId = null) {
     try {
         const auditLogs = await guild.fetchAuditLogs({
@@ -1036,6 +1015,26 @@ async function findRecentAuditEntry(guild, type, targetId = null) {
     } catch (error) {
         return null;
     }
+}
+
+function isHumanExecutor(user) {
+    return Boolean(user && !user.bot);
+}
+
+function isHumanAuditEntry(auditEntry) {
+    return isHumanExecutor(auditEntry?.executor);
+}
+
+async function findRecentHumanAuditEntry(guild, type, targetId = null) {
+    const auditEntry = await findRecentAuditEntry(guild, type, targetId);
+
+    return isHumanAuditEntry(auditEntry) ? auditEntry : null;
+}
+
+async function findRecentHumanAuditExecutor(guild, type, targetId = null) {
+    const auditEntry = await findRecentHumanAuditEntry(guild, type, targetId);
+
+    return auditEntry?.executor || null;
 }
 
 function formatRoleList(roles) {
@@ -1085,6 +1084,20 @@ function channelOverwriteSnapshot(channel) {
         .join('|') || '';
 }
 
+function isManagedOnboardingChannel(channel) {
+    const topic = String(channel?.topic || '');
+    const name = String(channel?.name || '');
+
+    return topic.startsWith('Penguin Mafia onboarding:') ||
+        topic.startsWith('Penguin Mafia trainer onboarding:') ||
+        topic.startsWith('Penguin Mafia trial mod onboarding:') ||
+        name === '🐧-penguin-processing' ||
+        name.startsWith('🐧-penguin-processing-') ||
+        name.startsWith('welcome-') ||
+        name.startsWith('trainer-') ||
+        name.startsWith('trial-mod-');
+}
+
 function pushChangedField(fields, name, oldValue, newValue) {
     if (oldValue === newValue) {
         return;
@@ -1103,11 +1116,15 @@ async function logMemberRoleChanges(oldMember, newMember) {
         return;
     }
 
-    const auditEntry = await findRecentAuditEntry(
+    const auditEntry = await findRecentHumanAuditEntry(
         newMember.guild,
         AuditLogEvent.MemberRoleUpdate,
         newMember.user.id
     );
+
+    if (!auditEntry) {
+        return;
+    }
 
     await postModLog(newMember.guild, 'Member Roles Updated', [
         {
@@ -1184,11 +1201,15 @@ async function logChannelUpdate(oldChannel, newChannel) {
         return;
     }
 
-    const auditEntry = await findRecentAuditEntry(
+    const auditEntry = await findRecentHumanAuditEntry(
         newChannel.guild,
         AuditLogEvent.ChannelUpdate,
         newChannel.id
     );
+
+    if (!auditEntry) {
+        return;
+    }
 
     await postModLog(newChannel.guild, 'Channel Updated', [
         {
@@ -1212,11 +1233,19 @@ async function logChannelCreate(channel) {
         return;
     }
 
-    const auditEntry = await findRecentAuditEntry(
+    if (isManagedOnboardingChannel(channel)) {
+        return;
+    }
+
+    const auditEntry = await findRecentHumanAuditEntry(
         channel.guild,
         AuditLogEvent.ChannelCreate,
         channel.id
     );
+
+    if (!auditEntry) {
+        return;
+    }
 
     await postModLog(channel.guild, 'Channel Created', [
         {
@@ -1243,11 +1272,15 @@ async function logChannelDelete(channel) {
         return;
     }
 
-    const auditEntry = await findRecentAuditEntry(
+    const auditEntry = await findRecentHumanAuditEntry(
         channel.guild,
         AuditLogEvent.ChannelDelete,
         channel.id
     );
+
+    if (!auditEntry) {
+        return;
+    }
 
     await postModLog(channel.guild, 'Channel Deleted', [
         {
@@ -1277,11 +1310,16 @@ async function logTimeoutChanges(oldMember, newMember) {
         return;
     }
 
-    const auditEntry = await findRecentAuditEntry(
+    const auditEntry = await findRecentHumanAuditEntry(
         newMember.guild,
         AuditLogEvent.MemberUpdate,
         newMember.user.id
     );
+
+    if (!auditEntry) {
+        return;
+    }
+
     const title = newTimeout
         ? oldTimeout ? 'Timeout Updated' : 'Timeout Applied'
         : 'Timeout Removed';
@@ -1306,7 +1344,7 @@ async function logTimeoutChanges(oldMember, newMember) {
 
     const modLogMessage = await postModLog(newMember.guild, title, fields);
 
-    if (!newTimeout || auditEntry?.reason || !auditEntry?.executor || !modLogMessage) {
+    if (!newTimeout || auditEntry.reason || !modLogMessage) {
         return;
     }
 
@@ -1403,11 +1441,15 @@ async function logVoiceMuteChange(oldState, newState) {
         return;
     }
 
-    const executor = await findRecentAuditExecutor(
+    const executor = await findRecentHumanAuditExecutor(
         newState.guild,
         AuditLogEvent.MemberUpdate,
         member.user.id
     );
+
+    if (!executor) {
+        return;
+    }
 
     await postModLog(newState.guild, newState.serverMute ? 'Voice Mute Applied' : 'Voice Mute Removed', [
         {
@@ -1436,7 +1478,7 @@ async function logVoiceDisconnectChange(oldState, newState) {
         return;
     }
 
-    const auditEntry = await findRecentAuditEntry(
+    const auditEntry = await findRecentHumanAuditEntry(
         oldState.guild,
         AuditLogEvent.MemberDisconnect
     );
@@ -1682,11 +1724,15 @@ client.on(Events.GuildRoleCreate, async role => {
     console.log(`[cache:${role.guild.name}] role cache invalidated after role create: ${role.name}`);
 
     try {
-        const auditEntry = await findRecentAuditEntry(
+        const auditEntry = await findRecentHumanAuditEntry(
             role.guild,
             AuditLogEvent.RoleCreate,
             role.id
         );
+
+        if (!auditEntry) {
+            return;
+        }
 
         await postModLog(role.guild, 'Role Created', [
             {
@@ -1719,11 +1765,15 @@ client.on(Events.GuildRoleUpdate, async (oldRole, newRole) => {
             return;
         }
 
-        const auditEntry = await findRecentAuditEntry(
+        const auditEntry = await findRecentHumanAuditEntry(
             newRole.guild,
             AuditLogEvent.RoleUpdate,
             newRole.id
         );
+
+        if (!auditEntry) {
+            return;
+        }
 
         await postModLog(newRole.guild, 'Role Updated', [
             {
@@ -1751,11 +1801,15 @@ client.on(Events.GuildRoleDelete, async role => {
     console.log(`[cache:${role.guild.name}] role cache invalidated after role delete: ${role.name}`);
 
     try {
-        const auditEntry = await findRecentAuditEntry(
+        const auditEntry = await findRecentHumanAuditEntry(
             role.guild,
             AuditLogEvent.RoleDelete,
             role.id
         );
+
+        if (!auditEntry) {
+            return;
+        }
 
         await postModLog(role.guild, 'Role Deleted', [
             {
@@ -1920,7 +1974,7 @@ client.on(Events.GuildMemberRemove, async member => {
             return targetMatches && isRecent;
         });
 
-        if (!entry) {
+        if (!isHumanAuditEntry(entry)) {
             return;
         }
 
@@ -1958,11 +2012,15 @@ client.on(Events.GuildBanAdd, async ban => {
     }
 
     try {
-        const executor = await findRecentAuditExecutor(
+        const executor = await findRecentHumanAuditExecutor(
             ban.guild,
             AuditLogEvent.MemberBanAdd,
             ban.user.id
         );
+
+        if (!executor) {
+            return;
+        }
 
         await postModLog(ban.guild, 'Ban Added', [
             {
@@ -1986,11 +2044,15 @@ client.on(Events.GuildBanAdd, async ban => {
 
 client.on(Events.GuildBanRemove, async ban => {
     try {
-        const executor = await findRecentAuditExecutor(
+        const executor = await findRecentHumanAuditExecutor(
             ban.guild,
             AuditLogEvent.MemberBanRemove,
             ban.user.id
         );
+
+        if (!executor) {
+            return;
+        }
 
         await postModLog(ban.guild, 'Ban Removed', [
             {
@@ -2024,11 +2086,17 @@ client.on(Events.MessageDelete, async message => {
             return;
         }
 
-        const executor = await findRecentAuditExecutor(
+        const auditEntry = await findRecentAuditEntry(
             message.guild,
             AuditLogEvent.MessageDelete,
             message.author?.id || null
         );
+
+        if (auditEntry?.executor?.bot) {
+            return;
+        }
+
+        const executor = auditEntry?.executor || null;
 
         await postModLog(message.guild, 'Message Deleted', [
             {
@@ -2066,10 +2134,14 @@ client.on(Events.MessageBulkDelete, async messages => {
             return;
         }
 
-        const executor = await findRecentAuditExecutor(
+        const executor = await findRecentHumanAuditExecutor(
             firstMessage.guild,
             AuditLogEvent.MessageBulkDelete
         );
+
+        if (!executor) {
+            return;
+        }
 
         await postModLog(firstMessage.guild, 'Messages Bulk Deleted', [
             {
