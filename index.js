@@ -48,6 +48,10 @@ const {
     handleTrainerButton
 } = require('./utils/trainerOnboarding.js');
 const {
+    enterGiveaway,
+    finishExpiredGiveawaysForGuild
+} = require('./utils/giveaways.js');
+const {
     editModLog,
     findModLogChannel,
     formatChannel,
@@ -1553,6 +1557,7 @@ client.once(Events.ClientReady, async () => {
             await ensureRecruitCommandInfoBoard(guild);
             await ensureElectionCommandsBoard(guild);
             await finishExpiredElectionsForGuild(guild, sql);
+            await finishExpiredGiveawaysForGuild(guild, sql);
             const refreshed = await updateElectionLeaderboard(guild, sql);
 
             if (!refreshed) {
@@ -1635,6 +1640,17 @@ client.once(Events.ClientReady, async () => {
                 console.error(`Election timer check failed for ${guild.name}:`);
                 console.error(error);
             }
+
+            try {
+                const finished = await finishExpiredGiveawaysForGuild(guild, sql);
+
+                if (finished.length > 0) {
+                    console.log(`Ended ${finished.length} expired giveaway(s) for ${guild.name}.`);
+                }
+            } catch (error) {
+                console.error(`Giveaway timer check failed for ${guild.name}:`);
+                console.error(error);
+            }
         }
     }, 60_000);
 });
@@ -1642,6 +1658,9 @@ client.once(Events.ClientReady, async () => {
 client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isButton()) {
         try {
+            const giveawayHandled = await enterGiveaway(interaction, sql);
+            if (giveawayHandled) return;
+
             const trainerHandled = await handleTrainerButton(interaction);
             if (trainerHandled) return;
 

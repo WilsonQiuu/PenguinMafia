@@ -173,8 +173,8 @@ function ignMessage(userId, isTest = false) {
             `# 💰 LINK YOUR IGN\n\n` +
             `Your Minecraft IGN is **not necessary** to finish welcome.\n\n` +
             `Linking it helps the Don know who gets paid during events. 🐧💸\n\n` +
-            `🔎 No IGN = unpaid commissions saved\n` +
-            `✅ Linked IGN = easier payouts\n\n` +
+            `🔎 No IGN = payout simulations use your Discord name\n` +
+            `✅ Linked IGN = payout simulations show your Minecraft name\n\n` +
             `Choose your Minecraft edition first:`,
         components: [
             row(

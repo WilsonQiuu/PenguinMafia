@@ -1,0 +1,332 @@
+const {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle
+} = require('discord.js');
+
+const sql = require('../db.js');
+const {
+    formatCents,
+    formatDonationAmount
+} = require('./donations.js');
+const {
+    calculatePayout,
+    formatPayoutLine,
+    linkedAccountLabel
+} = require('./payouts.js');
+
+const GIVEAWAY_BUTTON_PREFIX = 'giveaway_enter:';
+
+function giveawayButton(giveawayId, disabled = false) {
+    return new ButtonBuilder()
+        .setCustomId(`${GIVEAWAY_BUTTON_PREFIX}${giveawayId}`)
+        .setLabel('Enter')
+        .setEmoji('🎉')
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(disabled);
+}
+
+function renderGiveaway(giveaway, entrantCount, winnerId = null) {
+    const endsAt = Math.floor(new Date(giveaway.ends_at).getTime() / 1000);
+    const ended = giveaway.status !== 'active';
+    const result = ended
+        ? (winnerId
+            ? `Winner: <@${winnerId}>`
+            : 'No winner was chosen because nobody entered.')
+        : `Ends <t:${endsAt}:R> (<t:${endsAt}:F>)`;
+
+    return {
+        content:
+            `# 🎉 PENGUIN MAFIA GIVEAWAY\n\n` +
+            `Prize Pool: **${formatDonationAmount(giveaway.amount)}**\n` +
+            `Hosted by: <@${giveaway.host_discord_id}>\n` +
+            `${result}\n\n` +
+            `Entrants: **${entrantCount}**\n\n` +
+            (ended
+                ? (winnerId
+                    ? 'This giveaway has ended. The complete commission payout is shown below.'
+                    : 'This giveaway has ended.')
+                : (
+                    `If you win, you receive **your rank commission percentage** of the prize.\n` +
+                    `The rest follows your recruiter chain using the exact same commission split as \`/pay\`.\n\n` +
+                    `Click **Enter** below for your chance to win!`
+                )),
+        components: [
+            new ActionRowBuilder().addComponents(giveawayButton(giveaway.id, ended))
+        ],
+        allowedMentions: {
+            users: winnerId ? [winnerId] : []
+        }
+    };
+}
+
+async function createGiveaway(options, db = sql) {
+    const durationMs = Math.round(options.hours * 60 * 60 * 1000);
+    const endsAt = new Date(Date.now() + durationMs);
+    const rows = await db`
+        insert into giveaways (
+            guild_id,
+            channel_id,
+            host_discord_id,
+            amount,
+            ends_at
+        )
+        values (
+            ${options.guildId},
+            ${options.channelId},
+            ${options.hostDiscordId},
+            ${options.amount.toString()}::bigint,
+            ${endsAt}
+        )
+        returning *
+    `;
+
+    return rows[0];
+}
+
+async function fetchGiveawayChannel(guild, giveaway) {
+    const channel = guild.channels.cache.get(giveaway.channel_id) ||
+        (await guild.channels.fetch(giveaway.channel_id).catch(() => null));
+
+    if (!channel?.isTextBased()) {
+        return null;
+    }
+
+    return channel;
+}
+
+async function fetchGiveawayMessage(channel, giveaway) {
+    if (!giveaway.message_id) {
+        return null;
+    }
+
+    return channel.messages.fetch(giveaway.message_id).catch(() => null);
+}
+
+function payoutAnnouncementChunks(giveaway, payoutResult, winnerId) {
+    const payoutLines = payoutResult.payouts.map(formatPayoutLine);
+    const header =
+        `# 🎉 GIVEAWAY WINNER & PAYOUT\n\n` +
+        `Winner: <@${winnerId}>\n` +
+        `Winner account: **${linkedAccountLabel(payoutResult.player)}**\n` +
+        `Giveaway amount: **${formatDonationAmount(giveaway.amount)}**\n` +
+        `Total distributed: **${formatCents(payoutResult.totalPaidCents)}**\n\n` +
+        `## Complete Pay List\n`;
+    const footer =
+        `\n\nThe winner received their rank commission. The remaining money followed their recruiter chain exactly like \`/pay\`.` +
+        (payoutResult.stoppedAtFinalRank ? `\nFinal rank reached: **yes**` : '');
+    const chunks = [];
+    let current = header;
+
+    for (const line of payoutLines) {
+        const addition = `${current.endsWith('\n') ? '' : '\n'}${line}`;
+
+        if (current.length + addition.length > 1850) {
+            chunks.push(current);
+            current = `## Pay List Continued\n${line}`;
+        } else {
+            current += addition;
+        }
+    }
+
+    if (current.length + footer.length <= 1950) {
+        current += footer;
+        chunks.push(current);
+    } else {
+        chunks.push(current);
+        chunks.push(footer.trim());
+    }
+
+    return chunks;
+}
+
+async function sendPayoutAnnouncement(channel, message, giveaway, payoutResult, winnerId) {
+    const chunks = payoutAnnouncementChunks(giveaway, payoutResult, winnerId);
+
+    for (let index = 0; index < chunks.length; index++) {
+        const payload = {
+            content: chunks[index],
+            allowedMentions: {
+                users: index === 0 ? [winnerId] : []
+            }
+        };
+
+        if (index === 0 && message) {
+            await message.reply(payload);
+        } else {
+            await channel.send(payload);
+        }
+    }
+}
+
+async function enterGiveaway(interaction, db = sql) {
+    if (!interaction.customId.startsWith(GIVEAWAY_BUTTON_PREFIX)) {
+        return false;
+    }
+
+    const giveawayId = interaction.customId.slice(GIVEAWAY_BUTTON_PREFIX.length);
+    await interaction.deferReply({ ephemeral: true });
+
+    const playerRows = await db`
+        select discord_id
+        from players
+        where discord_id = ${interaction.user.id}
+            and status = 'active'
+            and welcome_completed = true
+        limit 1
+    `;
+
+    if (playerRows.length === 0) {
+        await interaction.editReply('❌ You need to be a registered Penguin Mafia player to enter.');
+        return true;
+    }
+
+    const giveawayRows = await db`
+        select *
+        from giveaways
+        where id = ${giveawayId}
+        limit 1
+    `;
+    const giveaway = giveawayRows[0];
+
+    if (!giveaway || giveaway.status !== 'active' || new Date(giveaway.ends_at).getTime() <= Date.now()) {
+        if (giveaway?.status === 'active') {
+            await finishGiveaway(interaction.guild, giveaway.id, db);
+        }
+
+        await interaction.editReply('❌ This giveaway has already ended.');
+        return true;
+    }
+
+    const inserted = await db`
+        insert into giveaway_entries (
+            giveaway_id,
+            player_discord_id
+        )
+        values (
+            ${giveaway.id},
+            ${interaction.user.id}
+        )
+        on conflict (giveaway_id, player_discord_id) do nothing
+        returning player_discord_id
+    `;
+    const countRows = await db`
+        select count(*)::int as count
+        from giveaway_entries
+        where giveaway_id = ${giveaway.id}
+    `;
+    const entrantCount = countRows[0].count;
+
+    await interaction.message.edit(renderGiveaway(giveaway, entrantCount));
+    await interaction.editReply(
+        inserted.length > 0
+            ? `✅ You entered the giveaway! There ${entrantCount === 1 ? 'is' : 'are'} now **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.`
+            : `ℹ️ You are already entered. There ${entrantCount === 1 ? 'is' : 'are'} **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.`
+    );
+    return true;
+}
+
+async function finishGiveaway(guild, giveawayId, db = sql) {
+    const giveawayRows = await db`
+        update giveaways
+        set
+            status = 'ended',
+            ended_at = now()
+        where id = ${giveawayId}
+            and status = 'active'
+        returning *
+    `;
+    const giveaway = giveawayRows[0];
+
+    if (!giveaway) {
+        return null;
+    }
+
+    const countRows = await db`
+        select count(*)::int as count
+        from giveaway_entries
+        where giveaway_id = ${giveaway.id}
+    `;
+    const winnerRows = await db`
+        select player_discord_id
+        from giveaway_entries
+        where giveaway_id = ${giveaway.id}
+        order by random()
+        limit 1
+    `;
+    const entrantCount = countRows[0].count;
+    const winnerId = winnerRows[0]?.player_discord_id || null;
+    const payoutResult = winnerId
+        ? await calculatePayout(
+            winnerId,
+            BigInt(giveaway.amount),
+            process.env.DON_DISCORD_ID,
+            db
+        )
+        : null;
+
+    if (winnerId && !payoutResult) {
+        throw new Error(`Giveaway winner ${winnerId} is no longer in the player database.`);
+    }
+
+    if (winnerId) {
+        await db`
+            update giveaways
+            set winner_discord_id = ${winnerId}
+            where id = ${giveaway.id}
+        `;
+    }
+
+    const channel = await fetchGiveawayChannel(guild, giveaway);
+    const message = channel
+        ? await fetchGiveawayMessage(channel, giveaway)
+        : null;
+
+    if (message) {
+        await message.edit(renderGiveaway(giveaway, entrantCount, winnerId));
+    }
+
+    if (channel && winnerId) {
+        await sendPayoutAnnouncement(channel, message, giveaway, payoutResult, winnerId);
+    } else if (channel) {
+        await channel.send('The giveaway ended with no entrants, so no winner was chosen.');
+    }
+
+    return {
+        giveaway,
+        entrantCount,
+        payoutResult,
+        winnerId
+    };
+}
+
+async function finishExpiredGiveawaysForGuild(guild, db = sql) {
+    const rows = await db`
+        select id
+        from giveaways
+        where guild_id = ${guild.id}
+            and status = 'active'
+            and ends_at <= now()
+        order by ends_at asc
+    `;
+    const finished = [];
+
+    for (const row of rows) {
+        const result = await finishGiveaway(guild, row.id, db);
+
+        if (result) {
+            finished.push(result);
+        }
+    }
+
+    return finished;
+}
+
+module.exports = {
+    GIVEAWAY_BUTTON_PREFIX,
+    createGiveaway,
+    enterGiveaway,
+    finishExpiredGiveawaysForGuild,
+    finishGiveaway,
+    renderGiveaway
+};

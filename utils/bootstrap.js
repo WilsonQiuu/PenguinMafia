@@ -358,6 +358,36 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        create table if not exists giveaways (
+            id bigserial primary key,
+            guild_id text not null,
+            channel_id text not null,
+            message_id text,
+            host_discord_id text not null references players(discord_id) on delete cascade,
+            amount bigint not null check (amount > 0),
+            status text not null default 'active' check (status in ('active', 'ended', 'cancelled')),
+            starts_at timestamptz not null default now(),
+            ends_at timestamptz not null,
+            ended_at timestamptz,
+            winner_discord_id text references players(discord_id) on delete set null
+        )
+    `;
+
+    await sql`
+        create table if not exists giveaway_entries (
+            giveaway_id bigint not null references giveaways(id) on delete cascade,
+            player_discord_id text not null references players(discord_id) on delete cascade,
+            entered_at timestamptz not null default now(),
+            primary key (giveaway_id, player_discord_id)
+        )
+    `;
+
+    await sql`
+        create index if not exists idx_giveaways_active_end
+        on giveaways(guild_id, status, ends_at)
+    `;
+
+    await sql`
         alter table players
         add column if not exists welcome_completed boolean not null default true
     `;
@@ -1280,10 +1310,10 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null) {
             `⭐ **Penguin General** - Requires 3 direct recruits at Penguin Captain or higher. **80% commission**\n` +
             `👑 **Emperor Penguin** - Requires 2 direct recruits at Penguin General or higher. **90% commission**\n\n` +
             `💰 **Commission Info**\n` +
-            `Rank commission is paid through \`/pay\`.\n` +
+            `Use \`/pay\` to simulate how rank commission would be split.\n` +
             `Your rank sets your total commission rate. Uplines only receive the positive override above the rate already paid below them.\n` +
             `If a payout reaches an Emperor Penguin, the chain stops there. Any remaining amount goes to that Emperor's direct recruiter when one exists; otherwise unallocated funds go to the Don.\n` +
-            `Players without a linked IGN have their payout saved as unpaid commissions.\n\n` +
+            `The simulation does not change commissions or player balances. Players without a linked IGN are shown by Discord name.\n\n` +
             `Use \`/eligible\` to check rank eligibility and \`/recruit\` to review recruiting training. Make the Don proud. 👑🐧`
     };
 
