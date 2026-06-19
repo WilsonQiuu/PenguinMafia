@@ -9,6 +9,7 @@ const {
 } = require('../utils/logging.js');
 const {
     createGiveaway,
+    parseGiveawayDuration,
     renderGiveaway,
     renderGiveawayHostControls
 } = require('../utils/giveaways.js');
@@ -29,20 +30,20 @@ module.exports = {
                 .setDescription('Amount to give away, like 500, 10k, 2.5m, 1b, or 1t')
                 .setRequired(true)
         )
-        .addIntegerOption(option =>
+        .addStringOption(option =>
             option
-                .setName('hours')
-                .setDescription('How many hours the giveaway will run')
-                .setMinValue(1)
-                .setMaxValue(720)
+                .setName('duration')
+                .setDescription('How long it runs: 30m, 1h, 1 hour, 2h 30m, or 1d')
                 .setRequired(true)
         ),
 
     async execute(interaction) {
         let amount;
+        let durationMs;
 
         try {
             amount = parseDonationAmount(interaction.options.getString('amount'));
+            durationMs = parseGiveawayDuration(interaction.options.getString('duration'));
         } catch (error) {
             await interaction.reply({
                 content: `❌ ${error.message}`,
@@ -50,8 +51,6 @@ module.exports = {
             });
             return;
         }
-
-        const hours = interaction.options.getInteger('hours');
 
         try {
             const hostRows = await sql`
@@ -79,7 +78,7 @@ module.exports = {
                 channelId: interaction.channel.id,
                 hostDiscordId: interaction.user.id,
                 amount,
-                hours
+                durationMs
             }, sql);
 
             try {

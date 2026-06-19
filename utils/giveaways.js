@@ -21,6 +21,53 @@ const {
 const GIVEAWAY_BUTTON_PREFIX = 'giveaway_enter:';
 const GIVEAWAY_LEAVE_BUTTON_PREFIX = 'giveaway_leave:';
 const GIVEAWAY_END_BUTTON_PREFIX = 'giveaway_end:';
+const MIN_GIVEAWAY_DURATION_MS = 60 * 1000;
+const MAX_GIVEAWAY_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+
+function parseGiveawayDuration(input) {
+    const rawDuration = input.trim().toLowerCase();
+    const unitMilliseconds = {
+        m: 60 * 1000,
+        min: 60 * 1000,
+        mins: 60 * 1000,
+        minute: 60 * 1000,
+        minutes: 60 * 1000,
+        h: 60 * 60 * 1000,
+        hr: 60 * 60 * 1000,
+        hrs: 60 * 60 * 1000,
+        hour: 60 * 60 * 1000,
+        hours: 60 * 60 * 1000,
+        d: 24 * 60 * 60 * 1000,
+        day: 24 * 60 * 60 * 1000,
+        days: 24 * 60 * 60 * 1000
+    };
+    const tokenPattern = /(\d+)\s*(minutes?|mins?|m|hours?|hrs?|h|days?|d)/g;
+    let durationMs = 0;
+    let matchedText = '';
+    let match;
+
+    while ((match = tokenPattern.exec(rawDuration)) !== null) {
+        durationMs += Number(match[1]) * unitMilliseconds[match[2]];
+        matchedText += match[0];
+    }
+
+    const normalizedInput = rawDuration.replace(/\s+/g, '');
+    const normalizedMatches = matchedText.replace(/\s+/g, '');
+
+    if (!matchedText || normalizedMatches !== normalizedInput) {
+        throw new Error('Use a duration like `30m`, `1h`, `1 hour`, `2h 30m`, or `1d`.');
+    }
+
+    if (durationMs < MIN_GIVEAWAY_DURATION_MS) {
+        throw new Error('Giveaway duration must be at least 1 minute.');
+    }
+
+    if (durationMs > MAX_GIVEAWAY_DURATION_MS) {
+        throw new Error('Giveaway duration cannot be longer than 30 days.');
+    }
+
+    return durationMs;
+}
 
 function enterGiveawayButton(giveawayId, disabled = false) {
     return new ButtonBuilder()
@@ -99,8 +146,7 @@ function renderGiveaway(giveaway, entrantCount, winnerId = null, options = {}) {
 }
 
 async function createGiveaway(options, db = sql) {
-    const durationMs = Math.round(options.hours * 60 * 60 * 1000);
-    const endsAt = new Date(Date.now() + durationMs);
+    const endsAt = new Date(Date.now() + options.durationMs);
     const rows = await db`
         insert into giveaways (
             guild_id,
@@ -489,6 +535,7 @@ module.exports = {
     finishGiveaway,
     handleGiveawayButton,
     leaveGiveaway,
+    parseGiveawayDuration,
     renderGiveaway,
     renderGiveawayHostControls
 };
