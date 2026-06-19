@@ -48,6 +48,7 @@ const {
     handleTrainerButton
 } = require('./utils/trainerOnboarding.js');
 const {
+    cleanupEndedGiveawaysForGuild,
     handleGiveawayButton,
     handleGiveawayLinkModal,
     finishExpiredGiveawaysForGuild
@@ -1565,6 +1566,7 @@ client.once(Events.ClientReady, async () => {
             await ensureReactionRolesMessage(guild);
             await finishExpiredElectionsForGuild(guild, sql);
             await finishExpiredGiveawaysForGuild(guild, sql);
+            await cleanupEndedGiveawaysForGuild(guild, sql);
             const refreshed = await updateElectionLeaderboard(guild, sql);
 
             if (!refreshed) {
@@ -1656,6 +1658,17 @@ client.once(Events.ClientReady, async () => {
                 }
             } catch (error) {
                 console.error(`Giveaway timer check failed for ${guild.name}:`);
+                console.error(error);
+            }
+
+            try {
+                const cleaned = await cleanupEndedGiveawaysForGuild(guild, sql);
+
+                if (cleaned.length > 0) {
+                    console.log(`Cleaned ${cleaned.length} ended giveaway(s) for ${guild.name}.`);
+                }
+            } catch (error) {
+                console.error(`Giveaway cleanup check failed for ${guild.name}:`);
                 console.error(error);
             }
         }

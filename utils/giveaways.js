@@ -31,6 +31,7 @@ const GIVEAWAY_CHANNEL_ID =
 const GIVEAWAY_BUTTON_PREFIX = 'giveaway_enter:';
 const GIVEAWAY_LEAVE_BUTTON_PREFIX = 'giveaway_leave:';
 const GIVEAWAY_END_BUTTON_PREFIX = 'giveaway_end:';
+const GIVEAWAY_CLOSE_BUTTON_PREFIX = 'giveaway_close:';
 const GIVEAWAY_LINK_MODAL_PREFIX = 'giveaway_link:';
 const MIN_GIVEAWAY_DURATION_MS = 60 * 1000;
 const MAX_GIVEAWAY_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -102,14 +103,23 @@ function renderGiveawayHostControls(giveaway) {
     return {
         content:
             `🎛️ **Private Giveaway Controls**\n\n` +
-            `Only you can see this panel. Ending the giveaway will immediately close entries and randomly pick a winner.`,
+            `Only you can see this panel.\n` +
+            `**End Giveaway** closes entries and randomly picks a winner.\n` +
+            `The original giveaway post is deleted immediately when it ends.\n` +
+            `**Close Giveaway Messages** deletes the remaining winner and payout results.\n\n` +
+            `If you do not close them manually, the result messages are deleted automatically **12 hours after it ends**.`,
         components: [
             new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                     .setCustomId(`${GIVEAWAY_END_BUTTON_PREFIX}${giveaway.id}`)
                     .setLabel('End Giveaway & Pick Winner')
                     .setEmoji('🏁')
-                    .setStyle(ButtonStyle.Danger)
+                    .setStyle(ButtonStyle.Danger),
+                new ButtonBuilder()
+                    .setCustomId(`${GIVEAWAY_CLOSE_BUTTON_PREFIX}${giveaway.id}`)
+                    .setLabel('Close Giveaway Messages')
+                    .setEmoji('🗑️')
+                    .setStyle(ButtonStyle.Secondary)
             )
         ]
     };
@@ -199,7 +209,11 @@ async function fetchGiveawayMessage(channel, giveaway) {
 }
 
 function payoutAnnouncementChunks(giveaway, payoutResult, winnerId) {
-    const payoutLines = payoutResult.payouts.map(formatPayoutLine);
+    const payoutLines = payoutResult.payouts.map((payout, index) => {
+        return formatPayoutLine(payout, index, {
+            includeDiscordMention: payout.amountCents > 0n
+        });
+    });
     const header =
         `# 🎉 GIVEAWAY WINNER & PAYOUT\n\n` +
         `Winner: <@${winnerId}>\n` +
@@ -237,21 +251,34 @@ function payoutAnnouncementChunks(giveaway, payoutResult, winnerId) {
 
 async function sendPayoutAnnouncement(channel, message, giveaway, payoutResult, winnerId) {
     const chunks = payoutAnnouncementChunks(giveaway, payoutResult, winnerId);
+    const paidUserIds = [...new Set(
+        payoutResult.payouts
+            .filter(payout => payout.amountCents > 0n)
+            .map(payout => payout.player.discord_id)
+            .filter(Boolean)
+    )];
+    const sentMessageIds = [];
 
     for (let index = 0; index < chunks.length; index++) {
         const payload = {
             content: chunks[index],
             allowedMentions: {
-                users: index === 0 ? [winnerId] : []
+                users: paidUserIds
             }
         };
 
+        let sentMessage;
+
         if (index === 0 && message) {
-            await message.reply(payload);
+            sentMessage = await message.reply(payload);
         } else {
-            await channel.send(payload);
+            sentMessage = await channel.send(payload);
         }
+
+        sentMessageIds.push(sentMessage.id);
     }
+
+    return sentMessageIds;
 }
 
 function giveawayLinkModal(giveawayId, player) {
@@ -604,7 +631,11 @@ async function handleGiveawayButton(interaction, db = sql) {
         return true;
     }
 
-    return endGiveawayEarly(interaction, db);
+    if (await endGiveawayEarly(interaction, db)) {
+        return true;
+    }
+
+    return closeGiveawayMessages(interaction, db);
 }
 
 async function finishGiveaway(guild, giveawayId, db = sql) {
@@ -662,16 +693,42 @@ async function finishGiveaway(guild, giveawayId, db = sql) {
     const message = channel
         ? await fetchGiveawayMessage(channel, giveaway)
         : null;
-
-    if (message) {
-        await message.edit(renderGiveaway(giveaway, entrantCount, winnerId));
-    }
+    const cleanupMessageIds = [];
 
     if (channel && winnerId) {
-        await sendPayoutAnnouncement(channel, message, giveaway, payoutResult, winnerId);
+        const payoutMessageIds = await sendPayoutAnnouncement(
+            channel,
+            message,
+            giveaway,
+            payoutResult,
+            winnerId
+        );
+        cleanupMessageIds.push(...payoutMessageIds);
     } else if (channel) {
-        await channel.send('The giveaway ended with no entrants, so no winner was chosen.');
+        const noWinnerMessage = await channel.send(
+            'The giveaway ended with no entrants, so no winner was chosen.'
+        );
+        cleanupMessageIds.push(noWinnerMessage.id);
     }
+
+    if (message) {
+        try {
+            await message.delete();
+        } catch (error) {
+            cleanupMessageIds.push(message.id);
+            console.warn(
+                `Could not immediately delete giveaway message ${message.id} for giveaway ${giveaway.id}: ${error.message}`
+            );
+        }
+    }
+
+    await db`
+        update giveaways
+        set
+            cleanup_due_at = now() + interval '12 hours',
+            cleanup_message_ids = ${JSON.stringify([...new Set(cleanupMessageIds)])}::jsonb
+        where id = ${giveaway.id}
+    `;
 
     return {
         giveaway,
@@ -703,9 +760,147 @@ async function finishExpiredGiveawaysForGuild(guild, db = sql) {
     return finished;
 }
 
+async function deleteGiveawayMessages(guild, giveaway) {
+    const channel = guild.channels.cache.get(giveaway.channel_id) ||
+        (await guild.channels.fetch(giveaway.channel_id).catch(() => null));
+
+    if (!channel?.isTextBased()) {
+        return {
+            deleted: 0,
+            failed: true
+        };
+    }
+
+    const messageIds = Array.isArray(giveaway.cleanup_message_ids)
+        ? giveaway.cleanup_message_ids
+        : [];
+    let deleted = 0;
+    let failed = false;
+
+    for (const messageId of messageIds) {
+        const message = await channel.messages.fetch(messageId).catch(() => null);
+
+        if (!message) {
+            continue;
+        }
+
+        try {
+            await message.delete();
+            deleted++;
+        } catch (error) {
+            failed = true;
+            console.warn(
+                `Could not delete giveaway message ${messageId} for giveaway ${giveaway.id}: ${error.message}`
+            );
+        }
+    }
+
+    return {
+        deleted,
+        failed
+    };
+}
+
+async function closeGiveawayMessages(interaction, db = sql) {
+    if (!interaction.customId.startsWith(GIVEAWAY_CLOSE_BUTTON_PREFIX)) {
+        return false;
+    }
+
+    const giveawayId = interaction.customId.slice(GIVEAWAY_CLOSE_BUTTON_PREFIX.length);
+    await interaction.deferReply({ ephemeral: true });
+
+    const rows = await db`
+        select *
+        from giveaways
+        where id = ${giveawayId}
+        limit 1
+    `;
+    const giveaway = rows[0];
+
+    if (!giveaway) {
+        await interaction.editReply('❌ This giveaway could not be found.');
+        return true;
+    }
+
+    if (interaction.user.id !== giveaway.host_discord_id) {
+        await interaction.editReply('❌ Only the giveaway host can close its messages.');
+        return true;
+    }
+
+    if (giveaway.status === 'active') {
+        await interaction.editReply(
+            '❌ End the giveaway and pick a winner before closing its messages.'
+        );
+        return true;
+    }
+
+    if (giveaway.cleaned_at) {
+        await interaction.editReply('ℹ️ This giveaway’s messages have already been closed.');
+        return true;
+    }
+
+    const result = await deleteGiveawayMessages(interaction.guild, giveaway);
+
+    if (result.failed) {
+        await interaction.editReply(
+            '❌ Some giveaway messages could not be deleted. Please try the close button again.'
+        );
+        return true;
+    }
+
+    await db`
+        update giveaways
+        set cleaned_at = now()
+        where id = ${giveaway.id}
+            and cleaned_at is null
+    `;
+
+    await interaction.editReply(
+        `✅ Giveaway closed. Deleted **${result.deleted}** giveaway message${result.deleted === 1 ? '' : 's'}.`
+    );
+    return true;
+}
+
+async function cleanupEndedGiveawaysForGuild(guild, db = sql) {
+    const rows = await db`
+        select
+            id,
+            channel_id,
+            cleanup_message_ids
+        from giveaways
+        where guild_id = ${guild.id}
+            and status = 'ended'
+            and cleanup_due_at is not null
+            and cleanup_due_at <= now()
+            and cleaned_at is null
+        order by cleanup_due_at asc
+    `;
+    const cleaned = [];
+
+    for (const giveaway of rows) {
+        const result = await deleteGiveawayMessages(guild, giveaway);
+
+        if (result.failed) {
+            continue;
+        }
+
+        await db`
+            update giveaways
+            set cleaned_at = now()
+            where id = ${giveaway.id}
+                and cleaned_at is null
+        `;
+        cleaned.push(giveaway.id);
+    }
+
+    return cleaned;
+}
+
 module.exports = {
     GIVEAWAY_BUTTON_PREFIX,
     GIVEAWAY_CHANNEL_ID,
+    cleanupEndedGiveawaysForGuild,
+    closeGiveawayMessages,
     createGiveaway,
     endGiveawayEarly,
     enterGiveaway,

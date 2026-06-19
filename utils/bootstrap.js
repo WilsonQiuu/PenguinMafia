@@ -369,8 +369,26 @@ async function ensureDatabaseSchema(sql) {
             starts_at timestamptz not null default now(),
             ends_at timestamptz not null,
             ended_at timestamptz,
-            winner_discord_id text references players(discord_id) on delete set null
+            winner_discord_id text references players(discord_id) on delete set null,
+            cleanup_due_at timestamptz,
+            cleanup_message_ids jsonb not null default '[]'::jsonb,
+            cleaned_at timestamptz
         )
+    `;
+
+    await sql`
+        alter table giveaways
+        add column if not exists cleanup_due_at timestamptz
+    `;
+
+    await sql`
+        alter table giveaways
+        add column if not exists cleanup_message_ids jsonb not null default '[]'::jsonb
+    `;
+
+    await sql`
+        alter table giveaways
+        add column if not exists cleaned_at timestamptz
     `;
 
     await sql`
@@ -385,6 +403,12 @@ async function ensureDatabaseSchema(sql) {
     await sql`
         create index if not exists idx_giveaways_active_end
         on giveaways(guild_id, status, ends_at)
+    `;
+
+    await sql`
+        create index if not exists idx_giveaways_cleanup_due
+        on giveaways(guild_id, cleanup_due_at)
+        where cleaned_at is null
     `;
 
     await sql`

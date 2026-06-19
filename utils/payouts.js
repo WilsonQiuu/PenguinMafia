@@ -50,9 +50,13 @@ function linkedAccountLabel(player) {
     return `${player.minecraft_ign} — ${edition}`;
 }
 
-function formatPayoutLine(payout, index) {
+function formatPayoutLine(payout, index, options = {}) {
+    const discordMention = options.includeDiscordMention && payout.player.discord_id
+        ? `<@${payout.player.discord_id}> — `
+        : '';
+
     return (
-        `${index + 1}. **${linkedAccountLabel(payout.player)}**\n` +
+        `${index + 1}. ${discordMention}**${linkedAccountLabel(payout.player)}**\n` +
         `   Role: **${payout.roleName}** | Share: **${formatRate(payout.rateBasisPoints)}** | ` +
         `Amount: **${formatCents(payout.amountCents)}**${payout.label ? ` | ${payout.label}` : ''}`
     );
