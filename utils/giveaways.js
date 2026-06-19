@@ -14,6 +14,9 @@ const {
     formatPayoutLine,
     linkedAccountLabel
 } = require('./payouts.js');
+const {
+    GIVEAWAY_PING_ROLE_ID
+} = require('./reactionRoles.js');
 
 const GIVEAWAY_BUTTON_PREFIX = 'giveaway_enter:';
 
@@ -26,7 +29,7 @@ function giveawayButton(giveawayId, disabled = false) {
         .setDisabled(disabled);
 }
 
-function renderGiveaway(giveaway, entrantCount, winnerId = null) {
+function renderGiveaway(giveaway, entrantCount, winnerId = null, options = {}) {
     const endsAt = Math.floor(new Date(giveaway.ends_at).getTime() / 1000);
     const ended = giveaway.status !== 'active';
     const result = ended
@@ -37,6 +40,7 @@ function renderGiveaway(giveaway, entrantCount, winnerId = null) {
 
     return {
         content:
+            (!ended ? `<@&${GIVEAWAY_PING_ROLE_ID}>\n\n` : '') +
             `# 🎉 PENGUIN MAFIA GIVEAWAY\n\n` +
             `Prize Pool: **${formatDonationAmount(giveaway.amount)}**\n` +
             `Hosted by: <@${giveaway.host_discord_id}>\n` +
@@ -55,7 +59,10 @@ function renderGiveaway(giveaway, entrantCount, winnerId = null) {
             new ActionRowBuilder().addComponents(giveawayButton(giveaway.id, ended))
         ],
         allowedMentions: {
-            users: winnerId ? [winnerId] : []
+            users: winnerId ? [winnerId] : [],
+            roles: !ended && options.pingGiveawayRole
+                ? [GIVEAWAY_PING_ROLE_ID]
+                : []
         }
     };
 }

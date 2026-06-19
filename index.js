@@ -52,6 +52,10 @@ const {
     finishExpiredGiveawaysForGuild
 } = require('./utils/giveaways.js');
 const {
+    ensureReactionRolesMessage,
+    handleReactionRole
+} = require('./utils/reactionRoles.js');
+const {
     editModLog,
     findModLogChannel,
     formatChannel,
@@ -82,6 +86,7 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMessageReactions,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildInvites,
@@ -1556,6 +1561,7 @@ client.once(Events.ClientReady, async () => {
             await ensureGettingPromotedInfoBoard(guild);
             await ensureRecruitCommandInfoBoard(guild);
             await ensureElectionCommandsBoard(guild);
+            await ensureReactionRolesMessage(guild);
             await finishExpiredElectionsForGuild(guild, sql);
             await finishExpiredGiveawaysForGuild(guild, sql);
             const refreshed = await updateElectionLeaderboard(guild, sql);
@@ -1653,6 +1659,24 @@ client.once(Events.ClientReady, async () => {
             }
         }
     }, 60_000);
+});
+
+client.on(Events.MessageReactionAdd, async (reaction, user) => {
+    try {
+        await handleReactionRole(reaction, user, true);
+    } catch (error) {
+        console.error(`Could not add reaction role for ${user.id}:`);
+        console.error(error);
+    }
+});
+
+client.on(Events.MessageReactionRemove, async (reaction, user) => {
+    try {
+        await handleReactionRole(reaction, user, false);
+    } catch (error) {
+        console.error(`Could not remove reaction role for ${user.id}:`);
+        console.error(error);
+    }
 });
 
 client.on(Events.InteractionCreate, async interaction => {

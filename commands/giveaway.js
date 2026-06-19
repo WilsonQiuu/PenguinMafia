@@ -81,7 +81,9 @@ module.exports = {
             }, sql);
 
             try {
-                await interaction.reply(renderGiveaway(giveaway, 0));
+                await interaction.reply(renderGiveaway(giveaway, 0, null, {
+                    pingGiveawayRole: true
+                }));
                 const message = await interaction.fetchReply();
 
                 await sql`
