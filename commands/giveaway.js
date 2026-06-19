@@ -9,6 +9,7 @@ const {
 } = require('../utils/logging.js');
 const {
     createGiveaway,
+    GIVEAWAY_CHANNEL_ID,
     parseGiveawayDuration,
     renderGiveaway,
     renderGiveawayHostControls
@@ -38,6 +39,10 @@ module.exports = {
         ),
 
     async execute(interaction) {
+        await interaction.deferReply({
+            flags: MessageFlags.Ephemeral
+        });
+
         let amount;
         let durationMs;
 
@@ -45,10 +50,7 @@ module.exports = {
             amount = parseDonationAmount(interaction.options.getString('amount'));
             durationMs = parseGiveawayDuration(interaction.options.getString('duration'));
         } catch (error) {
-            await interaction.reply({
-                content: `❌ ${error.message}`,
-                ephemeral: true
-            });
+            await interaction.editReply(`❌ ${error.message}`);
             return;
         }
 
@@ -66,30 +68,39 @@ module.exports = {
             const generalRank = getRankIndex('Penguin General');
 
             if (hostRank === undefined || hostRank < generalRank) {
-                await interaction.reply({
-                    content: '❌ You need to be a registered Penguin General or Emperor Penguin to host a giveaway.',
-                    ephemeral: true
-                });
+                await interaction.editReply(
+                    '❌ You need to be a registered Penguin General or Emperor Penguin to host a giveaway.'
+                );
+                return;
+            }
+
+            const giveawayChannel = interaction.guild.channels.cache.get(GIVEAWAY_CHANNEL_ID) ||
+                (await interaction.guild.channels.fetch(GIVEAWAY_CHANNEL_ID).catch(() => null));
+
+            if (!giveawayChannel?.isTextBased()) {
+                await interaction.editReply(
+                    `❌ The configured giveaway channel <#${GIVEAWAY_CHANNEL_ID}> could not be found or is not a text channel.`
+                );
                 return;
             }
 
             const giveaway = await createGiveaway({
                 guildId: interaction.guild.id,
-                channelId: interaction.channel.id,
+                channelId: giveawayChannel.id,
                 hostDiscordId: interaction.user.id,
                 amount,
                 durationMs
             }, sql);
+            let giveawayMessage;
 
             try {
-                await interaction.reply(renderGiveaway(giveaway, 0, null, {
+                giveawayMessage = await giveawayChannel.send(renderGiveaway(giveaway, 0, null, {
                     pingGiveawayRole: true
                 }));
-                const message = await interaction.fetchReply();
 
                 await sql`
                     update giveaways
-                    set message_id = ${message.id}
+                    set message_id = ${giveawayMessage.id}
                     where id = ${giveaway.id}
                 `;
             } catch (error) {
@@ -104,9 +115,14 @@ module.exports = {
             }
 
             try {
-                await interaction.followUp({
-                    ...renderGiveawayHostControls(giveaway),
-                    flags: MessageFlags.Ephemeral
+                const hostControls = renderGiveawayHostControls(giveaway);
+
+                await interaction.editReply({
+                    ...hostControls,
+                    content:
+                        `✅ Giveaway posted in <#${giveawayChannel.id}>.\n` +
+                        `[Open Giveaway](${giveawayMessage.url})\n\n` +
+                        `${hostControls.content}`
                 });
             } catch (error) {
                 console.warn(`Giveaway ${giveaway.id} was posted, but its private host controls could not be sent.`);
@@ -115,17 +131,9 @@ module.exports = {
         } catch (error) {
             logCommandError(interaction, '/giveaway', error);
 
-            if (interaction.replied || interaction.deferred) {
-                await interaction.followUp({
-                    content: `❌ Giveaway failed.\n\n\`\`\`\n${error.message}\n\`\`\``,
-                    ephemeral: true
-                });
-            } else {
-                await interaction.reply({
-                    content: `❌ Giveaway failed.\n\n\`\`\`\n${error.message}\n\`\`\``,
-                    ephemeral: true
-                });
-            }
+            await interaction.editReply(
+                `❌ Giveaway failed.\n\n\`\`\`\n${error.message}\n\`\`\``
+            );
         }
     }
 };

@@ -18,6 +18,8 @@ const {
     GIVEAWAY_PING_ROLE_ID
 } = require('./reactionRoles.js');
 
+const GIVEAWAY_CHANNEL_ID =
+    process.env.GIVEAWAY_CHANNEL_ID || '1517413426358390814';
 const GIVEAWAY_BUTTON_PREFIX = 'giveaway_enter:';
 const GIVEAWAY_LEAVE_BUTTON_PREFIX = 'giveaway_leave:';
 const GIVEAWAY_END_BUTTON_PREFIX = 'giveaway_end:';
@@ -528,6 +530,7 @@ async function finishExpiredGiveawaysForGuild(guild, db = sql) {
 
 module.exports = {
     GIVEAWAY_BUTTON_PREFIX,
+    GIVEAWAY_CHANNEL_ID,
     createGiveaway,
     endGiveawayEarly,
     enterGiveaway,
