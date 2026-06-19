@@ -1,6 +1,7 @@
 const {
     SlashCommandBuilder,
-    AttachmentBuilder
+    AttachmentBuilder,
+    MessageFlags
 } = require('discord.js');
 const crypto = require('crypto');
 
@@ -21,7 +22,12 @@ function playerName(player, fallback = 'Unknown Player') {
 
 const GRAPH_CACHE_VERSION = 1;
 const MAX_GRAPH_CACHE_ENTRIES = 50;
+const GRAPH_FRESH_RENDER_WAIT_MS = 5_000;
+const GRAPH_CHANNEL_ID =
+    process.env.GRAPH_CHANNEL_ID || '1512671910712840192';
 const graphImageCache = new Map();
+const graphRenderPromises = new Map();
+const graphLatestFingerprints = new Map();
 
 function graphCacheFingerprint(root, recruits) {
     const graphState = {
@@ -51,16 +57,16 @@ function pickGraphPlayerFields(player) {
     };
 }
 
-function getCachedGraphImage(cacheKey, fingerprint) {
+function getCachedGraphEntry(cacheKey) {
     const cached = graphImageCache.get(cacheKey);
 
-    if (!cached || cached.fingerprint !== fingerprint) {
+    if (!cached) {
         return null;
     }
 
     graphImageCache.delete(cacheKey);
     graphImageCache.set(cacheKey, cached);
-    return cached.imageBuffer;
+    return cached;
 }
 
 function setCachedGraphImage(cacheKey, fingerprint, imageBuffer) {
@@ -72,6 +78,50 @@ function setCachedGraphImage(cacheKey, fingerprint, imageBuffer) {
     while (graphImageCache.size > MAX_GRAPH_CACHE_ENTRIES) {
         const oldestKey = graphImageCache.keys().next().value;
         graphImageCache.delete(oldestKey);
+    }
+}
+
+function renderAndCacheGraph(cacheKey, fingerprint, root, recruits) {
+    const renderKey = `${cacheKey}:${fingerprint}`;
+    const existingRender = graphRenderPromises.get(renderKey);
+
+    if (existingRender) {
+        return existingRender;
+    }
+
+    const renderPromise = renderRecruitTreeImage(root, recruits)
+        .then(imageBuffer => {
+            if (graphLatestFingerprints.get(cacheKey) === fingerprint) {
+                setCachedGraphImage(cacheKey, fingerprint, imageBuffer);
+            }
+
+            return imageBuffer;
+        })
+        .finally(() => {
+            if (graphRenderPromises.get(renderKey) === renderPromise) {
+                graphRenderPromises.delete(renderKey);
+            }
+        });
+
+    graphRenderPromises.set(renderKey, renderPromise);
+    return renderPromise;
+}
+
+async function waitForFreshGraph(renderPromise, timeoutMs) {
+    const timeout = Symbol('graph-render-timeout');
+    let timeoutId;
+
+    try {
+        const result = await Promise.race([
+            renderPromise,
+            new Promise(resolve => {
+                timeoutId = setTimeout(() => resolve(timeout), timeoutMs);
+            })
+        ]);
+
+        return result === timeout ? null : result;
+    } finally {
+        clearTimeout(timeoutId);
     }
 }
 
@@ -87,7 +137,9 @@ module.exports = {
         ),
 
     async execute(interaction) {
-        await interaction.deferReply();
+        await interaction.deferReply({
+            flags: MessageFlags.Ephemeral
+        });
 
         const playerUser = interaction.options.getUser('player') || interaction.user;
 
@@ -158,12 +210,56 @@ module.exports = {
                 'None / Orphan';
             const fingerprint = graphCacheFingerprint(root, recruits);
             const cacheKey = root.discord_id;
-            let imageBuffer = getCachedGraphImage(cacheKey, fingerprint);
-            const cacheHit = Boolean(imageBuffer);
+            graphLatestFingerprints.set(cacheKey, fingerprint);
+            const cachedEntry = getCachedGraphEntry(cacheKey);
+            const exactCacheHit = cachedEntry?.fingerprint === fingerprint;
+            let imageBuffer = exactCacheHit
+                ? cachedEntry.imageBuffer
+                : null;
+            let staleCacheShown = false;
 
-            if (!imageBuffer) {
-                imageBuffer = await renderRecruitTreeImage(root, recruits);
-                setCachedGraphImage(cacheKey, fingerprint, imageBuffer);
+            if (exactCacheHit) {
+                console.log(`Graph cache hit for ${playerUser.tag || playerUser.id} (${playerUser.id}).`);
+            } else {
+                const renderPromise = renderAndCacheGraph(
+                    cacheKey,
+                    fingerprint,
+                    root,
+                    recruits
+                );
+
+                if (cachedEntry) {
+                    imageBuffer = await waitForFreshGraph(
+                        renderPromise,
+                        GRAPH_FRESH_RENDER_WAIT_MS
+                    );
+
+                    if (!imageBuffer) {
+                        imageBuffer = cachedEntry.imageBuffer;
+                        staleCacheShown = true;
+                        console.log(
+                            `Graph refresh exceeded ${GRAPH_FRESH_RENDER_WAIT_MS}ms for ` +
+                            `${playerUser.tag || playerUser.id} (${playerUser.id}); showing stale cache.`
+                        );
+
+                        renderPromise
+                            .then(() => {
+                                console.log(
+                                    `Graph background refresh completed for ` +
+                                    `${playerUser.tag || playerUser.id} (${playerUser.id}).`
+                                );
+                            })
+                            .catch(error => {
+                                console.error(
+                                    `Graph background refresh failed for ` +
+                                    `${playerUser.tag || playerUser.id} (${playerUser.id}):`
+                                );
+                                console.error(error);
+                            });
+                    }
+                } else {
+                    imageBuffer = await renderPromise;
+                }
             }
 
             const attachment = new AttachmentBuilder(imageBuffer, {
@@ -172,20 +268,34 @@ module.exports = {
             const largeTreeNotice = recruits.length > 49
                 ? '\nLarge tree: biggest branches are shown as cards, with remaining recruits grouped as iceberg dot clusters.'
                 : '';
+            const staleCacheNotice = staleCacheShown
+                ? '\n⚡ A cached snapshot is shown because the updated graph took longer than 5 seconds. The refreshed version is being cached for next time.'
+                : '';
 
             const content =
                 `🐧 **Recruit Graph: ${playerName(root, playerUser.username)}**\n` +
                 `Direct recruiter: \`${directRecruiter}\`\n` +
-                `Total recruits: **${recruits.length}**${largeTreeNotice}`;
+                `Total recruits: **${recruits.length}**${largeTreeNotice}${staleCacheNotice}`;
 
-            if (cacheHit) {
-                console.log(`Graph cache hit for ${playerUser.tag || playerUser.id} (${playerUser.id}).`);
+            const graphChannel = interaction.guild.channels.cache.get(GRAPH_CHANNEL_ID) ||
+                (await interaction.guild.channels.fetch(GRAPH_CHANNEL_ID).catch(() => null));
+
+            if (!graphChannel?.isTextBased()) {
+                await interaction.editReply(
+                    `❌ The configured graph channel <#${GRAPH_CHANNEL_ID}> could not be found or is not a text channel.`
+                );
+                return;
             }
 
-            await interaction.editReply({
+            const graphMessage = await graphChannel.send({
                 content,
                 files: [attachment]
             });
+
+            await interaction.editReply(
+                `✅ Graph posted in <#${graphChannel.id}>.\n` +
+                `[Open Graph](${graphMessage.url})`
+            );
         } catch (error) {
             logCommandError(interaction, '/graph', error);
 
