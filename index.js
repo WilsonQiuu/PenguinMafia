@@ -49,6 +49,7 @@ const {
 } = require('./utils/trainerOnboarding.js');
 const {
     handleGiveawayButton,
+    handleGiveawayLinkModal,
     finishExpiredGiveawaysForGuild
 } = require('./utils/giveaways.js');
 const {
@@ -1706,10 +1707,13 @@ client.on(Events.InteractionCreate, async interaction => {
 
     if (interaction.isModalSubmit()) {
         try {
+            const giveawayHandled = await handleGiveawayLinkModal(interaction, sql);
+            if (giveawayHandled) return;
+
             const handled = await handleWelcomeModal(interaction);
             if (handled) return;
         } catch (error) {
-            logCommandError(interaction, 'welcome modal', error);
+            logCommandError(interaction, 'account linking modal', error);
 
             await safeInteractionErrorReply(
                 interaction,

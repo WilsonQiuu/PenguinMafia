@@ -1,7 +1,12 @@
 const {
     ActionRowBuilder,
     ButtonBuilder,
-    ButtonStyle
+    ButtonStyle,
+    LabelBuilder,
+    ModalBuilder,
+    StringSelectMenuBuilder,
+    TextInputBuilder,
+    TextInputStyle
 } = require('discord.js');
 
 const sql = require('../db.js');
@@ -17,12 +22,16 @@ const {
 const {
     GIVEAWAY_PING_ROLE_ID
 } = require('./reactionRoles.js');
+const {
+    setMemberNicknameToIgn
+} = require('./nicknames.js');
 
 const GIVEAWAY_CHANNEL_ID =
     process.env.GIVEAWAY_CHANNEL_ID || '1517413426358390814';
 const GIVEAWAY_BUTTON_PREFIX = 'giveaway_enter:';
 const GIVEAWAY_LEAVE_BUTTON_PREFIX = 'giveaway_leave:';
 const GIVEAWAY_END_BUTTON_PREFIX = 'giveaway_end:';
+const GIVEAWAY_LINK_MODAL_PREFIX = 'giveaway_link:';
 const MIN_GIVEAWAY_DURATION_MS = 60 * 1000;
 const MAX_GIVEAWAY_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -245,13 +254,57 @@ async function sendPayoutAnnouncement(channel, message, giveaway, payoutResult, 
     }
 }
 
+function giveawayLinkModal(giveawayId, player) {
+    const ignInput = new TextInputBuilder()
+        .setCustomId('giveaway_link_ign')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('Your Minecraft username')
+        .setMinLength(3)
+        .setMaxLength(16)
+        .setRequired(true);
+
+    if (player.minecraft_ign) {
+        ignInput.setValue(player.minecraft_ign);
+    }
+
+    const editionSelect = new StringSelectMenuBuilder()
+        .setCustomId('giveaway_link_edition')
+        .setPlaceholder('Choose Java or Bedrock')
+        .setRequired(true)
+        .addOptions(
+            {
+                label: 'Java',
+                value: 'java',
+                default: player.minecraft_edition === 'java'
+            },
+            {
+                label: 'Bedrock',
+                value: 'bedrock',
+                default: player.minecraft_edition === 'bedrock'
+            }
+        );
+
+    return new ModalBuilder()
+        .setCustomId(`${GIVEAWAY_LINK_MODAL_PREFIX}${giveawayId}`)
+        .setTitle('Link Account & Enter')
+        .addLabelComponents(
+            new LabelBuilder()
+                .setLabel('Minecraft IGN')
+                .setDescription('Enter the account name that should receive payment.')
+                .setTextInputComponent(ignInput),
+            new LabelBuilder()
+                .setLabel('Minecraft Edition')
+                .setDescription('Choose the edition you play.')
+                .setStringSelectMenuComponent(editionSelect)
+        );
+}
+
 async function enterGiveaway(interaction, db = sql) {
     if (!interaction.customId.startsWith(GIVEAWAY_BUTTON_PREFIX)) {
         return false;
     }
 
     const giveawayId = interaction.customId.slice(GIVEAWAY_BUTTON_PREFIX.length);
-    await interaction.deferReply({ ephemeral: true });
 
     const playerRows = await db`
         select
@@ -266,7 +319,10 @@ async function enterGiveaway(interaction, db = sql) {
     `;
 
     if (playerRows.length === 0) {
-        await interaction.editReply('❌ You need to be a registered Penguin Mafia player to enter.');
+        await interaction.reply({
+            content: '❌ You need to be a registered Penguin Mafia player to enter.',
+            ephemeral: true
+        });
         return true;
     }
 
@@ -283,9 +339,21 @@ async function enterGiveaway(interaction, db = sql) {
             await finishGiveaway(interaction.guild, giveaway.id, db);
         }
 
-        await interaction.editReply('❌ This giveaway has already ended.');
+        await interaction.reply({
+            content: '❌ This giveaway has already ended.',
+            ephemeral: true
+        });
         return true;
     }
+
+    const player = playerRows[0];
+
+    if (!player.minecraft_ign || !player.minecraft_edition) {
+        await interaction.showModal(giveawayLinkModal(giveaway.id, player));
+        return true;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
 
     const inserted = await db`
         insert into giveaway_entries (
@@ -305,24 +373,131 @@ async function enterGiveaway(interaction, db = sql) {
         where giveaway_id = ${giveaway.id}
     `;
     const entrantCount = countRows[0].count;
-    const player = playerRows[0];
-    let linkReminder = '';
-
-    if (!player.minecraft_ign) {
-        linkReminder =
-            `\n\n⚠️ Your Minecraft account is currently **Unlinked**. ` +
-            `Use \`/link\` and choose **Java** or **Bedrock** so your account is ready if you win.`;
-    } else if (!player.minecraft_edition) {
-        linkReminder =
-            `\n\n⚠️ Your IGN is linked, but you have not selected **Java** or **Bedrock**. ` +
-            `Run \`/link\` again to finish linking your account.`;
-    }
 
     await interaction.message.edit(renderGiveaway(giveaway, entrantCount));
     await interaction.editReply(
         inserted.length > 0
-            ? `✅ You entered the giveaway! There ${entrantCount === 1 ? 'is' : 'are'} now **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.${linkReminder}`
-            : `ℹ️ You are already entered. There ${entrantCount === 1 ? 'is' : 'are'} **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.${linkReminder}`
+            ? `✅ You entered the giveaway! There ${entrantCount === 1 ? 'is' : 'are'} now **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.`
+            : `ℹ️ You are already entered. There ${entrantCount === 1 ? 'is' : 'are'} **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.`
+    );
+    return true;
+}
+
+async function handleGiveawayLinkModal(interaction, db = sql) {
+    if (!interaction.customId.startsWith(GIVEAWAY_LINK_MODAL_PREFIX)) {
+        return false;
+    }
+
+    const giveawayId = interaction.customId.slice(GIVEAWAY_LINK_MODAL_PREFIX.length);
+    const minecraftIgn = interaction.fields.getTextInputValue('giveaway_link_ign').trim();
+    const minecraftEdition = interaction.fields.getStringSelectValues('giveaway_link_edition')[0];
+
+    if (!/^[A-Za-z0-9_]{3,16}$/.test(minecraftIgn)) {
+        await interaction.reply({
+            content: '❌ Minecraft usernames must be 3–16 characters and can only use letters, numbers, and underscores.',
+            ephemeral: true
+        });
+        return true;
+    }
+
+    if (!['java', 'bedrock'].includes(minecraftEdition)) {
+        await interaction.reply({
+            content: '❌ Choose either Java or Bedrock.',
+            ephemeral: true
+        });
+        return true;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const giveawayRows = await db`
+        select *
+        from giveaways
+        where id = ${giveawayId}
+        limit 1
+    `;
+    const giveaway = giveawayRows[0];
+
+    if (!giveaway || giveaway.status !== 'active' || new Date(giveaway.ends_at).getTime() <= Date.now()) {
+        if (giveaway?.status === 'active') {
+            await finishGiveaway(interaction.guild, giveaway.id, db);
+        }
+
+        await interaction.editReply('❌ This giveaway has already ended.');
+        return true;
+    }
+
+    const displayName =
+        interaction.member?.displayName ||
+        interaction.user.globalName ||
+        interaction.user.username;
+
+    const entryResult = await db.begin(async transaction => {
+        const playerRows = await transaction`
+            update players
+            set
+                discord_username = ${interaction.user.username},
+                discord_display_name = ${displayName},
+                minecraft_ign = ${minecraftIgn},
+                minecraft_edition = ${minecraftEdition},
+                updated_at = now()
+            where discord_id = ${interaction.user.id}
+                and status = 'active'
+                and welcome_completed = true
+            returning discord_id
+        `;
+
+        if (playerRows.length === 0) {
+            return null;
+        }
+
+        const insertedRows = await transaction`
+            insert into giveaway_entries (
+                giveaway_id,
+                player_discord_id
+            )
+            values (
+                ${giveaway.id},
+                ${interaction.user.id}
+            )
+            on conflict (giveaway_id, player_discord_id) do nothing
+            returning player_discord_id
+        `;
+        const countRows = await transaction`
+            select count(*)::int as count
+            from giveaway_entries
+            where giveaway_id = ${giveaway.id}
+        `;
+
+        return {
+            entrantCount: countRows[0].count,
+            inserted: insertedRows.length > 0
+        };
+    });
+
+    if (!entryResult) {
+        await interaction.editReply('❌ You need to be a registered Penguin Mafia player to enter.');
+        return true;
+    }
+
+    await setMemberNicknameToIgn(interaction.member, minecraftIgn);
+
+    const channel = await fetchGiveawayChannel(interaction.guild, giveaway);
+    const message = channel
+        ? await fetchGiveawayMessage(channel, giveaway)
+        : null;
+
+    if (message) {
+        await message.edit(renderGiveaway(giveaway, entryResult.entrantCount));
+    }
+
+    const editionLabel = minecraftEdition === 'bedrock' ? 'Bedrock' : 'Java';
+
+    await interaction.editReply(
+        `✅ Account linked and giveaway entry complete!\n\n` +
+        `IGN: **${minecraftIgn}**\n` +
+        `Edition: **${editionLabel}**\n` +
+        `Entrants: **${entryResult.entrantCount}**`
     );
     return true;
 }
@@ -536,7 +711,9 @@ module.exports = {
     enterGiveaway,
     finishExpiredGiveawaysForGuild,
     finishGiveaway,
+    giveawayLinkModal,
     handleGiveawayButton,
+    handleGiveawayLinkModal,
     leaveGiveaway,
     parseGiveawayDuration,
     renderGiveaway,
