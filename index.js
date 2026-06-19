@@ -48,7 +48,7 @@ const {
     handleTrainerButton
 } = require('./utils/trainerOnboarding.js');
 const {
-    enterGiveaway,
+    handleGiveawayButton,
     finishExpiredGiveawaysForGuild
 } = require('./utils/giveaways.js');
 const {
@@ -1682,7 +1682,7 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
 client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isButton()) {
         try {
-            const giveawayHandled = await enterGiveaway(interaction, sql);
+            const giveawayHandled = await handleGiveawayButton(interaction, sql);
             if (giveawayHandled) return;
 
             const trainerHandled = await handleTrainerButton(interaction);

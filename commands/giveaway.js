@@ -1,5 +1,6 @@
 const {
-    SlashCommandBuilder
+    SlashCommandBuilder,
+    MessageFlags
 } = require('discord.js');
 
 const sql = require('../db.js');
@@ -8,7 +9,8 @@ const {
 } = require('../utils/logging.js');
 const {
     createGiveaway,
-    renderGiveaway
+    renderGiveaway,
+    renderGiveawayHostControls
 } = require('../utils/giveaways.js');
 const {
     parseDonationAmount
@@ -100,6 +102,16 @@ module.exports = {
                     where id = ${giveaway.id}
                 `;
                 throw error;
+            }
+
+            try {
+                await interaction.followUp({
+                    ...renderGiveawayHostControls(giveaway),
+                    flags: MessageFlags.Ephemeral
+                });
+            } catch (error) {
+                console.warn(`Giveaway ${giveaway.id} was posted, but its private host controls could not be sent.`);
+                console.warn(error);
             }
         } catch (error) {
             logCommandError(interaction, '/giveaway', error);

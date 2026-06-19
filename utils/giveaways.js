@@ -19,14 +19,42 @@ const {
 } = require('./reactionRoles.js');
 
 const GIVEAWAY_BUTTON_PREFIX = 'giveaway_enter:';
+const GIVEAWAY_LEAVE_BUTTON_PREFIX = 'giveaway_leave:';
+const GIVEAWAY_END_BUTTON_PREFIX = 'giveaway_end:';
 
-function giveawayButton(giveawayId, disabled = false) {
+function enterGiveawayButton(giveawayId, disabled = false) {
     return new ButtonBuilder()
         .setCustomId(`${GIVEAWAY_BUTTON_PREFIX}${giveawayId}`)
         .setLabel('Enter')
         .setEmoji('🎉')
         .setStyle(ButtonStyle.Success)
         .setDisabled(disabled);
+}
+
+function leaveGiveawayButton(giveawayId, disabled = false) {
+    return new ButtonBuilder()
+        .setCustomId(`${GIVEAWAY_LEAVE_BUTTON_PREFIX}${giveawayId}`)
+        .setLabel('Leave')
+        .setEmoji('👋')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(disabled);
+}
+
+function renderGiveawayHostControls(giveaway) {
+    return {
+        content:
+            `🎛️ **Private Giveaway Controls**\n\n` +
+            `Only you can see this panel. Ending the giveaway will immediately close entries and randomly pick a winner.`,
+        components: [
+            new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`${GIVEAWAY_END_BUTTON_PREFIX}${giveaway.id}`)
+                    .setLabel('End Giveaway & Pick Winner')
+                    .setEmoji('🏁')
+                    .setStyle(ButtonStyle.Danger)
+            )
+        ]
+    };
 }
 
 function renderGiveaway(giveaway, entrantCount, winnerId = null, options = {}) {
@@ -53,10 +81,13 @@ function renderGiveaway(giveaway, entrantCount, winnerId = null, options = {}) {
                 : (
                     `If you win, you receive **your rank commission percentage** of the prize.\n` +
                     `The rest follows your recruiter chain using the exact same commission split as \`/pay\`.\n\n` +
-                    `Click **Enter** below for your chance to win!`
+                    `Click **Enter** for your chance to win, or **Leave** to withdraw your entry.`
                 )),
         components: [
-            new ActionRowBuilder().addComponents(giveawayButton(giveaway.id, ended))
+            new ActionRowBuilder().addComponents(
+                enterGiveawayButton(giveaway.id, ended),
+                leaveGiveawayButton(giveaway.id, ended)
+            )
         ],
         allowedMentions: {
             users: winnerId ? [winnerId] : [],
@@ -175,7 +206,10 @@ async function enterGiveaway(interaction, db = sql) {
     await interaction.deferReply({ ephemeral: true });
 
     const playerRows = await db`
-        select discord_id
+        select
+            discord_id,
+            minecraft_ign,
+            minecraft_edition
         from players
         where discord_id = ${interaction.user.id}
             and status = 'active'
@@ -223,14 +257,131 @@ async function enterGiveaway(interaction, db = sql) {
         where giveaway_id = ${giveaway.id}
     `;
     const entrantCount = countRows[0].count;
+    const player = playerRows[0];
+    let linkReminder = '';
+
+    if (!player.minecraft_ign) {
+        linkReminder =
+            `\n\n⚠️ Your Minecraft account is currently **Unlinked**. ` +
+            `Use \`/link\` and choose **Java** or **Bedrock** so your account is ready if you win.`;
+    } else if (!player.minecraft_edition) {
+        linkReminder =
+            `\n\n⚠️ Your IGN is linked, but you have not selected **Java** or **Bedrock**. ` +
+            `Run \`/link\` again to finish linking your account.`;
+    }
 
     await interaction.message.edit(renderGiveaway(giveaway, entrantCount));
     await interaction.editReply(
         inserted.length > 0
-            ? `✅ You entered the giveaway! There ${entrantCount === 1 ? 'is' : 'are'} now **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.`
-            : `ℹ️ You are already entered. There ${entrantCount === 1 ? 'is' : 'are'} **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.`
+            ? `✅ You entered the giveaway! There ${entrantCount === 1 ? 'is' : 'are'} now **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.${linkReminder}`
+            : `ℹ️ You are already entered. There ${entrantCount === 1 ? 'is' : 'are'} **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.${linkReminder}`
     );
     return true;
+}
+
+async function leaveGiveaway(interaction, db = sql) {
+    if (!interaction.customId.startsWith(GIVEAWAY_LEAVE_BUTTON_PREFIX)) {
+        return false;
+    }
+
+    const giveawayId = interaction.customId.slice(GIVEAWAY_LEAVE_BUTTON_PREFIX.length);
+    await interaction.deferReply({ ephemeral: true });
+
+    const giveawayRows = await db`
+        select *
+        from giveaways
+        where id = ${giveawayId}
+        limit 1
+    `;
+    const giveaway = giveawayRows[0];
+
+    if (!giveaway || giveaway.status !== 'active' || new Date(giveaway.ends_at).getTime() <= Date.now()) {
+        if (giveaway?.status === 'active') {
+            await finishGiveaway(interaction.guild, giveaway.id, db);
+        }
+
+        await interaction.editReply('❌ This giveaway has already ended.');
+        return true;
+    }
+
+    const removedRows = await db`
+        delete from giveaway_entries
+        where giveaway_id = ${giveaway.id}
+            and player_discord_id = ${interaction.user.id}
+        returning player_discord_id
+    `;
+    const countRows = await db`
+        select count(*)::int as count
+        from giveaway_entries
+        where giveaway_id = ${giveaway.id}
+    `;
+    const entrantCount = countRows[0].count;
+
+    await interaction.message.edit(renderGiveaway(giveaway, entrantCount));
+    await interaction.editReply(
+        removedRows.length > 0
+            ? `✅ You left the giveaway. There ${entrantCount === 1 ? 'is' : 'are'} now **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.`
+            : 'ℹ️ You were not entered in this giveaway.'
+    );
+    return true;
+}
+
+async function endGiveawayEarly(interaction, db = sql) {
+    if (!interaction.customId.startsWith(GIVEAWAY_END_BUTTON_PREFIX)) {
+        return false;
+    }
+
+    const giveawayId = interaction.customId.slice(GIVEAWAY_END_BUTTON_PREFIX.length);
+    await interaction.deferReply({ ephemeral: true });
+
+    const giveawayRows = await db`
+        select *
+        from giveaways
+        where id = ${giveawayId}
+        limit 1
+    `;
+    const giveaway = giveawayRows[0];
+
+    if (!giveaway) {
+        await interaction.editReply('❌ This giveaway could not be found.');
+        return true;
+    }
+
+    if (interaction.user.id !== giveaway.host_discord_id) {
+        await interaction.editReply('❌ Only the giveaway host can end it early.');
+        return true;
+    }
+
+    if (giveaway.status !== 'active') {
+        await interaction.editReply('ℹ️ This giveaway has already ended.');
+        return true;
+    }
+
+    const result = await finishGiveaway(interaction.guild, giveaway.id, db);
+
+    if (!result) {
+        await interaction.editReply('ℹ️ This giveaway has already ended.');
+        return true;
+    }
+
+    await interaction.editReply(
+        result.winnerId
+            ? `✅ Giveaway ended early. <@${result.winnerId}> was randomly selected as the winner.`
+            : '✅ Giveaway ended early. Nobody had entered, so no winner was selected.'
+    );
+    return true;
+}
+
+async function handleGiveawayButton(interaction, db = sql) {
+    if (await enterGiveaway(interaction, db)) {
+        return true;
+    }
+
+    if (await leaveGiveaway(interaction, db)) {
+        return true;
+    }
+
+    return endGiveawayEarly(interaction, db);
 }
 
 async function finishGiveaway(guild, giveawayId, db = sql) {
@@ -332,8 +483,12 @@ async function finishExpiredGiveawaysForGuild(guild, db = sql) {
 module.exports = {
     GIVEAWAY_BUTTON_PREFIX,
     createGiveaway,
+    endGiveawayEarly,
     enterGiveaway,
     finishExpiredGiveawaysForGuild,
     finishGiveaway,
-    renderGiveaway
+    handleGiveawayButton,
+    leaveGiveaway,
+    renderGiveaway,
+    renderGiveawayHostControls
 };
