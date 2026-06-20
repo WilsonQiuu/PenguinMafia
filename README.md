@@ -54,6 +54,75 @@ Never commit `.env`. This repo's `.gitignore` already excludes it.
 npm run start
 ```
 
+## Minecraft Payment Bot
+
+The Minecraft client uses Microsoft device-code authentication and can send simple chat commands, including `/pay`. It can run inside the Discord bot for `/bot` commands or as a standalone terminal process for testing.
+
+Add these values to `.env`:
+
+```env
+MINECRAFT_HOST=play.example.net
+MINECRAFT_PORT=25565
+MINECRAFT_EMAIL=your_microsoft_account_email
+
+# Optional. Leave unset to auto-detect the server version.
+MINECRAFT_VERSION=1.21.4
+
+# Optional payment confirmation settings.
+MINECRAFT_PAYMENT_TIMEOUT_MS=30000
+
+# Optional Twilio sign-in alerts. Use E.164 phone numbers with a leading +.
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
+TWILIO_MESSAGING_SERVICE_SID=MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+MINECRAFT_ALERT_TO=+15557654321
+
+# Alternatively, use a Twilio phone number instead of a Messaging Service:
+# TWILIO_FROM_NUMBER=+15551234567
+
+# Optional. Defaults to 15 minutes to prevent repeated sign-in alerts.
+MINECRAFT_ALERT_COOLDOWN_MS=900000
+```
+
+For standalone terminal testing, start it with:
+
+```bash
+npm run minecraft
+```
+
+On the first run, follow the Microsoft device-login instructions printed in the terminal. Authentication tokens are cached locally in `.minecraft-bot-auth/` and are excluded from Git.
+
+Terminal commands:
+
+```text
+help
+status
+say <message>
+msg <player> <message>
+pay <player> <amount>
+reconnect
+quit
+```
+
+Example payment:
+
+```text
+pay PenguinPlayer 100m
+```
+
+This sends `/pay PenguinPlayer 100m` to Minecraft chat. The Don can also control the same client from Discord with `/bot start`, `/bot pay`, `/bot msg`, and `/bot quit`. Run the Discord bot with `npm run start`; do not run the standalone `npm run minecraft` process at the same time.
+
+After sending a payment, the bot waits up to 30 seconds for the server's chat response. It reports the payment as completed only when a success response mentions the player, reports a known failure response, or warns that confirmation timed out. Only one payment can wait for confirmation at a time. Server messages are logged with timestamps and their raw packet contents for troubleshooting.
+
+If your server uses unusual payment messages, you can optionally provide case-insensitive regular expressions in `.env`:
+
+```env
+MINECRAFT_PAYMENT_SUCCESS_PATTERN=paid|sent|payment complete
+MINECRAFT_PAYMENT_FAILURE_PATTERN=insufficient funds|player not found|payment failed
+```
+
+When the Twilio account credentials, destination, and either a Messaging Service SID or sending number are present, the bot sends an SMS when Microsoft requests a new device-code login or when the client fails before successfully signing in and spawning. Ordinary disconnects after a successful connection and failed payments do not send alerts. Twilio trial accounts require the destination number to be verified in the Twilio Console.
+
 On startup, the bot will:
 
 - prepare the database schema
@@ -154,4 +223,3 @@ db.js            PostgreSQL connection
 index.js         Bot startup, events, command deployment
 package.json     Dependencies and npm scripts
 ```
-

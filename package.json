@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node index.js"
+    "start": "node index.js",
+    "minecraft": "node minecraft-bot.js"
   },
   "keywords": [],
   "author": "",
@@ -14,6 +15,7 @@
   "dependencies": {
     "discord.js": "^14.26.4",
     "dotenv": "^17.4.2",
+    "mineflayer": "^4.25.0",
     "postgres": "^3.4.9",
     "sharp": "^0.34.5"
   }
