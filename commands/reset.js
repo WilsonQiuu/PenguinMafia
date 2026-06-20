@@ -12,6 +12,7 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
+    resetWeeklyRecruitsAndSaveTopThree,
     updateLeaderboardsForGuild
 } = require('../utils/leaderboards.js');
 const {
@@ -159,20 +160,29 @@ module.exports = {
                     components: []
                 });
 
-                await sql`
-                    update players
-                    set
-                        weekly_direct_recruits_count = 0,
-                        updated_at = now()
-                `;
+                const previousTopThree = await resetWeeklyRecruitsAndSaveTopThree(sql);
 
                 await updateLeaderboardsForGuild(interaction.guild, sql);
+
+                const previousSummary = previousTopThree.length > 0
+                    ? previousTopThree.map((player, index) => {
+                        const medal = ['🥇', '🥈', '🥉'][index];
+                        const name =
+                            player.minecraft_ign ||
+                            player.discord_display_name ||
+                            player.discord_username ||
+                            player.discord_id;
+
+                        return `${medal} **${name}** — **${player.recruit_count}** recruit${player.recruit_count === 1 ? '' : 's'}`;
+                    }).join('\n')
+                    : 'No players had weekly recruits before the reset.';
 
                 await interaction.editReply({
                     content:
                         `✅ **Weekly recruits reset.**\n\n` +
                         `All weekly direct recruit counts are now **0**.\n` +
-                        `The weekly recruits leaderboard was refreshed.`
+                        `The weekly recruits leaderboard was refreshed.\n\n` +
+                        `**Previous Top 3**\n${previousSummary}`
                 });
             } catch (error) {
                 logCommandError(interaction, '/reset resetweeklyrecruits', error);

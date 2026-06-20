@@ -9,6 +9,8 @@ const {
     formatDonationAmount
 } = require('./donations.js');
 
+const PREVIOUS_WEEKLY_RECRUITS_STATE_KEY = 'previous_weekly_recruits_top_three';
+
 function leaderboardName(player) {
     return player.minecraft_ign ||
         player.discord_display_name ||
@@ -62,8 +64,10 @@ async function updateLeaderboardChannel(guild, channelId, channelName, marker, c
 }
 
 async function updateWeeklyRecruitsLeaderboardForGuild(guild, sql) {
-    const weeklyRows = await sql`
+    const [weeklyRows, previousRows] = await Promise.all([
+        sql`
         select
+            discord_id,
             discord_username,
             discord_display_name,
             minecraft_ign,
@@ -72,13 +76,34 @@ async function updateWeeklyRecruitsLeaderboardForGuild(guild, sql) {
         where weekly_direct_recruits_count > 0
         order by weekly_direct_recruits_count desc, discord_display_name asc
         limit 10
-    `;
+        `,
+        sql`
+            select value
+            from bot_state
+            where key = ${PREVIOUS_WEEKLY_RECRUITS_STATE_KEY}
+            limit 1
+        `
+    ]);
+    let previousTopThree = [];
+
+    try {
+        previousTopThree = previousRows[0]?.value
+            ? JSON.parse(previousRows[0].value)
+            : [];
+    } catch (error) {
+        console.warn(`Could not parse previous weekly recruit winners: ${error.message}`);
+    }
 
     const weeklyLines = weeklyRows.length > 0
         ? weeklyRows.map((player, index) => {
             return leaderboardLine(index, player, player.weekly_direct_recruits_count, 'weekly direct recruits');
         }).join('\n')
         : 'No weekly recruits yet. The ice is quiet... for now. 🧊';
+    const previousLines = previousTopThree.length > 0
+        ? previousTopThree.map((player, index) => {
+            return leaderboardLine(index, player, player.recruit_count, 'weekly direct recruits');
+        }).join('\n')
+        : 'No previous weekly results have been saved yet.';
 
     return updateLeaderboardChannel(
         guild,
@@ -88,8 +113,50 @@ async function updateWeeklyRecruitsLeaderboardForGuild(guild, sql) {
         `🏆🐧 **Penguin Mafia Weekly Recruit Leaderboard** 🐧🏆\n\n` +
         `Top 10 penguins by **direct recruits this week**.\n` +
         `The Don resets this board with \`/reset resetweeklyrecruits\`.\n\n` +
-        `${weeklyLines}\n\n` 
+        `## Current Week\n${weeklyLines}\n\n` +
+        `## Previous Week Top 3\n${previousLines}\n\n`
     );
+}
+
+async function resetWeeklyRecruitsAndSaveTopThree(sql) {
+    return sql.begin(async transaction => {
+        const topThree = await transaction`
+            select
+                discord_id,
+                discord_username,
+                discord_display_name,
+                minecraft_ign,
+                weekly_direct_recruits_count::int as recruit_count
+            from players
+            where weekly_direct_recruits_count > 0
+            order by weekly_direct_recruits_count desc, discord_display_name asc
+            limit 3
+        `;
+
+        await transaction`
+            insert into bot_state (
+                key,
+                value
+            )
+            values (
+                ${PREVIOUS_WEEKLY_RECRUITS_STATE_KEY},
+                ${JSON.stringify(topThree)}
+            )
+            on conflict (key) do update
+            set
+                value = excluded.value,
+                updated_at = now()
+        `;
+
+        await transaction`
+            update players
+            set
+                weekly_direct_recruits_count = 0,
+                updated_at = now()
+        `;
+
+        return topThree;
+    });
 }
 
 async function updateDonationLeaderboardForGuild(guild, sql) {
@@ -167,8 +234,8 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
     const winnerLine = topRecruiters.length === 0
         ? 'No recruits were recorded during the last completed hour.'
         : topRecruiters.length === 1
-            ? `🏆 **Top Recruiter:** **${leaderboardName(topRecruiters[0])}** with **${topCount}** recruit${topCount === 1 ? '' : 's'}`
-            : `🏆 **Top Recruiters:** ${topRecruiters.map(player => `**${leaderboardName(player)}**`).join(', ')} with **${topCount}** recruits each`;
+            ? `🏆 **Previous Hour Winner:** **${leaderboardName(topRecruiters[0])}** with **${topCount}** recruit${topCount === 1 ? '' : 's'}`
+            : `🏆 **Previous Hour Winners:** ${topRecruiters.map(player => `**${leaderboardName(player)}**`).join(', ')} with **${topCount}** recruits each`;
     const hourlyLines = hourlyRows.length > 0
         ? hourlyRows.map((player, index) => {
             return leaderboardLine(
@@ -201,6 +268,7 @@ async function updateLeaderboardsForGuild(guild, sql) {
 }
 
 module.exports = {
+    resetWeeklyRecruitsAndSaveTopThree,
     updateDonationLeaderboardForGuild,
     updateHourlyRecruitsLeaderboardForGuild,
     updateWeeklyRecruitsLeaderboardForGuild,
