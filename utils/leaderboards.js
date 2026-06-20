@@ -190,54 +190,63 @@ async function updateDonationLeaderboardForGuild(guild, sql) {
 }
 
 async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
-    const hourlyRows = await sql`
-        with period as (
-            select
-                date_trunc('hour', now()) - interval '1 hour' as period_start,
-                date_trunc('hour', now()) as period_end
-        )
+    const currentHourRows = await sql`
         select
             history.recruiter_discord_id as discord_id,
             recruiter.discord_username,
             recruiter.discord_display_name,
             recruiter.minecraft_ign,
-            count(*)::int as recruit_count,
-            period.period_start,
-            period.period_end
+            count(*)::int as recruit_count
         from recruit_history history
-        cross join period
         left join players recruiter
             on recruiter.discord_id = history.recruiter_discord_id
-        where history.recruited_at >= period.period_start
-            and history.recruited_at < period.period_end
+        where history.recruited_at >= date_trunc('hour', now())
+            and history.recruited_at < date_trunc('hour', now()) + interval '1 hour'
             and history.counts_for_hourly = true
         group by
             history.recruiter_discord_id,
             recruiter.discord_username,
             recruiter.discord_display_name,
-            recruiter.minecraft_ign,
-            period.period_start,
-            period.period_end
+            recruiter.minecraft_ign
         order by recruit_count desc, recruiter.discord_display_name asc nulls last
         limit 10
     `;
-    const periodRows = await sql`
-        select
-            date_trunc('hour', now()) - interval '1 hour' as period_start,
-            date_trunc('hour', now()) as period_end
+    const previousHourWinners = await sql`
+        with recruiter_totals as (
+            select
+                history.recruiter_discord_id as discord_id,
+                recruiter.discord_username,
+                recruiter.discord_display_name,
+                recruiter.minecraft_ign,
+                count(*)::int as recruit_count
+            from recruit_history history
+            left join players recruiter
+                on recruiter.discord_id = history.recruiter_discord_id
+            where history.recruited_at >= date_trunc('hour', now()) - interval '1 hour'
+                and history.recruited_at < date_trunc('hour', now())
+                and history.counts_for_hourly = true
+            group by
+                history.recruiter_discord_id,
+                recruiter.discord_username,
+                recruiter.discord_display_name,
+                recruiter.minecraft_ign
+        )
+        select *
+        from recruiter_totals
+        where recruit_count = (
+            select max(recruit_count)
+            from recruiter_totals
+        )
+        order by discord_display_name asc nulls last
     `;
-    const period = hourlyRows[0] || periodRows[0];
-    const periodStart = Math.floor(new Date(period.period_start).getTime() / 1000);
-    const periodEnd = Math.floor(new Date(period.period_end).getTime() / 1000);
-    const topCount = hourlyRows[0]?.recruit_count || 0;
-    const topRecruiters = hourlyRows.filter(player => player.recruit_count === topCount);
-    const winnerLine = topRecruiters.length === 0
+    const previousTopCount = previousHourWinners[0]?.recruit_count || 0;
+    const winnerLine = previousHourWinners.length === 0
         ? 'No one had a recruit last hour.'
-        : topRecruiters.length === 1
-            ? `🏆 **Previous Hour Winner:** **${leaderboardName(topRecruiters[0])}** with **${topCount}** recruit${topCount === 1 ? '' : 's'}`
-            : `🏆 **Previous Hour Winners:** ${topRecruiters.map(player => `**${leaderboardName(player)}**`).join(', ')} with **${topCount}** recruits each`;
-    const hourlyLines = hourlyRows.length > 0
-        ? hourlyRows.map((player, index) => {
+        : previousHourWinners.length === 1
+            ? `🏆 **Last Hour’s Winner:** **${leaderboardName(previousHourWinners[0])}** with **${previousTopCount}** recruit${previousTopCount === 1 ? '' : 's'}`
+            : `🏆 **Last Hour’s Winners:** ${previousHourWinners.map(player => `**${leaderboardName(player)}**`).join(', ')} with **${previousTopCount}** recruits each`;
+    const currentHourLines = currentHourRows.length > 0
+        ? currentHourRows.map((player, index) => {
             return leaderboardLine(
                 index,
                 player,
@@ -245,7 +254,7 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
                 'hourly direct recruits'
             );
         }).join('\n')
-        : 'The ice was quiet during this hour. 🧊';
+        : 'No one has a recruit this hour yet.';
 
     return updateLeaderboardChannel(
         guild,
@@ -253,11 +262,8 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
         'hourly-recruits',
         'Penguin Mafia Hourly Recruit Leaderboard',
         `🏆🐧 **Penguin Mafia Hourly Recruit Leaderboard** 🐧🏆\n\n` +
-        `Top 10 penguins by **direct recruits during the last completed hour**.\n` +
-        `Hour: <t:${periodStart}:t>–<t:${periodEnd}:t>\n` +
-        `Leaves and rejoins do not count as new recruits.\n\n` +
-        `${winnerLine}\n\n` +
-        `${hourlyLines}\n\n`
+        `## This Hour’s Top Recruiters\n${currentHourLines}\n\n` +
+        `## Last Hour’s Result\n${winnerLine}\n\n`
     );
 }
 
