@@ -232,7 +232,7 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
     const topCount = hourlyRows[0]?.recruit_count || 0;
     const topRecruiters = hourlyRows.filter(player => player.recruit_count === topCount);
     const winnerLine = topRecruiters.length === 0
-        ? 'No recruits were recorded during the last completed hour.'
+        ? 'No one had a recruit last hour.'
         : topRecruiters.length === 1
             ? `🏆 **Previous Hour Winner:** **${leaderboardName(topRecruiters[0])}** with **${topCount}** recruit${topCount === 1 ? '' : 's'}`
             : `🏆 **Previous Hour Winners:** ${topRecruiters.map(player => `**${leaderboardName(player)}**`).join(', ')} with **${topCount}** recruits each`;
