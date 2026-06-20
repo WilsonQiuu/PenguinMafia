@@ -339,8 +339,14 @@ async function ensureDatabaseSchema(sql) {
             ended_at timestamptz,
             ended_by_discord_id text,
             leaderboard_message_id text,
-            pre_start_message_id text
+            pre_start_message_id text,
+            board_reset_at timestamptz
         )
+    `;
+
+    await sql`
+        alter table elections
+        add column if not exists board_reset_at timestamptz
     `;
 
     await sql`
@@ -1398,7 +1404,7 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null) {
         body:
             `🏆🐧 **Penguin Mafia Weekly Recruit Leaderboard** 🐧🏆\n\n` +
             `The ice board is warming up. Weekly recruit scores will appear here soon.\n\n` +
-            `This leaderboard tracks **direct recruits this week**. The Don resets it with \`/reset resetweeklyrecruits\`.`
+            `This leaderboard tracks **direct recruits this week** and resets every **Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time).`
     };
 
     const managedDonationsLeaderboard = {

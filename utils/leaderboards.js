@@ -112,13 +112,13 @@ async function updateWeeklyRecruitsLeaderboardForGuild(guild, sql) {
         'Penguin Mafia Weekly Recruit Leaderboard',
         `🏆🐧 **Penguin Mafia Weekly Recruit Leaderboard** 🐧🏆\n\n` +
         `Top 10 penguins by **direct recruits this week**.\n` +
-        `The Don resets this board with \`/reset resetweeklyrecruits\`.\n\n` +
+        `This board resets every **Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time).\n\n` +
         `## Current Week\n${weeklyLines}\n\n` +
         `## Previous Week Top 3\n${previousLines}\n\n`
     );
 }
 
-async function resetWeeklyRecruitsAndSaveTopThree(sql) {
+async function resetWeeklyRecruitsAndSaveTopThree(sql, options = {}) {
     return sql.begin(async transaction => {
         const topThree = await transaction`
             select
@@ -154,6 +154,23 @@ async function resetWeeklyRecruitsAndSaveTopThree(sql) {
                 weekly_direct_recruits_count = 0,
                 updated_at = now()
         `;
+
+        if (options.completionStateKey && options.completionStateValue) {
+            await transaction`
+                insert into bot_state (
+                    key,
+                    value
+                )
+                values (
+                    ${options.completionStateKey},
+                    ${options.completionStateValue}
+                )
+                on conflict (key) do update
+                set
+                    value = excluded.value,
+                    updated_at = now()
+            `;
+        }
 
         return topThree;
     });

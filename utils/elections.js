@@ -115,6 +115,9 @@ function renderPreStartAnnouncement() {
             `@everyone\n\n` +
             `# 🐧🗳️ PENGUIN MAFIA ELECTION STARTING SOON\n\n` +
             `The iceberg is rumbling. The colony is getting ready to vote for the next **DON**.\n\n` +
+            `## 📅 Weekly Schedule\n` +
+            `Elections begin every **Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time).\n` +
+            `The weekly recruit leaderboard resets at the same time.\n\n` +
             `When the election opens, use \`/vote player:@Player\` to send **all** of your vote power to one penguin.\n\n` +
             `## 🧊 Vote Power\n` +
             `${rankVoteLine('Penguin Soldier')}\n` +
@@ -136,6 +139,7 @@ function renderElectionCommandsMessage() {
         content:
             `# 🐧🗳️ PENGUIN MAFIA VOTING COMMANDS\n\n` +
             `The election ice can get slippery, so here is the official flipper guide.\n\n` +
+            `Elections automatically begin every **Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time) when weekly recruits reset.\n\n` +
             `## 🗳️ Player Commands\n` +
             `\`/vote player:@Player\`\n` +
             `Cast all of your vote power for one penguin. Voters stay anonymous.\n\n` +
@@ -296,6 +300,21 @@ async function postElectionStartingSoon(guild, electionId, db = sql) {
     return true;
 }
 
+async function findElectionStartingSoonMessage(guild) {
+    const channel = await getChannelById(guild, ELECTION_LEADERBOARD_CHANNEL_ID, 'leaderboard');
+
+    if (!channel) {
+        return null;
+    }
+
+    const recentMessages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
+
+    return recentMessages?.find(message => {
+        return message.author.id === guild.client.user.id &&
+            message.content.includes('PENGUIN MAFIA ELECTION STARTING SOON');
+    }) || null;
+}
+
 async function clearLatestFinishedElectionBoard(guild, db = sql) {
     const active = await getActiveElection(db);
 
@@ -316,6 +335,10 @@ async function clearLatestFinishedElectionBoard(guild, db = sql) {
         throw new Error('There is no finished election board to clear.');
     }
 
+    return resetFinishedElectionBoard(guild, election, db);
+}
+
+async function resetFinishedElectionBoard(guild, election, db = sql) {
     const channel = await getChannelById(guild, ELECTION_LEADERBOARD_CHANNEL_ID, 'leaderboard');
 
     if (!channel) {
@@ -332,12 +355,15 @@ async function clearLatestFinishedElectionBoard(guild, db = sql) {
         await message.edit(renderPreStartAnnouncement());
     } else {
         message = await channel.send(renderPreStartAnnouncement());
-        await db`
-            update elections
-            set leaderboard_message_id = ${message.id}
-            where id = ${election.id}
-        `;
     }
+
+    await db`
+        update elections
+        set
+            leaderboard_message_id = ${message.id},
+            board_reset_at = now()
+        where id = ${election.id}
+    `;
 
     return true;
 }
@@ -346,6 +372,20 @@ async function ensureElectionStartingSoonBoard(guild, db = sql) {
     const active = await getActiveElection(db);
 
     if (active) {
+        return false;
+    }
+
+    const recentFinishedRows = await db`
+        select id
+        from elections
+        where status = 'ended'
+            and ended_at > now() - interval '1 day'
+            and board_reset_at is null
+        order by ended_at desc
+        limit 1
+    `;
+
+    if (recentFinishedRows.length > 0) {
         return false;
     }
 
@@ -369,6 +409,31 @@ async function ensureElectionStartingSoonBoard(guild, db = sql) {
     }
 
     return true;
+}
+
+async function resetExpiredElectionResultBoardForGuild(guild, db = sql) {
+    const active = await getActiveElection(db);
+
+    if (active) {
+        return false;
+    }
+
+    const rows = await db`
+        select *
+        from elections
+        where status = 'ended'
+            and ended_at <= now() - interval '1 day'
+            and board_reset_at is null
+        order by ended_at desc
+        limit 1
+    `;
+    const election = rows[0];
+
+    if (!election) {
+        return false;
+    }
+
+    return resetFinishedElectionBoard(guild, election, db);
 }
 
 async function ensureElectionCommandsBoard(guild) {
@@ -460,6 +525,9 @@ async function postElectionEndedEvent(guild, election, scores, status = 'ended')
 
 async function startElection(guild, createdById, db = sql) {
     const existing = await getActiveElection(db);
+    const startingSoonMessage = existing
+        ? null
+        : await findElectionStartingSoonMessage(guild);
     const election = await db.begin(async transaction => {
         if (existing) {
             await transaction`
@@ -481,7 +549,7 @@ async function startElection(guild, createdById, db = sql) {
             values (
                 ${createdById},
                 now() + interval '2 days',
-                ${existing?.leaderboard_message_id || null}
+                ${existing?.leaderboard_message_id || startingSoonMessage?.id || null}
             )
             returning *
         `;
@@ -491,7 +559,6 @@ async function startElection(guild, createdById, db = sql) {
 
     election.restarted = Boolean(existing);
 
-    await postElectionStartingSoon(guild, election.id, db);
     await updateElectionLeaderboard(guild, db, { election });
     await postElectionStartedEvent(guild, election);
 
@@ -810,7 +877,7 @@ async function finishExpiredElectionsForGuild(guild, db = sql) {
         update elections
         set
             status = 'ended',
-            ended_at = now()
+            ended_at = ends_at
         where status = 'active'
             and ends_at <= now()
         returning *
@@ -882,6 +949,7 @@ module.exports = {
     rankVoteWeight,
     rejoinActiveElection,
     removePlayerFromActiveElection,
+    resetExpiredElectionResultBoardForGuild,
     startElection,
     transferReceivedElectionVotes,
     updateElectionLeaderboard

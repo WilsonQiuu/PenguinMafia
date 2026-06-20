@@ -33,8 +33,12 @@ const {
     ensureElectionStartingSoonBoard,
     finishExpiredElectionsForGuild,
     removePlayerFromActiveElection,
+    resetExpiredElectionResultBoardForGuild,
     updateElectionLeaderboard
 } = require('./utils/elections.js');
+const {
+    runFridayNoonScheduleForGuild
+} = require('./utils/weeklySchedule.js');
 const {
     cleanupWelcomeChannelsForMissingMembers,
     handleWelcomeButton,
@@ -1566,11 +1570,21 @@ client.once(Events.ClientReady, async () => {
 
     for (const [, guild] of client.guilds.cache) {
         try {
+            const scheduleResult = await runFridayNoonScheduleForGuild(guild, sql);
+
+            if (scheduleResult.weeklyReset || scheduleResult.electionStarted) {
+                console.log(
+                    `Friday noon schedule ran for ${guild.name}: ` +
+                    `weekly reset=${scheduleResult.weeklyReset}, election started=${scheduleResult.electionStarted}.`
+                );
+            }
+
             await ensureGettingPromotedInfoBoard(guild);
             await ensureRecruitCommandInfoBoard(guild);
             await ensureElectionCommandsBoard(guild);
             await ensureReactionRolesMessage(guild);
             await finishExpiredElectionsForGuild(guild, sql);
+            await resetExpiredElectionResultBoardForGuild(guild, sql);
             await finishExpiredGiveawaysForGuild(guild, sql);
             await cleanupEndedGiveawaysForGuild(guild, sql);
             const refreshed = await updateElectionLeaderboard(guild, sql);
@@ -1677,6 +1691,20 @@ client.once(Events.ClientReady, async () => {
     setInterval(async () => {
         for (const [, guild] of client.guilds.cache) {
             try {
+                const scheduleResult = await runFridayNoonScheduleForGuild(guild, sql);
+
+                if (scheduleResult.weeklyReset || scheduleResult.electionStarted) {
+                    console.log(
+                        `Friday noon schedule ran for ${guild.name}: ` +
+                        `weekly reset=${scheduleResult.weeklyReset}, election started=${scheduleResult.electionStarted}.`
+                    );
+                }
+            } catch (error) {
+                console.error(`Friday noon schedule failed for ${guild.name}:`);
+                console.error(error);
+            }
+
+            try {
                 const ended = await finishExpiredElectionsForGuild(guild, sql);
 
                 if (ended.length > 0) {
@@ -1684,6 +1712,17 @@ client.once(Events.ClientReady, async () => {
                 }
             } catch (error) {
                 console.error(`Election timer check failed for ${guild.name}:`);
+                console.error(error);
+            }
+
+            try {
+                const reset = await resetExpiredElectionResultBoardForGuild(guild, sql);
+
+                if (reset) {
+                    console.log(`Election result board reset to starting soon for ${guild.name}.`);
+                }
+            } catch (error) {
+                console.error(`Election result board reset failed for ${guild.name}:`);
                 console.error(error);
             }
 
