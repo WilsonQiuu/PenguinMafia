@@ -9,8 +9,23 @@ function playerName(player, fallback = 'Unknown Player') {
         fallback;
 }
 
+function formattedMinecraftIgn(player) {
+    if (!player.minecraft_ign) {
+        return null;
+    }
+
+    if (
+        player.minecraft_edition === 'bedrock' &&
+        !player.minecraft_ign.startsWith('.')
+    ) {
+        return `.${player.minecraft_ign}`;
+    }
+
+    return player.minecraft_ign;
+}
+
 function payoutName(player, fallback = 'Unknown Player') {
-    return player.minecraft_ign ||
+    return formattedMinecraftIgn(player) ||
         playerName(player, fallback);
 }
 
@@ -47,7 +62,7 @@ function linkedAccountLabel(player) {
             ? 'Java'
             : 'Linked, edition not set';
 
-    return `${player.minecraft_ign} — ${edition}`;
+    return `${formattedMinecraftIgn(player)} — ${edition}`;
 }
 
 function formatPayoutLine(payout, index, options = {}) {
@@ -240,6 +255,7 @@ async function calculatePayout(playerDiscordId, amount, donDiscordId, db = sql) 
 
 module.exports = {
     calculatePayout,
+    formattedMinecraftIgn,
     formatPayoutLine,
     formatRate,
     linkedAccountLabel,
