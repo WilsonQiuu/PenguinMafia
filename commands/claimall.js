@@ -82,6 +82,24 @@ module.exports = {
                         updated_at = now()
                 `;
 
+                await transaction`
+                    insert into recruit_history (
+                        recruit_discord_id,
+                        recruiter_discord_id,
+                        recruited_at,
+                        counts_for_hourly
+                    )
+                    select
+                        discord_id,
+                        ${donDiscordId},
+                        created_at,
+                        false
+                    from players
+                    where parent_discord_id is null
+                        and discord_id <> ${donDiscordId}
+                    on conflict (recruit_discord_id) do nothing
+                `;
+
                 const updatedRows = await transaction`
                     update players
                     set

@@ -162,7 +162,27 @@ function recruitingMessage(userId, isTest = false) {
             `\`/join recruiter:@YourDiscord\`\n\n` +
             `Need this later? Use \`/recruit\`.`,
         components: [
-            row(scopedButton('ign', userId, 'Next', ButtonStyle.Success, isTest))
+            row(scopedButton('account_link_info', userId, 'Next', ButtonStyle.Success, isTest))
+        ]
+    };
+}
+
+function accountLinkInfoMessage(userId, isTest = false) {
+    return {
+        content:
+            `# 🎉 WHY LINK YOUR MINECRAFT ACCOUNT?\n\n` +
+            `Linking your Minecraft IGN and edition helps the Don know exactly which account belongs to you.\n\n` +
+            `## Giveaway Entry\n` +
+            `Players should have their account linked before entering giveaways.\n` +
+            `If you win, your linked IGN and **Java** or **Bedrock** edition are shown with your payout.\n\n` +
+            `## Payments\n` +
+            `Your linked account also makes \`/pay\` simulations and event payouts easier to identify.\n\n` +
+            `Linking is optional for finishing welcome. You can link now or skip and use \`/link\` later.`,
+        components: [
+            row(
+                scopedButton('ign', userId, 'Link Now', ButtonStyle.Success, isTest),
+                scopedButton('skip_ign', userId, 'Skip For Now', ButtonStyle.Secondary, isTest)
+            )
         ]
     };
 }
@@ -550,6 +570,11 @@ async function handleWelcomeButton(interaction) {
         return true;
     }
 
+    if (action === 'account_link_info') {
+        await updateWithReadingDelay(interaction, accountLinkInfoMessage(targetUserId, isTest));
+        return true;
+    }
+
     if (action === 'ign') {
         await updateWithReadingDelay(interaction, ignMessage(targetUserId, isTest));
         return true;
@@ -645,6 +670,7 @@ async function handleWelcomeModal(interaction) {
 }
 
 module.exports = {
+    accountLinkInfoMessage,
     cleanupWelcomeChannelsForMissingMembers,
     recruitingMessage,
     remindIncompleteWelcomeMembers,

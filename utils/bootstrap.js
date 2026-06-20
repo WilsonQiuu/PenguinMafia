@@ -81,6 +81,7 @@ const DONATIONS_LEADERBOARD_CHANNEL_NAME = '💎-top-donators';
 const PROMOTION_EVENTS_CHANNEL_ID = process.env.PROMOTION_EVENTS_CHANNEL_ID || '1512488373145702430';
 const RANK_INFO_CHANNEL_ID = process.env.RANK_INFO_CHANNEL_ID || '1512488363788075250';
 const WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID = process.env.WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID || '1512488377490870392';
+const HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID = process.env.HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID || '1517802352046768148';
 const DONATIONS_LEADERBOARD_CHANNEL_ID = process.env.DONATIONS_LEADERBOARD_CHANNEL_ID || '1512488380280082493';
 const WELCOME_CATEGORY_NAME = '🐧-penguin-processing';
 const MOD_LOG_CHANNEL_NAME = 'mod-log';
@@ -433,6 +434,47 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        create table if not exists recruit_history (
+            recruit_discord_id text primary key,
+            recruiter_discord_id text not null,
+            recruited_at timestamptz not null default now(),
+            counts_for_hourly boolean not null default true
+        )
+    `;
+
+    await sql`
+        alter table recruit_history
+        add column if not exists counts_for_hourly boolean not null default true
+    `;
+
+    await sql`
+        insert into recruit_history (
+            recruit_discord_id,
+            recruiter_discord_id,
+            recruited_at,
+            counts_for_hourly
+        )
+        select
+            discord_id,
+            parent_discord_id,
+            created_at,
+            true
+        from players
+        where parent_discord_id is not null
+        on conflict (recruit_discord_id) do nothing
+    `;
+
+    await sql`
+        create index if not exists idx_recruit_history_recruited_at
+        on recruit_history(recruited_at)
+    `;
+
+    await sql`
+        create index if not exists idx_recruit_history_recruiter_time
+        on recruit_history(recruiter_discord_id, recruited_at)
+    `;
+
+    await sql`
         alter table players
         alter column donations type bigint
     `;
@@ -689,6 +731,44 @@ async function ensureDatabaseSchema(sql) {
         on players
         for each row
         execute function track_direct_recruits()
+    `;
+
+    await sql`
+        create or replace function record_first_recruit()
+        returns trigger as $$
+        begin
+            if new.parent_discord_id is not null then
+                insert into recruit_history (
+                    recruit_discord_id,
+                    recruiter_discord_id,
+                    recruited_at,
+                    counts_for_hourly
+                )
+                values (
+                    new.discord_id,
+                    new.parent_discord_id,
+                    now(),
+                    true
+                )
+                on conflict (recruit_discord_id) do nothing;
+            end if;
+
+            return new;
+        end;
+        $$ language plpgsql
+    `;
+
+    await sql`
+        drop trigger if exists trg_record_first_recruit on players
+    `;
+
+    await sql`
+        create trigger trg_record_first_recruit
+        after insert or update of parent_discord_id
+        on players
+        for each row
+        when (new.parent_discord_id is not null)
+        execute function record_first_recruit()
     `;
 }
 
@@ -1491,6 +1571,7 @@ module.exports = {
     DEFAULT_RANK_NAME,
     DONATIONS_LEADERBOARD_CHANNEL_ID,
     DONATIONS_LEADERBOARD_CHANNEL_NAME,
+    HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
     MOD_LOG_CHANNEL_ID,
     MOD_LOG_CHANNEL_NAME,
     PROMOTION_EVENTS_CHANNEL_ID,

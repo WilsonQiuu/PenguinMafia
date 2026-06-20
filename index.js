@@ -17,6 +17,7 @@ const {
     syncMemberStaffRankFromRoles
 } = require('./utils/bootstrap.js');
 const {
+    updateHourlyRecruitsLeaderboardForGuild,
     updateLeaderboardsForGuild
 } = require('./utils/leaderboards.js');
 const {
@@ -1661,6 +1662,17 @@ client.once(Events.ClientReady, async () => {
         sendDueWelcomeReminders();
         sendDueAccountLinkReminders();
     }, 24 * 60 * 60 * 1000);
+
+    setInterval(async () => {
+        for (const [, guild] of client.guilds.cache) {
+            try {
+                await updateHourlyRecruitsLeaderboardForGuild(guild, sql);
+            } catch (error) {
+                console.error(`Hourly recruits leaderboard refresh failed for ${guild.name}:`);
+                console.error(error);
+            }
+        }
+    }, 60_000);
 
     setInterval(async () => {
         for (const [, guild] of client.guilds.cache) {
