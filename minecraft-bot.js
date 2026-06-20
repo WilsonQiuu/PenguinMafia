@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+const EventEmitter = require('events');
 const path = require('path');
 const readline = require('readline');
 const mineflayer = require('mineflayer');
@@ -18,6 +19,83 @@ let reconnectTimer = null;
 let shuttingDown = false;
 let pendingPayment = null;
 let lastSigninAlertAt = 0;
+let lastPrivateMessage = null;
+const minecraftEvents = new EventEmitter();
+
+function emitMinecraftEvent(title, message, level = 'info', details = {}) {
+    minecraftEvents.emit('log', {
+        title,
+        message,
+        level,
+        details,
+        timestamp: new Date().toISOString()
+    });
+}
+
+function actionDetails(context = {}) {
+    const details = {};
+
+    if (context.actorTag) details['Discord user'] = context.actorTag;
+    if (context.actorId) details['Discord ID'] = context.actorId;
+    if (context.source) details.Source = context.source;
+
+    return details;
+}
+
+function parsePrivateMessage(message, botUsername = '') {
+    const text = cleanMinecraftMessage(message);
+    const escapedBotUsername = botUsername
+        ? botUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        : '[A-Za-z0-9_.]+';
+    const patterns = [
+        /^([A-Za-z0-9_.]{1,17}) whispers(?: to you)?:?\s+(.+)$/i,
+        /^From\s+([A-Za-z0-9_.]{1,17}):?\s+(.+)$/i,
+        new RegExp(
+            `^\\[?([A-Za-z0-9_.]{1,17})\\s*->\\s*(?:you|me|${escapedBotUsername})\\]?\\s*:?\\s*(.+)$`,
+            'i'
+        )
+    ];
+
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match) {
+            return {
+                player: match[1],
+                message: match[2].trim()
+            };
+        }
+    }
+
+    return null;
+}
+
+function logPrivateMessage(player, message) {
+    const signature = `${player.toLowerCase()}\u0000${message}`;
+    const now = Date.now();
+
+    if (
+        lastPrivateMessage &&
+        lastPrivateMessage.signature === signature &&
+        now - lastPrivateMessage.timestamp < 2_000
+    ) {
+        return false;
+    }
+
+    lastPrivateMessage = {
+        signature,
+        timestamp: now
+    };
+    emitMinecraftEvent(
+        'Private Message Received',
+        `${player} messaged the Minecraft bot.`,
+        'info',
+        {
+            Player: player,
+            Message: message
+        }
+    );
+    return true;
+}
 
 function timestamp() {
     return new Date().toISOString();
@@ -43,6 +121,24 @@ function requiredEnvironment(name) {
     return value;
 }
 
+function microsoftLoginAlert(data) {
+    const code = data?.user_code?.trim();
+    const verificationUrl = data?.verification_uri?.trim() || 'https://www.microsoft.com/link';
+
+    if (!code) {
+        return data?.message?.trim() ||
+            'Microsoft authentication requires a new device-code login. Check the Minecraft bot logs.';
+    }
+
+    const directUrl = `https://www.microsoft.com/link?otc=${encodeURIComponent(code)}`;
+    return (
+        `Minecraft bot Microsoft login required.\n` +
+        `Open: ${directUrl}\n` +
+        `Code: ${code}\n` +
+        `Manual login: ${verificationUrl}`
+    );
+}
+
 function minecraftOptions() {
     const port = Number(process.env.MINECRAFT_PORT || 25565);
 
@@ -60,9 +156,16 @@ function minecraftOptions() {
             console.log('\nMicrosoft authentication is required:');
             console.log(data.message);
             console.log('');
-            void sendSigninAlert(
-                'Microsoft authentication requires a new device-code login. Check the Minecraft bot terminal.'
+            emitMinecraftEvent(
+                'Microsoft Login Required',
+                'The Minecraft account requires a new Microsoft device-code login.',
+                'warning',
+                {
+                    'Login URL': data?.verification_uri || 'https://www.microsoft.com/link',
+                    'Device code': data?.user_code || 'See Railway logs or Twilio SMS'
+                }
             );
+            void sendSigninAlert(microsoftLoginAlert(data));
         }
     };
 
@@ -320,8 +423,30 @@ function handlePaymentResponse(message) {
     clearTimeout(payment.timeout);
 
     if (result.status === 'completed') {
+        emitMinecraftEvent(
+            'Payment Successful',
+            `The server confirmed the payment to ${payment.player}.`,
+            'success',
+            {
+                Player: payment.player,
+                Amount: payment.amount,
+                'Server response': result.message,
+                ...actionDetails(payment.context)
+            }
+        );
         payment.resolve(result);
     } else {
+        emitMinecraftEvent(
+            'Payment Unsuccessful',
+            `The server rejected the payment to ${payment.player}.`,
+            'error',
+            {
+                Player: payment.player,
+                Amount: payment.amount,
+                'Server response': result.message,
+                ...actionDetails(payment.context)
+            }
+        );
         payment.reject(new Error(result.message));
     }
 }
@@ -337,7 +462,7 @@ function cancelPendingPayment(reason) {
     payment.reject(new Error(reason));
 }
 
-function payPlayer(player, amount) {
+function payPlayer(player, amount, context = {}) {
     if (pendingPayment) {
         throw new Error(`A payment to ${pendingPayment.player} is still waiting for confirmation.`);
     }
@@ -353,6 +478,17 @@ function payPlayer(player, amount) {
             }
 
             pendingPayment = null;
+            emitMinecraftEvent(
+                'Payment Confirmation Timed Out',
+                `No server confirmation was received for the payment to ${player}.`,
+                'warning',
+                {
+                    Player: player,
+                    Amount: amount,
+                    Timeout: `${timeoutMs / 1000} seconds`,
+                    ...actionDetails(context)
+                }
+            );
             reject(
                 new Error(
                     `No payment confirmation was received within ${timeoutMs / 1000} seconds. Check Minecraft chat before retrying.`
@@ -360,24 +496,55 @@ function payPlayer(player, amount) {
             );
         }, timeoutMs);
 
-        pendingPayment = { player, amount, patterns, timeout, resolve, reject };
+        pendingPayment = { player, amount, patterns, timeout, resolve, reject, context };
 
         try {
             sendChat(command);
             console.log(`Payment command sent: ${command}`);
             console.log('Waiting for the server to confirm the payment...');
+            emitMinecraftEvent(
+                'Payment Sent',
+                `Waiting for the server to confirm the payment to ${player}.`,
+                'info',
+                {
+                    Player: player,
+                    Amount: amount,
+                    Command: command,
+                    ...actionDetails(context)
+                }
+            );
         } catch (error) {
             pendingPayment = null;
             clearTimeout(timeout);
+            emitMinecraftEvent(
+                'Payment Failed to Send',
+                error.message,
+                'error',
+                {
+                    Player: player,
+                    Amount: amount,
+                    ...actionDetails(context)
+                }
+            );
             reject(error);
         }
     });
 }
 
-function messagePlayer(player, message) {
+function messagePlayer(player, message, context = {}) {
     const command = buildMessageCommand(player, message);
     sendChat(command);
     console.log(`Private message sent to ${player}.`);
+    emitMinecraftEvent(
+        'Private Message Sent',
+        `The Minecraft bot sent a private message to ${player}.`,
+        'success',
+        {
+            Player: player,
+            Message: message,
+            ...actionDetails(context)
+        }
+    );
 }
 
 function scheduleReconnect() {
@@ -392,7 +559,7 @@ function scheduleReconnect() {
     }, RECONNECT_DELAY_MS);
 }
 
-function connect() {
+function connect(context = {}) {
     shuttingDown = false;
 
     if (bot) {
@@ -412,6 +579,12 @@ function connect() {
 
     const options = minecraftOptions();
     console.log(`Connecting to ${options.host}:${options.port}...`);
+    emitMinecraftEvent(
+        'Minecraft Bot Starting',
+        `Connecting to ${options.host}:${options.port}.`,
+        'info',
+        actionDetails(context)
+    );
     const currentBot = mineflayer.createBot(options);
     let connectionIssue = null;
     let signedInSuccessfully = false;
@@ -419,11 +592,34 @@ function connect() {
 
     currentBot.once('login', () => {
         console.log(`Authenticated as ${currentBot.username}.`);
+        emitMinecraftEvent(
+            'Minecraft Authentication Successful',
+            `Authenticated as ${currentBot.username}.`,
+            'success',
+            {
+                Account: currentBot.username,
+                Server: options.host
+            }
+        );
     });
 
     currentBot.once('spawn', () => {
         signedInSuccessfully = true;
         console.log(`Connected and spawned as ${currentBot.username}. Type "help" for commands.`);
+        emitMinecraftEvent(
+            'Minecraft Bot Online',
+            `Connected and spawned as ${currentBot.username}.`,
+            'success',
+            {
+                Account: currentBot.username,
+                Server: options.host,
+                Port: options.port
+            }
+        );
+    });
+
+    currentBot.on('whisper', (username, message) => {
+        logPrivateMessage(username, message);
     });
 
     currentBot.on('message', (jsonMessage, position, sender, verified) => {
@@ -437,17 +633,37 @@ function connect() {
                 message: jsonMessage.toJSON ? jsonMessage.toJSON() : jsonMessage
             })}`
         );
+        const privateMessage = parsePrivateMessage(message, currentBot.username);
+        if (privateMessage) {
+            logPrivateMessage(privateMessage.player, privateMessage.message);
+        }
         handlePaymentResponse(message);
     });
 
     currentBot.on('kicked', reason => {
         connectionIssue = `Kicked: ${String(reason)}`;
         console.error(`Minecraft bot was kicked: ${String(reason)}`);
+        emitMinecraftEvent(
+            'Minecraft Bot Kicked',
+            'The server kicked the Minecraft bot.',
+            'error',
+            {
+                Reason: String(reason)
+            }
+        );
     });
 
     currentBot.on('error', error => {
         connectionIssue = `Error: ${error.message}`;
         console.error(`Minecraft bot error: ${error.message}`);
+        emitMinecraftEvent(
+            'Minecraft Bot Error',
+            error.message,
+            'error',
+            {
+                Stack: error.stack || 'No stack trace available'
+            }
+        );
     });
 
     currentBot.once('end', reason => {
@@ -460,6 +676,20 @@ function connect() {
             if (!signedInSuccessfully) {
                 void sendSigninAlert(connectionIssue || reason || 'The bot disconnected before spawning.');
             }
+
+            emitMinecraftEvent(
+                signedInSuccessfully
+                    ? 'Minecraft Bot Went Offline Unexpectedly'
+                    : 'Minecraft Bot Failed to Start',
+                signedInSuccessfully
+                    ? 'The Minecraft bot disconnected without a requested shutdown. Automatic reconnecting will continue.'
+                    : 'The Minecraft bot disconnected before it successfully spawned. Automatic reconnecting will continue.',
+                'error',
+                {
+                    Reason: connectionIssue || reason || 'Unknown reason',
+                    Server: options.host
+                }
+            );
 
             scheduleReconnect();
         }
@@ -481,14 +711,24 @@ function disconnect() {
     }
 }
 
-function startMinecraftBot() {
-    return connect();
+function startMinecraftBot(context = {}) {
+    return connect(context);
 }
 
-function stopMinecraftBot() {
+function stopMinecraftBot(context = {}) {
     const wasRunning = Boolean(bot || reconnectTimer);
     shuttingDown = true;
     disconnect();
+
+    emitMinecraftEvent(
+        wasRunning ? 'Minecraft Bot Stopped' : 'Minecraft Bot Stop Requested',
+        wasRunning
+            ? 'The Minecraft bot was intentionally disconnected and automatic reconnecting was stopped.'
+            : 'The Minecraft bot was already stopped.',
+        wasRunning ? 'warning' : 'info',
+        actionDetails(context)
+    );
+
     return wasRunning;
 }
 
@@ -642,6 +882,10 @@ module.exports = {
     minecraftOptions,
     handleTerminalCommand,
     messagePlayer,
+    emitMinecraftEvent,
+    minecraftEvents,
+    parsePrivateMessage,
+    microsoftLoginAlert,
     minecraftBotStatus,
     payPlayer,
     sendSigninAlert,

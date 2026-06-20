@@ -75,6 +75,14 @@ const {
     postModLog,
     truncateValue
 } = require('./utils/modlogs.js');
+const {
+    ensureMinecraftBotLogChannel,
+    postMinecraftBotLog
+} = require('./utils/minecraftBotLogs.js');
+const {
+    minecraftEvents,
+    stopMinecraftBot
+} = require('./minecraft-bot.js');
 
 const fs = require('fs');
 const path = require('path');
@@ -117,6 +125,15 @@ const client = new Client({
 client.commands = new Collection();
 client.invites = new Collection();
 client.joinBatches = new Collection();
+
+minecraftEvents.on('log', event => {
+    for (const [, guild] of client.guilds.cache) {
+        postMinecraftBotLog(guild, event).catch(error => {
+            console.error(`Could not post Minecraft bot log for ${guild.name}:`);
+            console.error(error);
+        });
+    }
+});
 
 const WELCOME_CHANNEL_ID = process.env.WELCOME_CHANNEL_ID || '1512488354044711052';
 
@@ -242,6 +259,9 @@ async function setupGuildOnStartup(guild) {
 
     await ensureInfoChannels(guild, rankRoles, staffRoles);
     logStartupStep('managed channels ready');
+
+    await ensureMinecraftBotLogChannel(guild);
+    logStartupStep('private Minecraft bot log channel ready');
 
     console.log(
         `Startup setup complete for ${guild.name}: ` +
@@ -2360,6 +2380,16 @@ async function shutdown(signal) {
 
     shutdownStarted = true;
     console.log(`Received ${signal}. Shutting down Penguin Mafia bot cleanly...`);
+
+    try {
+        stopMinecraftBot({
+            actorTag: 'Railway/process manager',
+            source: signal
+        });
+    } catch (error) {
+        console.error('Minecraft client shutdown failed:');
+        console.error(error);
+    }
 
     try {
         client.destroy();
