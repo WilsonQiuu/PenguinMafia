@@ -262,6 +262,7 @@ async function ensureDatabaseSchema(sql) {
             ban_points_remaining int not null default 0 check (ban_points_remaining >= 0),
             status text not null default 'active',
             welcome_reminder_sent_at timestamptz,
+            account_link_reminder_sent_at timestamptz,
             first_captain_branch_notified_at timestamptz,
             first_general_branch_notified_at timestamptz,
             first_emperor_branch_notified_at timestamptz,
@@ -305,6 +306,11 @@ async function ensureDatabaseSchema(sql) {
     await sql`
         alter table players
         add column if not exists welcome_reminder_sent_at timestamptz
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists account_link_reminder_sent_at timestamptz
     `;
 
     await sql`

@@ -42,6 +42,11 @@ const {
     startOnboardingForMember
 } = require('./utils/onboarding.js');
 const {
+    handleAccountLinkButton,
+    handleAccountLinkModal,
+    remindUnlinkedPlayers
+} = require('./utils/accountLinkReminders.js');
+const {
     handleTrialModButton
 } = require('./utils/trialModOnboarding.js');
 const {
@@ -1635,7 +1640,27 @@ client.once(Events.ClientReady, async () => {
         }
     }
 
-    setInterval(sendDueWelcomeReminders, 24 * 60 * 60 * 1000);
+    async function sendDueAccountLinkReminders() {
+        for (const [, guild] of client.guilds.cache) {
+            try {
+                const result = await remindUnlinkedPlayers(guild, sql);
+
+                if (result.sent > 0) {
+                    console.log(`Account-link reminders sent for ${guild.name}: ${result.sent}/${result.checked} due member(s).`);
+                }
+            } catch (error) {
+                console.error(`Account-link reminder scan failed for ${guild.name}:`);
+                console.error(error);
+            }
+        }
+    }
+
+    await sendDueAccountLinkReminders();
+
+    setInterval(() => {
+        sendDueWelcomeReminders();
+        sendDueAccountLinkReminders();
+    }, 24 * 60 * 60 * 1000);
 
     setInterval(async () => {
         for (const [, guild] of client.guilds.cache) {
@@ -1696,6 +1721,9 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
 client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isButton()) {
         try {
+            const accountLinkHandled = await handleAccountLinkButton(interaction, sql);
+            if (accountLinkHandled) return;
+
             const giveawayHandled = await handleGiveawayButton(interaction, sql);
             if (giveawayHandled) return;
 
@@ -1720,6 +1748,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
     if (interaction.isModalSubmit()) {
         try {
+            const accountLinkHandled = await handleAccountLinkModal(interaction, sql);
+            if (accountLinkHandled) return;
+
             const giveawayHandled = await handleGiveawayLinkModal(interaction, sql);
             if (giveawayHandled) return;
 
