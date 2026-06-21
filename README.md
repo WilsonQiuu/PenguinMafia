@@ -113,7 +113,7 @@ Example payment:
 pay PenguinPlayer 100m
 ```
 
-This sends `/pay PenguinPlayer 100m` to Minecraft chat. The Don can also control the same client from Discord with `/bot start`, `/bot pay`, `/bot msg`, and `/bot quit`. Run the Discord bot with `npm run start`; do not run the standalone `npm run minecraft` process at the same time.
+This sends `/pay PenguinPlayer 100m` to Minecraft chat. The Don can also control the same client from Discord with `/bot start`, `/bot pay`, `/bot msg`, `/bot home`, and `/bot quit`. `/bot home` sends `/home 1` in Minecraft. Run the Discord bot with `npm run start`; do not run the standalone `npm run minecraft` process at the same time.
 
 After sending a payment, the bot waits up to 30 seconds for the server's chat response. It reports the payment as completed only when a success response mentions the player, reports a known failure response, or warns that confirmation timed out. Only one payment can wait for confirmation at a time. Server messages are logged with timestamps and their raw packet contents for troubleshooting.
 
@@ -127,6 +127,8 @@ MINECRAFT_PAYMENT_FAILURE_PATTERN=insufficient funds|player not found|payment fa
 When the Twilio account credentials, destination, and either a Messaging Service SID or sending number are present, the bot sends Microsoft’s clickable login link and device code by SMS when a new login is required. It also alerts when the client fails before successfully signing in and spawning. Ordinary disconnects after a successful connection and failed payments do not send alerts. Twilio trial accounts require the destination number to be verified in the Twilio Console.
 
 On Discord startup, the bot creates or repairs a private `🤖-bot-logs` channel visible only to the configured Don and the Discord bot. It records Minecraft startup and shutdown events, unexpected disconnects, errors, payment results, private messages sent by the bot, and private messages received from Minecraft players.
+
+After an unexpected disconnect, the Minecraft bot randomly waits between 5 and 15 minutes before reconnecting automatically. The chosen delay is shown in the private bot-log channel. The Don can use `/bot start` during that waiting period to reconnect immediately, or `/bot quit` to cancel automatic reconnecting.
 
 On startup, the bot will:
 

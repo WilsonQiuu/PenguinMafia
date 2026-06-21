@@ -8,6 +8,7 @@ const {
 } = require('../utils/staff.js');
 const {
     emitMinecraftEvent,
+    goHome,
     messagePlayer,
     minecraftBotStatus,
     payPlayer,
@@ -67,6 +68,11 @@ module.exports = {
         )
         .addSubcommand(subcommand =>
             subcommand
+                .setName('home')
+                .setDescription('Send the Minecraft bot to home 1.')
+        )
+        .addSubcommand(subcommand =>
+            subcommand
                 .setName('quit')
                 .setDescription('Disconnect and stop the Minecraft bot.')
         ),
@@ -109,19 +115,24 @@ module.exports = {
                     return;
                 }
 
-                if (before.status === 'connecting' || before.status === 'reconnecting') {
+                if (before.status === 'connecting') {
                     await interaction.editReply(
-                        `ℹ️ The Minecraft bot is already ${before.status}${connectionLabel(before)}.`
+                        `ℹ️ The Minecraft bot is already connecting${connectionLabel(before)}.`
                     );
                     return;
                 }
 
                 const started = startMinecraftBot(actionContext);
                 await interaction.editReply(
-                    `✅ Minecraft bot is starting${connectionLabel({
-                        ...started,
-                        host: process.env.MINECRAFT_HOST?.trim() || null
-                    })}.`
+                    before.status === 'reconnecting'
+                        ? `✅ The automatic reconnect wait was skipped. Minecraft bot is reconnecting now${connectionLabel({
+                            ...started,
+                            host: process.env.MINECRAFT_HOST?.trim() || null
+                        })}.`
+                        : `✅ Minecraft bot is starting${connectionLabel({
+                            ...started,
+                            host: process.env.MINECRAFT_HOST?.trim() || null
+                        })}.`
                 );
                 return;
             }
@@ -141,6 +152,12 @@ module.exports = {
                 throw new Error(
                     `The Minecraft bot is ${status.status}. Use /bot start and wait for it to connect.`
                 );
+            }
+
+            if (subcommand === 'home') {
+                goHome(actionContext);
+                await interaction.editReply('✅ Sent `/home 1` to the Minecraft bot.');
+                return;
             }
 
             const player = interaction.options.getString('player', true);

@@ -6,7 +6,8 @@ const readline = require('readline');
 const mineflayer = require('mineflayer');
 
 const AUTH_CACHE_DIRECTORY = path.join(__dirname, '.minecraft-bot-auth');
-const RECONNECT_DELAY_MS = 10_000;
+const MIN_RECONNECT_DELAY_MINUTES = 5;
+const MAX_RECONNECT_DELAY_MINUTES = 15;
 const DEFAULT_PAYMENT_TIMEOUT_MS = 30_000;
 const DEFAULT_ALERT_COOLDOWN_MS = 15 * 60 * 1_000;
 const DEFAULT_PAYMENT_SUCCESS_PATTERN =
@@ -547,16 +548,51 @@ function messagePlayer(player, message, context = {}) {
     );
 }
 
+function goHome(context = {}) {
+    const command = '/home 1';
+    sendChat(command);
+    console.log(`Minecraft command sent: ${command}`);
+    emitMinecraftEvent(
+        'Home Command Sent',
+        'The Minecraft bot was sent to home 1.',
+        'success',
+        {
+            Command: command,
+            ...actionDetails(context)
+        }
+    );
+}
+
+function randomReconnectDelayMinutes(random = Math.random) {
+    return Math.floor(random() * (
+        MAX_RECONNECT_DELAY_MINUTES - MIN_RECONNECT_DELAY_MINUTES + 1
+    )) + MIN_RECONNECT_DELAY_MINUTES;
+}
+
 function scheduleReconnect() {
     if (shuttingDown || reconnectTimer) {
         return;
     }
 
-    console.log(`Reconnecting in ${RECONNECT_DELAY_MS / 1000} seconds...`);
+    const delayMinutes = randomReconnectDelayMinutes();
+    const delayMs = delayMinutes * 60_000;
+
+    console.log(`Reconnecting in ${delayMinutes} minutes...`);
+    emitMinecraftEvent(
+        'Minecraft Reconnect Scheduled',
+        `The Minecraft bot will automatically reconnect in ${delayMinutes} minutes unless the Don uses /bot start sooner.`,
+        'warning',
+        {
+            Delay: `${delayMinutes} minutes`
+        }
+    );
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
-        connect();
-    }, RECONNECT_DELAY_MS);
+        connect({
+            actorTag: 'Automatic reconnect',
+            source: 'Reconnect timer'
+        });
+    }, delayMs);
 }
 
 function connect(context = {}) {
@@ -682,8 +718,8 @@ function connect(context = {}) {
                     ? 'Minecraft Bot Went Offline Unexpectedly'
                     : 'Minecraft Bot Failed to Start',
                 signedInSuccessfully
-                    ? 'The Minecraft bot disconnected without a requested shutdown. Automatic reconnecting will continue.'
-                    : 'The Minecraft bot disconnected before it successfully spawned. Automatic reconnecting will continue.',
+                    ? 'The Minecraft bot disconnected without a requested shutdown. A random automatic reconnect between 5 and 15 minutes will be scheduled unless the Don uses /bot start sooner.'
+                    : 'The Minecraft bot disconnected before it successfully spawned. A random automatic reconnect between 5 and 15 minutes will be scheduled unless the Don uses /bot start sooner.',
                 'error',
                 {
                     Reason: connectionIssue || reason || 'Unknown reason',
@@ -881,6 +917,7 @@ module.exports = {
     cleanMinecraftMessage,
     minecraftOptions,
     handleTerminalCommand,
+    goHome,
     messagePlayer,
     emitMinecraftEvent,
     minecraftEvents,
@@ -888,6 +925,7 @@ module.exports = {
     microsoftLoginAlert,
     minecraftBotStatus,
     payPlayer,
+    randomReconnectDelayMinutes,
     sendSigninAlert,
     sendTwilioSms,
     smsAlertConfiguration,
