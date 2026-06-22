@@ -121,7 +121,8 @@ async function runFridayNoonScheduleForGuild(guild, db = sql, now = new Date()) 
 
             await resetWeeklyRecruitsAndSaveTopThree(db, {
                 completionStateKey: stateKey,
-                completionStateValue: JSON.stringify(state)
+                completionStateValue: JSON.stringify(state),
+                usePreviousWeeklyPeriod: true
             });
             await updateWeeklyRecruitsLeaderboardForGuild(guild, db);
             weeklyReset = true;

@@ -10,6 +10,8 @@ const {
 } = require('./donations.js');
 
 const PREVIOUS_WEEKLY_RECRUITS_STATE_KEY = 'previous_weekly_recruits_top_three';
+const WEEKLY_RECRUITS_LAST_RESET_STATE_KEY = 'weekly_recruits_last_reset_at';
+const WEEKLY_RECRUITS_TIME_ZONE = 'America/Toronto';
 
 function leaderboardName(player) {
     return player.minecraft_ign ||
@@ -66,15 +68,75 @@ async function updateLeaderboardChannel(guild, channelId, channelName, marker, c
 async function updateWeeklyRecruitsLeaderboardForGuild(guild, sql) {
     const [weeklyRows, previousRows] = await Promise.all([
         sql`
+        with eastern_week as (
+            select
+                now() at time zone ${WEEKLY_RECRUITS_TIME_ZONE} as local_now,
+                date_trunc('week', now() at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) + interval '4 days 12 hours' as friday_noon
+        ),
+        scheduled_week as (
+            select (
+                case
+                    when local_now >= friday_noon then friday_noon
+                    else friday_noon - interval '7 days'
+                end
+            ) at time zone ${WEEKLY_RECRUITS_TIME_ZONE} as started_at
+            from eastern_week
+        ),
+        active_week as (
+            select greatest(
+                coalesce(
+                    (
+                        select updated_at
+                        from bot_state
+                        where key = ${WEEKLY_RECRUITS_LAST_RESET_STATE_KEY}
+                        limit 1
+                    ),
+                    '-infinity'::timestamptz
+                ),
+                (
+                    select started_at
+                    from scheduled_week
+                )
+            ) as started_at
+        ),
+        weekly_players as (
+            select
+                discord_id,
+                discord_username,
+                discord_display_name,
+                minecraft_ign,
+                weekly_direct_recruits_count
+            from players
+            where weekly_direct_recruits_count > 0
+        )
         select
-            discord_id,
-            discord_username,
-            discord_display_name,
-            minecraft_ign,
-            weekly_direct_recruits_count
-        from players
-        where weekly_direct_recruits_count > 0
-        order by weekly_direct_recruits_count desc, discord_display_name asc
+            weekly_players.discord_id,
+            weekly_players.discord_username,
+            weekly_players.discord_display_name,
+            weekly_players.minecraft_ign,
+            weekly_players.weekly_direct_recruits_count
+        from weekly_players
+        cross join active_week
+        left join lateral (
+            select ranked.recruited_at as reached_at
+            from (
+                select
+                    history.recruited_at,
+                    row_number() over (
+                        order by history.recruited_at asc, history.recruit_discord_id asc
+                    ) as recruit_number
+                from recruit_history history
+                where history.recruiter_discord_id = weekly_players.discord_id
+                    and history.recruited_at >= active_week.started_at
+            ) ranked
+            where ranked.recruit_number = weekly_players.weekly_direct_recruits_count
+            limit 1
+        ) weekly_progress on true
+        order by
+            weekly_players.weekly_direct_recruits_count desc,
+            weekly_progress.reached_at asc nulls last,
+            weekly_players.discord_display_name asc nulls last,
+            weekly_players.discord_username asc nulls last
         limit 10
         `,
         sql`
@@ -112,6 +174,7 @@ async function updateWeeklyRecruitsLeaderboardForGuild(guild, sql) {
         'Penguin Mafia Weekly Recruit Leaderboard',
         `🏆🐧 **Penguin Mafia Weekly Recruit Leaderboard** 🐧🏆\n\n` +
         `Top 10 penguins by **direct recruits this week**.\n` +
+        `Tie-breaker: if players have the same recruit count, whoever reached that count first ranks higher.\n` +
         `This board resets every **Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time).\n\n` +
         `## Current Week\n${weeklyLines}\n\n` +
         `## Previous Week Top 3\n${previousLines}\n\n`
@@ -121,15 +184,82 @@ async function updateWeeklyRecruitsLeaderboardForGuild(guild, sql) {
 async function resetWeeklyRecruitsAndSaveTopThree(sql, options = {}) {
     return sql.begin(async transaction => {
         const topThree = await transaction`
+            with eastern_week as (
+                select
+                    now() at time zone ${WEEKLY_RECRUITS_TIME_ZONE} as local_now,
+                    date_trunc('week', now() at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) + interval '4 days 12 hours' as friday_noon
+            ),
+            scheduled_week as (
+                select (
+                    case
+                        when local_now >= friday_noon then friday_noon
+                        else friday_noon - interval '7 days'
+                    end
+                ) at time zone ${WEEKLY_RECRUITS_TIME_ZONE} as started_at
+                from eastern_week
+            ),
+            active_week as (
+                select
+                    case
+                        when ${Boolean(options.usePreviousWeeklyPeriod)} then (
+                            select started_at
+                            from scheduled_week
+                        ) - interval '7 days'
+                        else greatest(
+                            coalesce(
+                                (
+                                    select updated_at
+                                    from bot_state
+                                    where key = ${WEEKLY_RECRUITS_LAST_RESET_STATE_KEY}
+                                    limit 1
+                                ),
+                                '-infinity'::timestamptz
+                            ),
+                            (
+                                select started_at
+                                from scheduled_week
+                            )
+                        )
+                    end as started_at
+            ),
+            weekly_players as (
+                select
+                    discord_id,
+                    discord_username,
+                    discord_display_name,
+                    minecraft_ign,
+                    weekly_direct_recruits_count::int as recruit_count
+                from players
+                where weekly_direct_recruits_count > 0
+            )
             select
-                discord_id,
-                discord_username,
-                discord_display_name,
-                minecraft_ign,
-                weekly_direct_recruits_count::int as recruit_count
-            from players
-            where weekly_direct_recruits_count > 0
-            order by weekly_direct_recruits_count desc, discord_display_name asc
+                weekly_players.discord_id,
+                weekly_players.discord_username,
+                weekly_players.discord_display_name,
+                weekly_players.minecraft_ign,
+                weekly_players.recruit_count
+            from weekly_players
+            cross join active_week
+            left join lateral (
+                select ranked.recruited_at as reached_at
+                from (
+                    select
+                        history.recruited_at,
+                        row_number() over (
+                            order by history.recruited_at asc, history.recruit_discord_id asc
+                        ) as recruit_number
+                    from recruit_history history
+                    where history.recruiter_discord_id = weekly_players.discord_id
+                        and history.recruited_at >= active_week.started_at
+                ) ranked
+                where ranked.recruit_number = weekly_players.recruit_count
+                limit 1
+            ) weekly_progress on true
+            order by
+                weekly_players.recruit_count desc,
+                weekly_progress.reached_at asc nulls last,
+                weekly_players.discord_display_name asc nulls last,
+                weekly_players.discord_username asc nulls last
             limit 3
         `;
 
@@ -141,6 +271,21 @@ async function resetWeeklyRecruitsAndSaveTopThree(sql, options = {}) {
             values (
                 ${PREVIOUS_WEEKLY_RECRUITS_STATE_KEY},
                 ${JSON.stringify(topThree)}
+            )
+            on conflict (key) do update
+            set
+                value = excluded.value,
+                updated_at = now()
+        `;
+
+        await transaction`
+            insert into bot_state (
+                key,
+                value
+            )
+            values (
+                ${WEEKLY_RECRUITS_LAST_RESET_STATE_KEY},
+                now()::text
             )
             on conflict (key) do update
             set
@@ -208,28 +353,12 @@ async function updateDonationLeaderboardForGuild(guild, sql) {
 
 async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
     const currentHourRows = await sql`
-        select
-            history.recruiter_discord_id as discord_id,
-            recruiter.discord_username,
-            recruiter.discord_display_name,
-            recruiter.minecraft_ign,
-            count(*)::int as recruit_count
-        from recruit_history history
-        left join players recruiter
-            on recruiter.discord_id = history.recruiter_discord_id
-        where history.recruited_at >= date_trunc('hour', now())
-            and history.recruited_at < date_trunc('hour', now()) + interval '1 hour'
-            and history.counts_for_hourly = true
-        group by
-            history.recruiter_discord_id,
-            recruiter.discord_username,
-            recruiter.discord_display_name,
-            recruiter.minecraft_ign
-        order by recruit_count desc, recruiter.discord_display_name asc nulls last
-        limit 10
-    `;
-    const previousHourWinners = await sql`
-        with recruiter_totals as (
+        with hour_window as (
+            select
+                date_trunc('hour', now()) as started_at,
+                date_trunc('hour', now()) + interval '1 hour' as ended_at
+        ),
+        recruiter_totals as (
             select
                 history.recruiter_discord_id as discord_id,
                 recruiter.discord_username,
@@ -237,10 +366,11 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
                 recruiter.minecraft_ign,
                 count(*)::int as recruit_count
             from recruit_history history
+            cross join hour_window
             left join players recruiter
                 on recruiter.discord_id = history.recruiter_discord_id
-            where history.recruited_at >= date_trunc('hour', now()) - interval '1 hour'
-                and history.recruited_at < date_trunc('hour', now())
+            where history.recruited_at >= hour_window.started_at
+                and history.recruited_at < hour_window.ended_at
                 and history.counts_for_hourly = true
             group by
                 history.recruiter_discord_id,
@@ -248,20 +378,101 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
                 recruiter.discord_display_name,
                 recruiter.minecraft_ign
         )
-        select *
+        select
+            recruiter_totals.discord_id,
+            recruiter_totals.discord_username,
+            recruiter_totals.discord_display_name,
+            recruiter_totals.minecraft_ign,
+            recruiter_totals.recruit_count
         from recruiter_totals
-        where recruit_count = (
-            select max(recruit_count)
-            from recruiter_totals
-        )
-        order by discord_display_name asc nulls last
+        cross join hour_window
+        left join lateral (
+            select ranked.recruited_at as reached_at
+            from (
+                select
+                    history.recruited_at,
+                    row_number() over (
+                        order by history.recruited_at asc, history.recruit_discord_id asc
+                    ) as recruit_number
+                from recruit_history history
+                where history.recruiter_discord_id = recruiter_totals.discord_id
+                    and history.recruited_at >= hour_window.started_at
+                    and history.recruited_at < hour_window.ended_at
+                    and history.counts_for_hourly = true
+            ) ranked
+            where ranked.recruit_number = recruiter_totals.recruit_count
+            limit 1
+        ) hourly_progress on true
+        order by
+            recruiter_totals.recruit_count desc,
+            hourly_progress.reached_at asc nulls last,
+            recruiter_totals.discord_display_name asc nulls last,
+            recruiter_totals.discord_username asc nulls last
+        limit 10
     `;
-    const previousTopCount = previousHourWinners[0]?.recruit_count || 0;
-    const winnerLine = previousHourWinners.length === 0
+    const previousHourWinnerRows = await sql`
+        with hour_window as (
+            select
+                date_trunc('hour', now()) - interval '1 hour' as started_at,
+                date_trunc('hour', now()) as ended_at
+        ),
+        recruiter_totals as (
+            select
+                history.recruiter_discord_id as discord_id,
+                recruiter.discord_username,
+                recruiter.discord_display_name,
+                recruiter.minecraft_ign,
+                count(*)::int as recruit_count
+            from recruit_history history
+            cross join hour_window
+            left join players recruiter
+                on recruiter.discord_id = history.recruiter_discord_id
+            where history.recruited_at >= hour_window.started_at
+                and history.recruited_at < hour_window.ended_at
+                and history.counts_for_hourly = true
+            group by
+                history.recruiter_discord_id,
+                recruiter.discord_username,
+                recruiter.discord_display_name,
+                recruiter.minecraft_ign
+        )
+        select
+            recruiter_totals.discord_id,
+            recruiter_totals.discord_username,
+            recruiter_totals.discord_display_name,
+            recruiter_totals.minecraft_ign,
+            recruiter_totals.recruit_count
+        from recruiter_totals
+        cross join hour_window
+        left join lateral (
+            select ranked.recruited_at as reached_at
+            from (
+                select
+                    history.recruited_at,
+                    row_number() over (
+                        order by history.recruited_at asc, history.recruit_discord_id asc
+                    ) as recruit_number
+                from recruit_history history
+                where history.recruiter_discord_id = recruiter_totals.discord_id
+                    and history.recruited_at >= hour_window.started_at
+                    and history.recruited_at < hour_window.ended_at
+                    and history.counts_for_hourly = true
+            ) ranked
+            where ranked.recruit_number = recruiter_totals.recruit_count
+            limit 1
+        ) hourly_progress on true
+        order by
+            recruiter_totals.recruit_count desc,
+            hourly_progress.reached_at asc nulls last,
+            recruiter_totals.discord_display_name asc nulls last,
+            recruiter_totals.discord_username asc nulls last
+        limit 1
+    `;
+    const previousHourWinner = previousHourWinnerRows[0];
+    const previousTopCount = previousHourWinner?.recruit_count || 0;
+    const winnerLine = !previousHourWinner
         ? 'No one had a recruit last hour.'
-        : previousHourWinners.length === 1
-            ? `🏆 **Last Hour’s Winner:** **${leaderboardName(previousHourWinners[0])}** with **${previousTopCount}** recruit${previousTopCount === 1 ? '' : 's'}`
-            : `🏆 **Last Hour’s Winners:** ${previousHourWinners.map(player => `**${leaderboardName(player)}**`).join(', ')} with **${previousTopCount}** recruits each`;
+        : `🏆 **Last Hour’s Winner:** **${leaderboardName(previousHourWinner)}** with **${previousTopCount}** recruit${previousTopCount === 1 ? '' : 's'}`;
     const currentHourLines = currentHourRows.length > 0
         ? currentHourRows.map((player, index) => {
             return leaderboardLine(
@@ -279,6 +490,7 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
         'hourly-recruits',
         'Penguin Mafia Hourly Recruit Leaderboard',
         `🏆🐧 **Penguin Mafia Hourly Recruit Leaderboard** 🐧🏆\n\n` +
+        `Tie-breaker: if players have the same recruit count, whoever reached that count first ranks higher.\n\n` +
         `## This Hour’s Top Recruiters\n${currentHourLines}\n\n` +
         `## Last Hour’s Result\n${winnerLine}\n\n`
     );
