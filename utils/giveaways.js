@@ -216,6 +216,7 @@ function payoutAnnouncementChunks(giveaway, payoutResult, winnerId) {
     });
     const header =
         `# 🎉 GIVEAWAY WINNER & PAYOUT\n\n` +
+        `Hosted by: <@${giveaway.host_discord_id}>\n` +
         `Winner: <@${winnerId}>\n` +
         `Winner account: **${linkedAccountLabel(payoutResult.player)}**\n` +
         `Giveaway amount: **${formatDonationAmount(giveaway.amount)}**\n` +
@@ -705,9 +706,14 @@ async function finishGiveaway(guild, giveawayId, db = sql) {
         );
         cleanupMessageIds.push(...payoutMessageIds);
     } else if (channel) {
-        const noWinnerMessage = await channel.send(
-            'The giveaway ended with no entrants, so no winner was chosen.'
-        );
+        const noWinnerMessage = await channel.send({
+            content:
+                `Hosted by: <@${giveaway.host_discord_id}>\n` +
+                'The giveaway ended with no entrants, so no winner was chosen.',
+            allowedMentions: {
+                users: []
+            }
+        });
         cleanupMessageIds.push(noWinnerMessage.id);
     }
 

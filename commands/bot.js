@@ -3,9 +3,14 @@ const {
     SlashCommandBuilder
 } = require('discord.js');
 
+const sql = require('../db.js');
 const {
     isDon
 } = require('../utils/staff.js');
+const {
+    formattedMinecraftIgn,
+    linkedAccountLabel
+} = require('../utils/payouts.js');
 const {
     emitMinecraftEvent,
     goHome,
@@ -22,6 +27,68 @@ function connectionLabel(status) {
     return `${account}${server}`;
 }
 
+function discordMentionId(input) {
+    const match = /^<@!?(\d+)>$/.exec(input);
+    return match?.[1] || null;
+}
+
+async function linkedPaymentTarget(discordId, displayName, db = sql) {
+    const rows = await db`
+        select
+            discord_id,
+            discord_username,
+            discord_display_name,
+            minecraft_ign,
+            minecraft_edition
+        from players
+        where discord_id = ${discordId}
+        limit 1
+    `;
+    const player = rows[0];
+
+    if (!player) {
+        throw new Error(`${displayName} is not in the player database yet.`);
+    }
+
+    const minecraftName = formattedMinecraftIgn(player);
+
+    if (!minecraftName) {
+        throw new Error(`${displayName} does not have a linked Minecraft IGN yet.`);
+    }
+
+    return {
+        minecraftName,
+        label: `${displayName} (${linkedAccountLabel(player)})`
+    };
+}
+
+async function resolvePaymentTarget(interaction, db = sql) {
+    const user = interaction.options.getUser('user');
+    const playerInput = interaction.options.getString('player')?.trim() || '';
+    const mentionedDiscordId = playerInput ? discordMentionId(playerInput) : null;
+
+    if (user && playerInput) {
+        throw new Error('Use either `user` or `player` for `/bot pay`, not both.');
+    }
+
+    if (user) {
+        return linkedPaymentTarget(user.id, `${user}`, db);
+    }
+
+    if (mentionedDiscordId) {
+        return linkedPaymentTarget(mentionedDiscordId, `<@${mentionedDiscordId}>`, db);
+    }
+
+    if (playerInput) {
+        return {
+            minecraftName: playerInput,
+            label: `**${playerInput}**`
+        };
+    }
+
+    throw new Error('Choose a linked Discord user or enter a Minecraft username.');
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('bot')
@@ -34,18 +101,24 @@ module.exports = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('pay')
-                .setDescription('Pay a Minecraft player and wait for confirmation.')
-                .addStringOption(option =>
-                    option
-                        .setName('player')
-                        .setDescription('Java or Bedrock Minecraft username')
-                        .setRequired(true)
-                )
+                .setDescription('Pay a linked Discord user or Minecraft username.')
                 .addStringOption(option =>
                     option
                         .setName('amount')
                         .setDescription('Payment amount, such as 10k or 2.5m')
                         .setRequired(true)
+                )
+                .addUserOption(option =>
+                    option
+                        .setName('user')
+                        .setDescription('Linked Discord user to pay')
+                        .setRequired(false)
+                )
+                .addStringOption(option =>
+                    option
+                        .setName('player')
+                        .setDescription('Minecraft username if not paying a linked Discord user')
+                        .setRequired(false)
                 )
         )
         .addSubcommand(subcommand =>
@@ -160,9 +233,8 @@ module.exports = {
                 return;
             }
 
-            const player = interaction.options.getString('player', true);
-
             if (subcommand === 'msg') {
+                const player = interaction.options.getString('player', true);
                 const message = interaction.options.getString('message', true);
                 messagePlayer(player, message, actionContext);
                 await interaction.editReply(`✅ Private message sent to **${player}**.`);
@@ -170,9 +242,12 @@ module.exports = {
             }
 
             const amount = interaction.options.getString('amount', true);
-            const result = await payPlayer(player, amount, actionContext);
+            const target = await resolvePaymentTarget(interaction);
+            const result = await payPlayer(target.minecraftName, amount, actionContext);
             await interaction.editReply(
-                `✅ Payment confirmed.\n\n**Server response:** ${result.message}`
+                `✅ Payment confirmed for ${target.label}.\n\n` +
+                `Minecraft command target: **${target.minecraftName}**\n` +
+                `**Server response:** ${result.message}`
             );
         } catch (error) {
             emitMinecraftEvent(
