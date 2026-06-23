@@ -21,6 +21,7 @@ let shuttingDown = false;
 let pendingPayment = null;
 let lastSigninAlertAt = 0;
 let lastPrivateMessage = null;
+let lastIncomingPayment = null;
 const minecraftEvents = new EventEmitter();
 
 function emitMinecraftEvent(title, message, level = 'info', details = {}) {
@@ -93,6 +94,78 @@ function logPrivateMessage(player, message) {
         {
             Player: player,
             Message: message
+        }
+    );
+    return true;
+}
+
+function parseIncomingPayment(message) {
+    const text = cleanMinecraftMessage(message);
+    const playerPattern = String.raw`([A-Za-z0-9_.]{1,17})`;
+    const amountPattern = String.raw`(\$?\s*[\d,]+(?:\.\d+)?\s*[kmbt]?)`;
+    const patterns = [
+        new RegExp(String.raw`^${playerPattern}\s+(?:has\s+)?(?:paid|sent|transferred)\s+you\s+${amountPattern}\b`, 'i'),
+        new RegExp(String.raw`^${playerPattern}\s+(?:has\s+)?(?:paid|sent|transferred)\s+${amountPattern}\s+to\s+you\b`, 'i'),
+        new RegExp(String.raw`^you\s+(?:have\s+)?(?:received|got)\s+${amountPattern}\s+from\s+${playerPattern}\b`, 'i'),
+        new RegExp(String.raw`^${amountPattern}\s+(?:has\s+been\s+)?(?:received|sent|transferred)\s+from\s+${playerPattern}\b`, 'i')
+    ];
+
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+
+        if (!match) {
+            continue;
+        }
+
+        const firstGroupIsAmount = match[1]?.replace(/\s+/g, '').startsWith('$') ||
+            /^[\d,]+(?:\.\d+)?[kmbt]?$/i.test(match[1]?.replace(/\s+/g, '') || '');
+
+        return firstGroupIsAmount
+            ? {
+                player: match[2],
+                amount: match[1].replace(/\s+/g, ''),
+                message: text
+            }
+            : {
+                player: match[1],
+                amount: match[2].replace(/\s+/g, ''),
+                message: text
+            };
+    }
+
+    return null;
+}
+
+function logIncomingPayment(message) {
+    const payment = parseIncomingPayment(message);
+
+    if (!payment) {
+        return false;
+    }
+
+    const signature = `${payment.player.toLowerCase()}\u0000${payment.amount}\u0000${payment.message}`;
+    const now = Date.now();
+
+    if (
+        lastIncomingPayment &&
+        lastIncomingPayment.signature === signature &&
+        now - lastIncomingPayment.timestamp < 2_000
+    ) {
+        return false;
+    }
+
+    lastIncomingPayment = {
+        signature,
+        timestamp: now
+    };
+    emitMinecraftEvent(
+        'Incoming Payment Received',
+        `${payment.player} paid the Minecraft bot.`,
+        'success',
+        {
+            Player: payment.player,
+            Amount: payment.amount,
+            'Server response': payment.message
         }
     );
     return true;
@@ -673,6 +746,7 @@ function connect(context = {}) {
         if (privateMessage) {
             logPrivateMessage(privateMessage.player, privateMessage.message);
         }
+        logIncomingPayment(message);
         handlePaymentResponse(message);
     });
 
@@ -918,9 +992,11 @@ module.exports = {
     minecraftOptions,
     handleTerminalCommand,
     goHome,
+    logIncomingPayment,
     messagePlayer,
     emitMinecraftEvent,
     minecraftEvents,
+    parseIncomingPayment,
     parsePrivateMessage,
     microsoftLoginAlert,
     minecraftBotStatus,

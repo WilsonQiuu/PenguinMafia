@@ -141,6 +141,8 @@ module.exports = {
                     discord_display_name = excluded.discord_display_name,
                     minecraft_ign = excluded.minecraft_ign,
                     minecraft_edition = excluded.minecraft_edition,
+                    account_link_reminders_disabled = false,
+                    account_link_reminder_sent_at = null,
                     updated_at = now()
             `;
 

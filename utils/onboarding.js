@@ -170,18 +170,27 @@ function recruitingMessage(userId, isTest = false) {
 function accountLinkInfoMessage(userId, isTest = false) {
     return {
         content:
-            `# 🎉 WHY LINK YOUR MINECRAFT ACCOUNT?\n\n` +
-            `Linking your Minecraft IGN and edition helps the Don know exactly which account belongs to you.\n\n` +
-            `## Giveaway Entry\n` +
-            `Players should have their account linked before entering giveaways.\n` +
-            `If you win, your linked IGN and **Java** or **Bedrock** edition are shown with your payout.\n\n` +
-            `## Payments\n` +
-            `Your linked account also makes \`/pay\` simulations and event payouts easier to identify.\n\n` +
-            `Linking is optional for finishing welcome. You can link now or skip and use \`/link\` later.`,
+            `# 🎉 GIVEAWAY PAYOUTS\n\n` +
+            `Do you want to get paid from our giveaways?`,
         components: [
             row(
-                scopedButton('ign', userId, 'Link Now', ButtonStyle.Success, isTest),
-                scopedButton('skip_ign', userId, 'Skip For Now', ButtonStyle.Secondary, isTest)
+                scopedButton('giveaway_pay_yes', userId, 'Yes', ButtonStyle.Success, isTest),
+                scopedButton('giveaway_pay_no', userId, 'No', ButtonStyle.Secondary, isTest)
+            )
+        ]
+    };
+}
+
+function giveawayPayoutUsernameMessage(userId, isTest = false) {
+    return {
+        content:
+            `# 💰 GIVEAWAY PAYOUT INFO\n\n` +
+            `In order to pay you, we need to know your Minecraft username.\n\n` +
+            `Do you want to give us your username now or later?`,
+        components: [
+            row(
+                scopedButton('ign', userId, 'Now', ButtonStyle.Success, isTest),
+                scopedButton('skip_ign_later', userId, 'Later', ButtonStyle.Secondary, isTest)
             )
         ]
     };
@@ -191,11 +200,7 @@ function ignMessage(userId, isTest = false) {
     return {
         content:
             `# 💰 LINK YOUR IGN\n\n` +
-            `Your Minecraft IGN is **not necessary** to finish welcome.\n\n` +
-            `Linking it helps the Don know who gets paid during events. 🐧💸\n\n` +
-            `🔎 No IGN = payout simulations use your Discord name\n` +
-            `✅ Linked IGN = payout simulations show your Minecraft name\n\n` +
-            `Choose your Minecraft edition first:`,
+            `Choose your Minecraft edition, then enter the username that should receive giveaway payments.`,
         components: [
             row(
                 scopedButton('enter_ign_java', userId, 'Java', ButtonStyle.Success, isTest),
@@ -206,10 +211,10 @@ function ignMessage(userId, isTest = false) {
     };
 }
 
-function finalMessage(userId, linkedIgn = null, edition = null, isTest = false) {
+function finalMessage(userId, linkedIgn = null, edition = null, isTest = false, skipMessage = null) {
     const linkedLine = linkedIgn
         ? `✅ IGN linked: **${linkedIgn}**${edition ? ` (${minecraftEditionLabel(edition)})` : ''}`
-        : `⏭️ IGN skipped. Use \`/link\` before events.`;
+        : (skipMessage || `⏭️ IGN skipped. Use \`/link\` before events.`);
     return {
         content:
             `# 🐧 WELCOME TO THE\n# PENGUIN MAFIA 🎉\n\n` +
@@ -531,11 +536,22 @@ async function saveOnboardingIgn(member, linkedIgn, minecraftEdition) {
         set
             minecraft_ign = ${linkedIgn},
             minecraft_edition = ${minecraftEdition},
+            account_link_reminders_disabled = false,
             updated_at = now()
         where discord_id = ${member.id}
     `;
 
     return setMemberNicknameToIgn(member, linkedIgn);
+}
+
+async function skipOnboardingIgn(userId) {
+    await sql`
+        update players
+        set
+            account_link_reminders_disabled = true,
+            updated_at = now()
+        where discord_id = ${userId}
+    `;
 }
 
 async function handleWelcomeButton(interaction) {
@@ -575,6 +591,26 @@ async function handleWelcomeButton(interaction) {
         return true;
     }
 
+    if (action === 'giveaway_pay_yes') {
+        await updateWithReadingDelay(interaction, giveawayPayoutUsernameMessage(targetUserId, isTest));
+        return true;
+    }
+
+    if (action === 'giveaway_pay_no') {
+        if (!isTest) {
+            await skipOnboardingIgn(targetUserId);
+        }
+
+        await interaction.update(finalMessage(
+            targetUserId,
+            null,
+            null,
+            isTest,
+            `⏭️ No Minecraft username linked. If you ever want giveaway payouts, use \`/link\`.`
+        ));
+        return true;
+    }
+
     if (action === 'ign') {
         await updateWithReadingDelay(interaction, ignMessage(targetUserId, isTest));
         return true;
@@ -601,8 +637,18 @@ async function handleWelcomeButton(interaction) {
         return true;
     }
 
-    if (action === 'skip_ign') {
-        await interaction.update(finalMessage(targetUserId, null, null, isTest));
+    if (action === 'skip_ign' || action === 'skip_ign_later') {
+        if (!isTest) {
+            await skipOnboardingIgn(targetUserId);
+        }
+
+        await interaction.update(finalMessage(
+            targetUserId,
+            null,
+            null,
+            isTest,
+            `⏭️ Username skipped for now. You can link it later with \`/link\`.`
+        ));
         return true;
     }
 

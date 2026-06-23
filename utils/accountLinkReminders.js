@@ -100,6 +100,7 @@ async function remindUnlinkedPlayers(guild, db = sql) {
         from players
         where status = 'active'
             and welcome_completed = true
+            and account_link_reminders_disabled = false
             and (
                 minecraft_ign is null
                 or minecraft_edition is null
@@ -227,6 +228,7 @@ async function handleAccountLinkModal(interaction, db = sql) {
             discord_username = ${interaction.user.username},
             minecraft_ign = ${minecraftIgn},
             minecraft_edition = ${minecraftEdition},
+            account_link_reminders_disabled = false,
             account_link_reminder_sent_at = null,
             updated_at = now()
         where discord_id = ${interaction.user.id}

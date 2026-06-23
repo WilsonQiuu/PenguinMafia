@@ -148,8 +148,7 @@ function renderGiveaway(giveaway, entrantCount, winnerId = null, options = {}) {
                     : 'This giveaway has ended.')
                 : (
                     `If you win, you receive **your rank commission percentage** of the prize.\n` +
-                    `The rest follows your recruiter chain using the exact same commission split as \`/pay\`.\n\n` +
-                    `Click **Enter** for your chance to win, or **Leave** to withdraw your entry.`
+                    `The rest follows your recruiter chain using the exact same commission split as \`/pay\`.`
                 )),
         components: [
             new ActionRowBuilder().addComponents(
