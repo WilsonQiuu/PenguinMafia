@@ -245,9 +245,7 @@ module.exports = {
             if (subcommand === 'bal') {
                 const result = await checkBalance(actionContext);
                 await interaction.editReply(
-                    `✅ Bot balance: **${formatDonationAmount(result.amount)}**\n\n` +
-                    `**Command used:** \`${result.command}\`\n` +
-                    `**Server response:** ${result.message}`
+                    `✅ Bot balance: **${formatDonationAmount(result.amount)}**`
                 );
                 return;
             }

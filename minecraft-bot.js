@@ -732,21 +732,9 @@ function failBalanceCheck(balance, reason) {
         balance.timeout = null;
     }
 
-    const commandsText = balance.commands.join(', ');
-    const message = `No balance response was received after trying ${commandsText}.`;
+    const message = 'No balance response was received.';
 
-    emitMinecraftEvent(
-        'Balance Check Failed',
-        message,
-        'warning',
-        {
-            Commands: commandsText,
-            Reason: reason,
-            Timeout: `${balance.totalTimeoutMs / 1000} seconds`,
-            ...actionDetails(balance.context)
-        }
-    );
-    balance.reject(new Error(`${message} Last result: ${reason}`));
+    balance.reject(new Error(`${message} ${reason}`));
 }
 
 function sendBalanceAttempt(balance) {
@@ -772,36 +760,17 @@ function sendBalanceAttempt(balance) {
 
         tryNextBalanceCommand(
             balance,
-            `${command} did not produce a balance response within ${Math.ceil(timeoutMs / 1000)} seconds.`
+            `A balance command did not respond within ${Math.ceil(timeoutMs / 1000)} seconds.`
         );
     }, timeoutMs);
 
     try {
         sendChat(command);
         console.log(`Balance command sent: ${command}`);
-        emitMinecraftEvent(
-            'Balance Check Sent',
-            'Waiting for the server to report the Minecraft bot balance.',
-            'info',
-            {
-                Command: command,
-                Attempt: `${balance.commandIndex + 1}/${balance.commands.length}`,
-                ...actionDetails(balance.context)
-            }
-        );
     } catch (error) {
         pendingBalance = null;
         clearTimeout(balance.timeout);
         balance.timeout = null;
-        emitMinecraftEvent(
-            'Balance Check Failed to Send',
-            error.message,
-            'error',
-            {
-                Command: command,
-                ...actionDetails(balance.context)
-            }
-        );
         balance.reject(error);
     }
 }
@@ -823,16 +792,7 @@ function tryNextBalanceCommand(balance, reason) {
         return;
     }
 
-    emitMinecraftEvent(
-        'Balance Command Retrying',
-        reason,
-        'warning',
-        {
-            PreviousCommand: balance.command,
-            NextCommand: balance.commands[balance.commandIndex],
-            ...actionDetails(balance.context)
-        }
-    );
+    console.log(`${reason} Trying ${balance.commands[balance.commandIndex]} next.`);
     sendBalanceAttempt(balance);
 }
 
@@ -857,17 +817,6 @@ function handleBalanceResponse(message) {
         pendingBalance = null;
         clearTimeout(balance.timeout);
 
-        emitMinecraftEvent(
-            'Balance Checked',
-            'The Minecraft bot balance was read from server chat.',
-            'success',
-            {
-                Amount: result.amount.toString(),
-                Command: balance.command,
-                'Server response': result.message,
-                ...actionDetails(balance.context)
-            }
-        );
         balance.resolve({
             ...result,
             command: balance.command
@@ -878,7 +827,7 @@ function handleBalanceResponse(message) {
     const failure = classifyBalanceFailure(message, balance.failurePattern);
 
     if (failure) {
-        tryNextBalanceCommand(balance, `${balance.command} was rejected: ${failure.message}`);
+        tryNextBalanceCommand(balance, `A balance command was rejected: ${failure.message}`);
     }
 }
 
@@ -947,17 +896,6 @@ function payPlayer(player, amount, context = {}) {
             sendChat(command);
             console.log(`Payment command sent: ${command}`);
             console.log('Waiting for the server to confirm the payment...');
-            emitMinecraftEvent(
-                'Payment Sent',
-                `Waiting for the server to confirm the payment to ${player}.`,
-                'info',
-                {
-                    Player: player,
-                    Amount: amount,
-                    Command: command,
-                    ...actionDetails(context)
-                }
-            );
         } catch (error) {
             pendingPayment = null;
             clearTimeout(timeout);

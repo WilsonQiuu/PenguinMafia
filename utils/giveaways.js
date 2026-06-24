@@ -22,6 +22,12 @@ const {
     settleGiveawayPayouts
 } = require('./commissionPayments.js');
 const {
+    postGiveawayDonationEvent
+} = require('./events.js');
+const {
+    updateDonationLeaderboardForGuild
+} = require('./leaderboards.js');
+const {
     GIVEAWAY_PING_ROLE_ID
 } = require('./reactionRoles.js');
 const {
@@ -222,14 +228,19 @@ function renderGiveaway(giveaway, entrantCount, winnerId = null, options = {}) {
 
 function renderActiveGiveawaysBoard(activeGiveaways) {
     const hasActiveGiveaways = activeGiveaways.length > 0;
+    const totalAmount = totalGiveawayAmount(activeGiveaways);
     const lines = [
         '# 🎉 ACTIVE GIVEAWAYS',
         '',
         hasActiveGiveaways
+            ? `Total active prize pool: **${formatDonationAmount(totalAmount)}**`
+            : null,
+        hasActiveGiveaways ? '' : null,
+        hasActiveGiveaways
             ? 'Click **Enter All** to join every active giveaway you are eligible for. Your own giveaways are skipped automatically.'
             : 'No active giveaways right now.',
         ''
-    ];
+    ].filter(line => line !== null);
 
     for (let index = 0; index < activeGiveaways.length; index++) {
         const giveaway = activeGiveaways[index];
@@ -262,6 +273,12 @@ function renderActiveGiveawaysBoard(activeGiveaways) {
             parse: []
         }
     };
+}
+
+function totalGiveawayAmount(giveaways) {
+    return giveaways.reduce((total, giveaway) => {
+        return total + BigInt(giveaway.amount);
+    }, 0n);
 }
 
 async function createGiveaway(options, db = sql) {
@@ -439,24 +456,63 @@ async function upsertActiveGiveawaysBoard(guild, db = sql) {
     return message;
 }
 
-async function announceGiveawayStarted(guild, giveaway, boardMessage = null) {
+async function announceGiveawayStarted(guild, giveaway, boardMessage = null, totalActiveAmount = null) {
     const announcementChannel = await fetchGiveawayTextChannel(guild, GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID);
 
     if (!announcementChannel) {
         return null;
     }
 
+    const totalLine = totalActiveAmount === null
+        ? ''
+        : `\nTotal active giveaway money in <#${GIVEAWAY_CHANNEL_ID}>: **${formatDonationAmount(totalActiveAmount)}**.`;
+
     return announcementChannel.send({
         content:
             `<@&${GIVEAWAY_PING_ROLE_ID}>\n\n` +
             `<@${giveaway.host_discord_id}> started a **${formatDonationAmount(giveaway.amount)}** giveaway. ` +
             `Go to <#${GIVEAWAY_CHANNEL_ID}> to join.` +
+            totalLine +
             (boardMessage ? `\n${boardMessage.url}` : ''),
         allowedMentions: {
             roles: [GIVEAWAY_PING_ROLE_ID],
             users: [giveaway.host_discord_id]
         }
     });
+}
+
+async function recordGiveawayDonation(guild, giveaway, db = sql) {
+    const rows = await db`
+        update players
+        set
+            donations = donations + ${BigInt(giveaway.amount).toString()}::bigint,
+            updated_at = now()
+        where discord_id = ${giveaway.host_discord_id}
+        returning donations
+    `;
+    const donationRow = rows[0];
+
+    if (!donationRow) {
+        throw new Error(`Giveaway host ${giveaway.host_discord_id} was not found while recording donation credit.`);
+    }
+
+    await postGiveawayDonationEvent(guild, {
+        playerId: giveaway.host_discord_id,
+        amount: BigInt(giveaway.amount),
+        newTotal: donationRow.donations
+    }).catch(error => {
+        console.error(`Could not post giveaway donation event for giveaway ${giveaway.id}:`);
+        console.error(error);
+        return false;
+    });
+
+    await updateDonationLeaderboardForGuild(guild, db).catch(error => {
+        console.error(`Could not refresh donation leaderboard after giveaway ${giveaway.id}:`);
+        console.error(error);
+        return false;
+    });
+
+    return donationRow.donations;
 }
 
 async function startFundedGiveaway(guild, options, db = sql) {
@@ -468,8 +524,11 @@ async function startFundedGiveaway(guild, options, db = sql) {
         durationMs: options.durationMs
     }, db);
     const boardMessage = await upsertActiveGiveawaysBoard(guild, db);
+    const activeGiveaways = await fetchActiveGiveawayRows(guild.id, db);
+    const totalActiveAmount = totalGiveawayAmount(activeGiveaways);
 
-    await announceGiveawayStarted(guild, giveaway, boardMessage);
+    await recordGiveawayDonation(guild, giveaway, db);
+    await announceGiveawayStarted(guild, giveaway, boardMessage, totalActiveAmount);
 
     return {
         giveaway,

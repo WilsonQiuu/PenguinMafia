@@ -317,9 +317,36 @@ async function postDonationEvent(guild, {
     return true;
 }
 
+async function postGiveawayDonationEvent(guild, {
+    playerId,
+    amount,
+    newTotal
+}) {
+    const channel = await findPromotionEventsChannel(guild);
+
+    if (!channel) {
+        console.log(`Promotion event channel ${PROMOTION_EVENTS_CHANNEL_NAME} was not found by ID ${PROMOTION_EVENTS_CHANNEL_ID}.`);
+        return false;
+    }
+
+    await channel.send({
+        content:
+            `🎁💎 **GIVEAWAY DONATION!** 💎🎁\n\n` +
+            `<@${playerId}> hosted a **${formatDonationAmount(amount)}** giveaway for the Penguin Mafia.\n` +
+            `This counts toward their donation total.\n` +
+            `New all-time total: **${formatDonationAmount(newTotal)}**`,
+        allowedMentions: {
+            users: uniqueMentions(playerId)
+        }
+    });
+
+    return true;
+}
+
 module.exports = {
     postBranchMilestoneEvents,
     postDonationEvent,
+    postGiveawayDonationEvent,
     postFirstRecruitEvent,
     postPromotionEvent,
     postStaffPromotionEvent,

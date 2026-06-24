@@ -149,9 +149,7 @@ module.exports = {
                     const balance = await checkBalance(actionContext);
 
                     if (balance.amount >= amount) {
-                        const {
-                            boardMessage
-                        } = await startDonGiveawayFromBotBalance(
+                        await startDonGiveawayFromBotBalance(
                             interaction,
                             giveawayChannel,
                             amount,
@@ -161,9 +159,7 @@ module.exports = {
                         await interaction.editReply(
                             `✅ Giveaway started using the bot balance.\n\n` +
                             `Amount: **${formatDonationAmount(amount)}**\n` +
-                            `Bot balance: **${formatDonationAmount(balance.amount)}**\n` +
-                            `Giveaway channel: <#${giveawayChannel.id}>` +
-                            (boardMessage ? `\nBoard: ${boardMessage.url}` : '')
+                            `Bot balance: **${formatDonationAmount(balance.amount)}**`
                         );
                         return;
                     }
@@ -171,9 +167,7 @@ module.exports = {
                     balanceNote =
                         `\nBot balance is only **${formatDonationAmount(balance.amount)}**, so payment is still required.\n`;
                 } catch (error) {
-                    const {
-                        boardMessage
-                    } = await startDonGiveawayFromBotBalance(
+                    await startDonGiveawayFromBotBalance(
                         interaction,
                         giveawayChannel,
                         amount,
@@ -184,9 +178,7 @@ module.exports = {
                         `✅ Giveaway started using the bot balance.\n\n` +
                         `Amount: **${formatDonationAmount(amount)}**\n` +
                         `Balance check: **failed**, assuming the Don already verified the bot balance.\n` +
-                        `Reason: **${error.message}**\n` +
-                        `Giveaway channel: <#${giveawayChannel.id}>` +
-                        (boardMessage ? `\nBoard: ${boardMessage.url}` : '')
+                        `Reason: **${error.message}**`
                     );
                     return;
                 }
