@@ -8,10 +8,14 @@ const {
     isDon
 } = require('../utils/staff.js');
 const {
+    formatDonationAmount
+} = require('../utils/donations.js');
+const {
     formattedMinecraftIgn,
     linkedAccountLabel
 } = require('../utils/payouts.js');
 const {
+    checkBalance,
     emitMinecraftEvent,
     goHome,
     messagePlayer,
@@ -123,6 +127,11 @@ module.exports = {
         )
         .addSubcommand(subcommand =>
             subcommand
+                .setName('bal')
+                .setDescription('Check the Minecraft bot balance.')
+        )
+        .addSubcommand(subcommand =>
+            subcommand
                 .setName('msg')
                 .setDescription('Send a private Minecraft message.')
                 .addStringOption(option =>
@@ -230,6 +239,15 @@ module.exports = {
             if (subcommand === 'home') {
                 goHome(actionContext);
                 await interaction.editReply('✅ Sent `/home 1` to the Minecraft bot.');
+                return;
+            }
+
+            if (subcommand === 'bal') {
+                const result = await checkBalance(actionContext);
+                await interaction.editReply(
+                    `✅ Bot balance: **${formatDonationAmount(result.amount)}**\n\n` +
+                    `**Server response:** ${result.message}`
+                );
                 return;
             }
 

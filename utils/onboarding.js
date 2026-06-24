@@ -65,6 +65,21 @@ function welcomeChannelTopic(userId) {
     return `Penguin Mafia onboarding:${userId}`;
 }
 
+async function resolveGrandRecruiterId(recruiterId) {
+    if (!recruiterId) {
+        return null;
+    }
+
+    const rows = await sql`
+        select parent_discord_id
+        from players
+        where discord_id = ${recruiterId}
+        limit 1
+    `;
+
+    return rows[0]?.parent_discord_id || null;
+}
+
 function isWelcomeFlowMessage(message, userId) {
     if (message.author.id !== message.client.user.id) {
         return false;
@@ -87,8 +102,10 @@ function isWelcomeFlowMessage(message, userId) {
 
 function introMessage(member, context = {}) {
     const isTest = Boolean(context.isTest);
+    const helperMentions = [context.recruiterId, context.grandRecruiterId]
+        .filter(Boolean);
     const parentLine = context.inviterDisplayName
-        ? `Our bots detected ${context.recruiterId ? `<@${context.recruiterId}>` : `**${context.inviterDisplayName}**`} as your recruiter. They can see this room and help if you get stuck.`
+        ? `Our bots detected ${context.recruiterId ? `<@${context.recruiterId}>` : `**${context.inviterDisplayName}**`} as your recruiter. They${context.grandRecruiterId ? ` and <@${context.grandRecruiterId}>` : ''} can see this room and help if you get stuck.`
         : `Our bots could not safely detect your recruiter, so you are an orphaned penguin for now. You can fix that later with \`/join recruiter:@YourRecruiter\`.`;
     const testLine = isTest
         ? `\n\n🧪 **Test mode:** finishing this will not change your DB welcome status, save your IGN, or give you the ${DEFAULT_RANK_NAME} role.`
@@ -105,7 +122,7 @@ function introMessage(member, context = {}) {
             `Tap below to start training.` +
             testLine,
         allowedMentions: {
-            users: [member.id, context.recruiterId].filter(Boolean)
+            users: [member.id, ...helperMentions]
         },
         components: [
             row(scopedButton('start', member.id, 'Next', ButtonStyle.Success, isTest))
@@ -292,6 +309,9 @@ async function ensureWelcomeChannel(member, context = {}) {
     const guild = member.guild;
     const channels = await getOnboardingChannels(guild, context);
     const topic = welcomeChannelTopic(member.id);
+    const grandRecruiterId = context.grandRecruiterId !== undefined
+        ? context.grandRecruiterId
+        : await resolveGrandRecruiterId(context.recruiterId);
     let channel = channels.find(existingChannel => {
         return existingChannel?.type === ChannelType.GuildText && existingChannel.topic === topic;
     });
@@ -332,6 +352,11 @@ async function ensureWelcomeChannel(member, context = {}) {
     };
 
     addMemberOverwrite(context.recruiterId, [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory
+    ]);
+    addMemberOverwrite(grandRecruiterId, [
         PermissionFlagsBits.ViewChannel,
         PermissionFlagsBits.SendMessages,
         PermissionFlagsBits.ReadMessageHistory
@@ -417,6 +442,9 @@ async function sendWelcomeReminderIfDue(member, channel) {
 async function startOnboardingForMember(member, context = {}) {
     const channel = await ensureWelcomeChannel(member, context);
     const isTest = Boolean(context.isTest);
+    const grandRecruiterId = context.grandRecruiterId !== undefined
+        ? context.grandRecruiterId
+        : await resolveGrandRecruiterId(context.recruiterId);
     const recentMessages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
     const alreadyStarted = recentMessages?.some(message => {
         return isWelcomeFlowMessage(message, member.id);
@@ -430,7 +458,10 @@ async function startOnboardingForMember(member, context = {}) {
         return channel;
     }
 
-    await channel.send(introMessage(member, context));
+    await channel.send(introMessage(member, {
+        ...context,
+        grandRecruiterId
+    }));
     return channel;
 }
 

@@ -71,6 +71,8 @@ MINECRAFT_VERSION=1.21.4
 
 # Optional payment confirmation settings.
 MINECRAFT_PAYMENT_TIMEOUT_MS=30000
+MINECRAFT_BALANCE_TIMEOUT_MS=30000
+MINECRAFT_PAYMENT_SPACING_MS=3000
 MINECRAFT_PAYOUT_CONNECT_TIMEOUT_MS=120000
 GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID=1498442322638147604
 
@@ -106,6 +108,7 @@ status
 say <message>
 msg <player> <message>
 pay <player> <amount>
+bal
 reconnect
 quit
 ```
@@ -116,17 +119,19 @@ Example payment:
 pay PenguinPlayer 100m
 ```
 
-This sends `/pay PenguinPlayer 100m` to Minecraft chat. The Don can also control the same client from Discord with `/bot start`, `/bot pay`, `/bot msg`, `/bot home`, and `/bot quit`. Discord `/bot pay` accepts either a linked Discord user or a typed Minecraft username; linked Bedrock accounts are paid with the leading `.` automatically. `/bot home` sends `/home 1` in Minecraft. Run the Discord bot with `npm run start`; do not run the standalone `npm run minecraft` process at the same time.
+This sends `/pay PenguinPlayer 100m` to Minecraft chat. The Don can also control the same client from Discord with `/bot start`, `/bot bal`, `/bot pay`, `/bot msg`, `/bot home`, and `/bot quit`. Discord `/bot pay` accepts either a linked Discord user or a typed Minecraft username; linked Bedrock accounts are paid with the leading `.` automatically. `/bot bal` sends `/bal` and waits for the server balance response. `/bot home` sends `/home 1` in Minecraft. Run the Discord bot with `npm run start`; do not run the standalone `npm run minecraft` process at the same time.
 
 After sending a payment, the bot waits up to 30 seconds for the server's chat response. It reports the payment as completed only when a success response mentions the player, reports a known failure response, or warns that confirmation timed out. Only one payment can wait for confirmation at a time. Server messages are logged with timestamps and their raw packet contents for troubleshooting.
 
-Giveaways are funded by player payments to `BOT_USER`. When a player runs `/giveaway amount duration`, the bot requires at least `1m`, checks that their Minecraft account is linked, tells them to pay `/pay BOT_USER amount`, and adds the giveaway to one shared active-giveaways board only after it sees an incoming payment from that linked Java or Bedrock IGN for at least the requested amount. Each funded giveaway also pings the giveaway role in `GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID`. When a giveaway ends, the result posts immediately and the bot tries to pay the winner payout tree from Minecraft. If the Minecraft bot is offline, it attempts to connect first. Any giveaway payout that cannot be sent because the recipient is unlinked, missing an edition, invalid, or the payment fails is added to unpaid commissions for later `/payallcommissions`.
+Giveaways are funded by player payments to `BOT_USER`. When a player runs `/giveaway amount duration`, the bot requires at least `1m`, checks that their Minecraft account is linked, tells them to pay `/pay BOT_USER amount`, and adds the giveaway to one shared active-giveaways board only after it sees an incoming payment from that linked Java or Bedrock IGN for at least the requested amount. If the Don hosts a giveaway and the bot balance already covers the amount, the giveaway starts immediately without requiring a new payment. Each funded giveaway also pings the giveaway role in `GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID`, and the active giveaway board has a button players can use to add the giveaway ping role. When a giveaway ends, the result posts immediately and the bot tries to pay the winner payout tree from Minecraft with at least 3 seconds between payment commands. If the Minecraft bot is offline, it attempts to connect first. Any giveaway payout that cannot be sent because the recipient is unlinked, missing an edition, invalid, or the payment fails is added to unpaid commissions for later `/payallcommissions`.
 
 If your server uses unusual payment messages, you can optionally provide case-insensitive regular expressions in `.env`:
 
 ```env
 MINECRAFT_PAYMENT_SUCCESS_PATTERN=paid|sent|payment complete
 MINECRAFT_PAYMENT_FAILURE_PATTERN=insufficient funds|player not found|payment failed
+MINECRAFT_BALANCE_COMMAND=/bal
+MINECRAFT_BALANCE_PATTERN=balance[^0-9$]*\$?\s*([\d,]+(?:\.\d+)?\s*[kmbt]?)
 ```
 
 When the Twilio account credentials, destination, and either a Messaging Service SID or sending number are present, the bot sends Microsoft’s one-click login link with the device code prefilled when a new login is required. It also alerts when the Minecraft client fails before successfully signing in, gets kicked, or disconnects unexpectedly after spawning. Planned stops from `/bot quit` and clean process-manager shutdowns such as Railway restarts do not send SMS alerts. Failed payments do not send alerts. Twilio trial accounts require the destination number to be verified in the Twilio Console.
@@ -176,6 +181,7 @@ Recruit and rank commands:
 Money and donation commands:
 
 - `/pay`
+- `/bot bal`
 - `/giveaway`
 - `/commissions`
 - `/payallcommissions`

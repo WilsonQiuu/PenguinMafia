@@ -36,6 +36,7 @@ const GIVEAWAY_BUTTON_PREFIX = 'giveaway_enter:';
 const GIVEAWAY_LEAVE_BUTTON_PREFIX = 'giveaway_leave:';
 const GIVEAWAY_ENTER_ALL_BUTTON_ID = 'giveaway_enter_all';
 const GIVEAWAY_LEAVE_ALL_BUTTON_ID = 'giveaway_leave_all';
+const GIVEAWAY_NOTIFY_BUTTON_ID = 'giveaway_notify_role';
 const GIVEAWAY_END_BUTTON_PREFIX = 'giveaway_end:';
 const GIVEAWAY_CLOSE_BUTTON_PREFIX = 'giveaway_close:';
 const GIVEAWAY_LINK_MODAL_PREFIX = 'giveaway_link:';
@@ -136,6 +137,14 @@ function leaveAllGiveawaysButton(disabled = false) {
         .setEmoji('👋')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(disabled);
+}
+
+function giveawayNotifyButton() {
+    return new ButtonBuilder()
+        .setCustomId(GIVEAWAY_NOTIFY_BUTTON_ID)
+        .setLabel('Notify Me')
+        .setEmoji('🔔')
+        .setStyle(ButtonStyle.Primary);
 }
 
 function renderGiveawayHostControls(giveaway, options = {}) {
@@ -245,7 +254,8 @@ function renderActiveGiveawaysBoard(activeGiveaways) {
         components: [
             new ActionRowBuilder().addComponents(
                 enterAllGiveawaysButton(!hasActiveGiveaways),
-                leaveAllGiveawaysButton(!hasActiveGiveaways)
+                leaveAllGiveawaysButton(!hasActiveGiveaways),
+                giveawayNotifyButton()
             )
         ],
         allowedMentions: {
@@ -449,6 +459,24 @@ async function announceGiveawayStarted(guild, giveaway, boardMessage = null) {
     });
 }
 
+async function startFundedGiveaway(guild, options, db = sql) {
+    const giveaway = await createGiveaway({
+        guildId: options.guildId,
+        channelId: options.channelId,
+        hostDiscordId: options.hostDiscordId,
+        amount: options.amount,
+        durationMs: options.durationMs
+    }, db);
+    const boardMessage = await upsertActiveGiveawaysBoard(guild, db);
+
+    await announceGiveawayStarted(guild, giveaway, boardMessage);
+
+    return {
+        giveaway,
+        boardMessage
+    };
+}
+
 async function processIncomingGiveawayPayment(guild, payment, db = sql) {
     const paymentPlayer = normalizeMinecraftUsername(payment.player);
     let paidAmount;
@@ -524,14 +552,16 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
     }
 
     try {
-        const giveaway = await createGiveaway({
+        const {
+            giveaway,
+            boardMessage
+        } = await startFundedGiveaway(guild, {
             guildId: claimedRequest.guild_id,
             channelId: claimedRequest.channel_id,
             hostDiscordId: claimedRequest.host_discord_id,
             amount: BigInt(claimedRequest.amount),
             durationMs: Number(claimedRequest.duration_ms)
         }, db);
-        const boardMessage = await upsertActiveGiveawaysBoard(guild, db);
 
         await db`
             update giveaway_payment_requests
@@ -541,8 +571,6 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
                 updated_at = now()
             where id = ${claimedRequest.id}
         `;
-
-        await announceGiveawayStarted(guild, giveaway, boardMessage);
 
         return {
             status: 'hosted',
@@ -677,6 +705,38 @@ function giveawayLinkModal(giveawayId, player) {
                 .setDescription('Choose the edition you play.')
                 .setStringSelectMenuComponent(editionSelect)
         );
+}
+
+async function addGiveawayPingRole(interaction) {
+    if (interaction.customId !== GIVEAWAY_NOTIFY_BUTTON_ID) {
+        return false;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const member = interaction.member ||
+        (await interaction.guild.members.fetch(interaction.user.id).catch(() => null));
+    const role = interaction.guild.roles.cache.get(GIVEAWAY_PING_ROLE_ID) ||
+        (await interaction.guild.roles.fetch(GIVEAWAY_PING_ROLE_ID).catch(() => null));
+
+    if (!member) {
+        await interaction.editReply('❌ Could not find your server member record.');
+        return true;
+    }
+
+    if (!role) {
+        await interaction.editReply('❌ The giveaway ping role is not configured correctly.');
+        return true;
+    }
+
+    if (member.roles.cache.has(role.id)) {
+        await interaction.editReply(`ℹ️ You already have ${role}.`);
+        return true;
+    }
+
+    await member.roles.add(role, 'Selected giveaway notifications from active giveaway board');
+    await interaction.editReply(`✅ You will be notified for new giveaways. Added ${role}.`);
+    return true;
 }
 
 async function enterAllActiveGiveaways(interaction, db = sql) {
@@ -1102,6 +1162,10 @@ async function endGiveawayEarly(interaction, db = sql) {
 }
 
 async function handleGiveawayButton(interaction, db = sql) {
+    if (await addGiveawayPingRole(interaction)) {
+        return true;
+    }
+
     if (await enterAllActiveGiveaways(interaction, db)) {
         return true;
     }
@@ -1384,6 +1448,8 @@ module.exports = {
     GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID,
     GIVEAWAY_BUTTON_PREFIX,
     GIVEAWAY_CHANNEL_ID,
+    addGiveawayPingRole,
+    announceGiveawayStarted,
     cleanupEndedGiveawaysForGuild,
     closeGiveawayMessages,
     createGiveaway,
@@ -1401,5 +1467,6 @@ module.exports = {
     processIncomingGiveawayPayment,
     renderGiveaway,
     renderGiveawayHostControls,
+    startFundedGiveaway,
     upsertActiveGiveawaysBoard
 };

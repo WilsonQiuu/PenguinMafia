@@ -14,11 +14,14 @@ const DEFAULT_PAYMENT_SUCCESS_PATTERN =
     String.raw`\b(?:paid|sent|transferred)\b|\bpayment\b.*\b(?:complete|completed|successful|sent)\b`;
 const DEFAULT_PAYMENT_FAILURE_PATTERN =
     String.raw`\b(?:insufficient funds|(?:do not have |don't have )?enough (?:money|funds)|not enough (?:money|funds)|player not found|unknown player|invalid (?:player|amount)|cannot pay|can't pay|payment failed|payment was not sent|usage:.*pay)\b`;
+const DEFAULT_BALANCE_RESPONSE_PATTERN =
+    String.raw`\b(?:balance|bal|money)\b[^0-9$]*\$?\s*([\d,]+(?:\.\d+)?\s*[kmbt]?)|\$?\s*([\d,]+(?:\.\d+)?\s*[kmbt]?)\s*(?:is\s+)?(?:your\s+)?(?:balance|money)\b`;
 
 let bot = null;
 let reconnectTimer = null;
 let shuttingDown = false;
 let pendingPayment = null;
+let pendingBalance = null;
 let lastSmsAlertAt = 0;
 let lastPrivateMessage = null;
 let lastIncomingPayment = null;
@@ -440,6 +443,16 @@ function validatePaymentAmount(amount) {
     }
 }
 
+function validateMinecraftCommand(command, fallback = '/bal') {
+    const trimmedCommand = String(command || fallback).trim();
+
+    if (!trimmedCommand.startsWith('/') || /[\r\n]/.test(trimmedCommand)) {
+        throw new Error('Minecraft command must start with / and stay on one line.');
+    }
+
+    return trimmedCommand;
+}
+
 function buildPaymentCommand(player, amount) {
     validatePlayer(player);
     validatePaymentAmount(amount);
@@ -458,11 +471,29 @@ function buildMessageCommand(player, message) {
     return `/msg ${player} ${trimmedMessage}`;
 }
 
+function buildBalanceCommand() {
+    return validateMinecraftCommand(process.env.MINECRAFT_BALANCE_COMMAND, '/bal');
+}
+
 function paymentTimeoutMs() {
     const timeout = Number(process.env.MINECRAFT_PAYMENT_TIMEOUT_MS || DEFAULT_PAYMENT_TIMEOUT_MS);
 
     if (!Number.isInteger(timeout) || timeout < 1_000 || timeout > 60_000) {
         throw new Error('MINECRAFT_PAYMENT_TIMEOUT_MS must be between 1000 and 60000.');
+    }
+
+    return timeout;
+}
+
+function balanceTimeoutMs() {
+    const timeout = Number(
+        process.env.MINECRAFT_BALANCE_TIMEOUT_MS ||
+        process.env.MINECRAFT_PAYMENT_TIMEOUT_MS ||
+        DEFAULT_PAYMENT_TIMEOUT_MS
+    );
+
+    if (!Number.isInteger(timeout) || timeout < 1_000 || timeout > 60_000) {
+        throw new Error('MINECRAFT_BALANCE_TIMEOUT_MS must be between 1000 and 60000.');
     }
 
     return timeout;
@@ -485,8 +516,41 @@ function paymentResponsePatterns() {
     }
 }
 
+function balanceResponsePattern() {
+    try {
+        return new RegExp(
+            process.env.MINECRAFT_BALANCE_PATTERN || DEFAULT_BALANCE_RESPONSE_PATTERN,
+            'i'
+        );
+    } catch (error) {
+        throw new Error(`Invalid Minecraft balance response pattern: ${error.message}`);
+    }
+}
+
 function cleanMinecraftMessage(message) {
     return String(message).replace(/§[0-9A-FK-OR]/gi, '').trim();
+}
+
+function parseMinecraftAmountValue(amount) {
+    const normalizedAmount = String(amount || '').toLowerCase().replace(/[$,\s]/g, '');
+    const match = normalizedAmount.match(/^(\d+)(?:\.(\d+))?([kmbt])?$/);
+    const multipliers = {
+        k: 1_000n,
+        m: 1_000_000n,
+        b: 1_000_000_000n,
+        t: 1_000_000_000_000n
+    };
+
+    if (!match) {
+        throw new Error(`Could not parse Minecraft amount: ${amount}`);
+    }
+
+    const [, wholePart, decimalPart = '', suffix] = match;
+    const scale = 10n ** BigInt(decimalPart.length);
+    const multiplier = suffix ? multipliers[suffix] : 1n;
+    const rawNumber = BigInt(`${wholePart}${decimalPart}`);
+
+    return (rawNumber * multiplier) / scale;
 }
 
 function classifyPaymentResponse(message, player, patterns = paymentResponsePatterns()) {
@@ -508,6 +572,27 @@ function classifyPaymentResponse(message, player, patterns = paymentResponsePatt
     }
 
     return null;
+}
+
+function classifyBalanceResponse(message, pattern = balanceResponsePattern()) {
+    const cleaned = cleanMinecraftMessage(message);
+    const match = cleaned.match(pattern);
+
+    if (!match) {
+        return null;
+    }
+
+    const amountText = match.slice(1).find(Boolean);
+
+    if (!amountText) {
+        return null;
+    }
+
+    return {
+        amount: parseMinecraftAmountValue(amountText),
+        amountText,
+        message: cleaned
+    };
 }
 
 function handlePaymentResponse(message) {
@@ -553,6 +638,47 @@ function handlePaymentResponse(message) {
     }
 }
 
+function handleBalanceResponse(message) {
+    if (!pendingBalance) {
+        return;
+    }
+
+    let result;
+
+    try {
+        result = classifyBalanceResponse(message, pendingBalance.pattern);
+    } catch (error) {
+        result = {
+            error
+        };
+    }
+
+    if (!result) {
+        return;
+    }
+
+    const balance = pendingBalance;
+    pendingBalance = null;
+    clearTimeout(balance.timeout);
+
+    if (result.error) {
+        balance.reject(result.error);
+        return;
+    }
+
+    emitMinecraftEvent(
+        'Balance Checked',
+        'The Minecraft bot balance was read from server chat.',
+        'success',
+        {
+            Amount: result.amount.toString(),
+            'Server response': result.message,
+            ...actionDetails(balance.context)
+        }
+    );
+    balance.resolve(result);
+}
+
 function cancelPendingPayment(reason) {
     if (!pendingPayment) {
         return;
@@ -564,9 +690,23 @@ function cancelPendingPayment(reason) {
     payment.reject(new Error(reason));
 }
 
+function cancelPendingBalance(reason) {
+    if (!pendingBalance) {
+        return;
+    }
+
+    const balance = pendingBalance;
+    pendingBalance = null;
+    clearTimeout(balance.timeout);
+    balance.reject(new Error(reason));
+}
+
 function payPlayer(player, amount, context = {}) {
     if (pendingPayment) {
         throw new Error(`A payment to ${pendingPayment.player} is still waiting for confirmation.`);
+    }
+    if (pendingBalance) {
+        throw new Error('A balance check is still waiting for confirmation.');
     }
 
     const command = buildPaymentCommand(player, amount);
@@ -625,6 +765,69 @@ function payPlayer(player, amount, context = {}) {
                 {
                     Player: player,
                     Amount: amount,
+                    ...actionDetails(context)
+                }
+            );
+            reject(error);
+        }
+    });
+}
+
+function checkBalance(context = {}) {
+    if (pendingPayment) {
+        throw new Error(`A payment to ${pendingPayment.player} is still waiting for confirmation.`);
+    }
+    if (pendingBalance) {
+        throw new Error('A balance check is still waiting for confirmation.');
+    }
+
+    const command = buildBalanceCommand();
+    const pattern = balanceResponsePattern();
+    const timeoutMs = balanceTimeoutMs();
+
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            if (pendingBalance?.timeout !== timeout) {
+                return;
+            }
+
+            pendingBalance = null;
+            emitMinecraftEvent(
+                'Balance Check Timed Out',
+                'No server balance response was received.',
+                'warning',
+                {
+                    Command: command,
+                    Timeout: `${timeoutMs / 1000} seconds`,
+                    ...actionDetails(context)
+                }
+            );
+            reject(new Error(`No balance response was received within ${timeoutMs / 1000} seconds.`));
+        }, timeoutMs);
+
+        pendingBalance = { command, pattern, timeout, resolve, reject, context };
+
+        try {
+            sendChat(command);
+            console.log(`Balance command sent: ${command}`);
+            emitMinecraftEvent(
+                'Balance Check Sent',
+                'Waiting for the server to report the Minecraft bot balance.',
+                'info',
+                {
+                    Command: command,
+                    ...actionDetails(context)
+                }
+            );
+        } catch (error) {
+            pendingBalance = null;
+            clearTimeout(timeout);
+            emitMinecraftEvent(
+                'Balance Check Failed to Send',
+                error.message,
+                'error',
+                {
+                    Command: command,
                     ...actionDetails(context)
                 }
             );
@@ -786,6 +989,7 @@ function connect(context = {}) {
         }
         logIncomingPayment(message);
         handlePaymentResponse(message);
+        handleBalanceResponse(message);
     });
 
     currentBot.on('kicked', reason => {
@@ -820,6 +1024,7 @@ function connect(context = {}) {
 
         if (bot === currentBot) {
             cancelPendingPayment('Minecraft disconnected before the payment was confirmed.');
+            cancelPendingBalance('Minecraft disconnected before the balance check was confirmed.');
             bot = null;
 
             if (!signedInSuccessfully) {
@@ -857,6 +1062,7 @@ function disconnect() {
 
     if (bot) {
         cancelPendingPayment('Minecraft disconnected before the payment was confirmed.');
+        cancelPendingBalance('Minecraft disconnected before the balance check was confirmed.');
         bot.quit('Minecraft payment bot disconnecting');
         bot = null;
     }
@@ -927,6 +1133,7 @@ function printHelp() {
             '  say <message>                Send text or a command to Minecraft chat',
             '  msg <player> <message>       Send /msg [PLAYER] [message]',
             '  pay <player> <amount>        Send /pay [PLAYER] [AMOUNT]',
+            '  bal                          Send /bal and wait for the balance response',
             '  reconnect                    Reconnect to the Minecraft server',
             '  quit                         Disconnect and stop this process',
             ''
@@ -968,6 +1175,9 @@ async function handleTerminalCommand(input) {
 
             const result = await payPlayer(args[0], args[1]);
             console.log(`Payment completed: ${result.message}`);
+        } else if (command === 'bal' || command === 'balance') {
+            const result = await checkBalance();
+            console.log(`Balance: ${result.amount.toString()} (${result.message})`);
         } else if (command === 'msg') {
             if (args.length < 2) {
                 throw new Error('Usage: msg <player> <message>');
@@ -1027,7 +1237,10 @@ if (require.main === module) {
 module.exports = {
     alertCooldownMs,
     buildMessageCommand,
+    buildBalanceCommand,
     buildPaymentCommand,
+    checkBalance,
+    classifyBalanceResponse,
     classifyPaymentResponse,
     cleanMinecraftMessage,
     minecraftOptions,

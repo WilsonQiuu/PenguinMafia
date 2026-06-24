@@ -11,8 +11,15 @@ const {
     createGiveawayPaymentRequest,
     GIVEAWAY_CHANNEL_ID,
     giveawayPaymentBotUser,
-    parseGiveawayDuration
+    parseGiveawayDuration,
+    startFundedGiveaway
 } = require('../utils/giveaways.js');
+const {
+    ensureMinecraftBotConnected
+} = require('../utils/commissionPayments.js');
+const {
+    checkBalance
+} = require('../minecraft-bot.js');
 const {
     formattedMinecraftIgn,
     linkedAccountLabel
@@ -106,6 +113,59 @@ module.exports = {
                 return;
             }
 
+            const isDonHost = process.env.DON_DISCORD_ID &&
+                interaction.user.id === process.env.DON_DISCORD_ID;
+            let balanceNote = '';
+
+            if (isDonHost) {
+                const actionContext = {
+                    actorId: interaction.user.id,
+                    actorTag: interaction.user.tag || interaction.user.username,
+                    source: 'Discord /giveaway'
+                };
+
+                try {
+                    await ensureMinecraftBotConnected(actionContext);
+                    const balance = await checkBalance(actionContext);
+
+                    if (balance.amount >= amount) {
+                        await sql`
+                            update giveaway_payment_requests
+                            set
+                                status = 'cancelled',
+                                updated_at = now()
+                            where guild_id = ${interaction.guild.id}
+                                and host_discord_id = ${interaction.user.id}
+                                and status = 'pending'
+                        `;
+                        const {
+                            boardMessage
+                        } = await startFundedGiveaway(interaction.guild, {
+                            guildId: interaction.guild.id,
+                            channelId: giveawayChannel.id,
+                            hostDiscordId: interaction.user.id,
+                            amount,
+                            durationMs
+                        }, sql);
+
+                        await interaction.editReply(
+                            `✅ Giveaway started using the bot balance.\n\n` +
+                            `Amount: **${formatDonationAmount(amount)}**\n` +
+                            `Bot balance: **${formatDonationAmount(balance.amount)}**\n` +
+                            `Giveaway channel: <#${giveawayChannel.id}>` +
+                            (boardMessage ? `\nBoard: ${boardMessage.url}` : '')
+                        );
+                        return;
+                    }
+
+                    balanceNote =
+                        `\nBot balance is only **${formatDonationAmount(balance.amount)}**, so payment is still required.\n`;
+                } catch (error) {
+                    balanceNote =
+                        `\nI could not verify the bot balance automatically: **${error.message}**\n`;
+                }
+            }
+
             await createGiveawayPaymentRequest({
                 guildId: interaction.guild.id,
                 channelId: giveawayChannel.id,
@@ -118,6 +178,7 @@ module.exports = {
 
             await interaction.editReply(
                 `✅ Giveaway request created.\n\n` +
+                balanceNote +
                 `To host it, pay the Minecraft bot at least **${formatDonationAmount(amount)}** from your linked account:\n` +
                 `\`\`\`\n/pay ${paymentBotUser} ${formatDonationAmount(amount)}\n\`\`\`\n` +
                 `Linked account: **${linkedAccountLabel(host)}**\n\n` +

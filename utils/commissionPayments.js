@@ -16,6 +16,7 @@ const {
 
 const DEFAULT_PAYOUT_CONNECT_TIMEOUT_MS = 120_000;
 const PAYOUT_CONNECT_POLL_MS = 1_000;
+const MIN_PAYMENT_SPACING_MS = 3_000;
 
 function sleep(ms) {
     return new Promise(resolve => {
@@ -34,6 +35,31 @@ function payoutConnectTimeoutMs() {
     }
 
     return timeoutMs;
+}
+
+function paymentSpacingMs() {
+    const spacingMs = Number(
+        process.env.MINECRAFT_PAYMENT_SPACING_MS ||
+        MIN_PAYMENT_SPACING_MS
+    );
+
+    if (!Number.isInteger(spacingMs) || spacingMs < MIN_PAYMENT_SPACING_MS || spacingMs > 60_000) {
+        throw new Error(`MINECRAFT_PAYMENT_SPACING_MS must be between ${MIN_PAYMENT_SPACING_MS} and 60000.`);
+    }
+
+    return spacingMs;
+}
+
+async function waitForPaymentSpacing(lastPaymentAt) {
+    if (!lastPaymentAt) {
+        return;
+    }
+
+    const waitMs = paymentSpacingMs() - (Date.now() - lastPaymentAt);
+
+    if (waitMs > 0) {
+        await sleep(waitMs);
+    }
 }
 
 function formatMinecraftPaymentAmountFromCents(cents) {
@@ -170,6 +196,7 @@ async function settleGiveawayPayouts(giveaway, payoutResult, db = sql) {
     const context = commissionPaymentContext(source);
     const results = [];
     let connectionError = null;
+    let lastPaymentAttemptAt = 0;
 
     if (payablePayouts.length > 0) {
         try {
@@ -235,6 +262,8 @@ async function settleGiveawayPayouts(giveaway, payoutResult, db = sql) {
         const amount = formatMinecraftPaymentAmountFromCents(amountCents);
 
         try {
+            await waitForPaymentSpacing(lastPaymentAttemptAt);
+            lastPaymentAttemptAt = Date.now();
             const payment = await payPlayer(minecraftName, amount, {
                 ...context,
                 actorId: payout.player.discord_id
@@ -309,6 +338,7 @@ async function payOutstandingCommissions(db = sql, context = {}) {
     const paymentContext = commissionPaymentContext(source, context);
     const results = [];
     let connectionError = null;
+    let lastPaymentAttemptAt = 0;
 
     if (payableRows.length > 0) {
         try {
@@ -355,6 +385,8 @@ async function payOutstandingCommissions(db = sql, context = {}) {
         const amount = formatMinecraftPaymentAmountFromCents(amountCents);
 
         try {
+            await waitForPaymentSpacing(lastPaymentAttemptAt);
+            lastPaymentAttemptAt = Date.now();
             const payment = await payPlayer(minecraftName, amount, {
                 ...paymentContext,
                 actorId: player.discord_id
@@ -411,6 +443,7 @@ module.exports = {
     ensureMinecraftBotConnected,
     formatMinecraftPaymentAmountFromCents,
     payOutstandingCommissions,
+    paymentSpacingMs,
     payoutMinecraftTarget,
     settleGiveawayPayouts
 };
