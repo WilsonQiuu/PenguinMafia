@@ -19,7 +19,7 @@ let bot = null;
 let reconnectTimer = null;
 let shuttingDown = false;
 let pendingPayment = null;
-let lastSigninAlertAt = 0;
+let lastSmsAlertAt = 0;
 let lastPrivateMessage = null;
 let lastIncomingPayment = null;
 const minecraftEvents = new EventEmitter();
@@ -204,13 +204,22 @@ function microsoftLoginAlert(data) {
             'Microsoft authentication requires a new device-code login. Check the Minecraft bot logs.';
     }
 
-    const directUrl = `https://www.microsoft.com/link?otc=${encodeURIComponent(code)}`;
     return (
         `Minecraft bot Microsoft login required.\n` +
-        `Open: ${directUrl}\n` +
-        `Code: ${code}\n` +
+        `One-click login: ${microsoftOneClickLoginUrl(data)}\n` +
+        `Backup code: ${code}\n` +
         `Manual login: ${verificationUrl}`
     );
+}
+
+function microsoftOneClickLoginUrl(data) {
+    const code = data?.user_code?.trim();
+
+    if (!code) {
+        return data?.verification_uri?.trim() || 'https://www.microsoft.com/link';
+    }
+
+    return `https://www.microsoft.com/link?otc=${encodeURIComponent(code)}`;
 }
 
 function minecraftOptions() {
@@ -227,16 +236,22 @@ function minecraftOptions() {
         auth: 'microsoft',
         profilesFolder: AUTH_CACHE_DIRECTORY,
         onMsaCode(data) {
+            const oneClickLoginUrl = microsoftOneClickLoginUrl(data);
+            const verificationUrl = data?.verification_uri || 'https://www.microsoft.com/link';
+            const deviceCode = data?.user_code || 'See Railway logs or Twilio SMS';
+
             console.log('\nMicrosoft authentication is required:');
             console.log(data.message);
             console.log('');
             emitMinecraftEvent(
                 'Microsoft Login Required',
-                'The Minecraft account requires a new Microsoft device-code login.',
+                'The Minecraft account requires a new Microsoft device-code login. Use the one-click link to open Microsoft with the code prefilled.',
                 'warning',
                 {
-                    'Login URL': data?.verification_uri || 'https://www.microsoft.com/link',
-                    'Device code': data?.user_code || 'See Railway logs or Twilio SMS'
+                    'One-click sign-in': `[Open Microsoft login](${oneClickLoginUrl})`,
+                    'Direct URL': oneClickLoginUrl,
+                    'Backup device code': deviceCode,
+                    'Manual login URL': verificationUrl
                 }
             );
             void sendSigninAlert(microsoftLoginAlert(data));
@@ -353,7 +368,7 @@ async function sendTwilioSms(message, configuration = smsAlertConfiguration(), f
     return result;
 }
 
-async function sendSigninAlert(reason) {
+async function sendMinecraftAlert(reason, options = {}) {
     let configuration;
     let cooldown;
 
@@ -369,23 +384,36 @@ async function sendSigninAlert(reason) {
     }
 
     const now = Date.now();
-    if (now - lastSigninAlertAt < cooldown) {
-        console.log('Minecraft sign-in SMS suppressed by the alert cooldown.');
+    if (now - lastSmsAlertAt < cooldown) {
+        console.log('Minecraft SMS suppressed by the alert cooldown.');
         return;
     }
 
-    lastSigninAlertAt = now;
+    lastSmsAlertAt = now;
     const host = process.env.MINECRAFT_HOST?.trim() || 'the configured server';
+    const title = options.title || 'Minecraft bot needs attention';
     const message =
-        `Minecraft bot needs sign-in attention for ${host}. ` +
+        `${title} for ${host}. ` +
         `Reason: ${String(reason || 'unknown reason').slice(0, 300)}`;
 
     try {
         const result = await sendTwilioSms(message, configuration);
-        console.log(`Minecraft sign-in SMS queued${result.sid ? ` (${result.sid})` : ''}.`);
+        console.log(`Minecraft SMS queued${result.sid ? ` (${result.sid})` : ''}.`);
     } catch (error) {
-        console.error(`Could not send Minecraft sign-in SMS: ${error.message}`);
+        console.error(`Could not send Minecraft SMS: ${error.message}`);
     }
+}
+
+async function sendSigninAlert(reason) {
+    return sendMinecraftAlert(reason, {
+        title: 'Minecraft bot needs sign-in attention'
+    });
+}
+
+async function sendUnexpectedDisconnectAlert(reason) {
+    return sendMinecraftAlert(reason, {
+        title: 'Minecraft bot disconnected unexpectedly'
+    });
 }
 
 function isConnected() {
@@ -697,7 +725,17 @@ function connect(context = {}) {
     const currentBot = mineflayer.createBot(options);
     let connectionIssue = null;
     let signedInSuccessfully = false;
+    let unexpectedAlertQueued = false;
     bot = currentBot;
+
+    function queueUnexpectedDisconnectAlert(reason) {
+        if (shuttingDown || unexpectedAlertQueued) {
+            return;
+        }
+
+        unexpectedAlertQueued = true;
+        void sendUnexpectedDisconnectAlert(reason);
+    }
 
     currentBot.once('login', () => {
         console.log(`Authenticated as ${currentBot.username}.`);
@@ -753,6 +791,7 @@ function connect(context = {}) {
     currentBot.on('kicked', reason => {
         connectionIssue = `Kicked: ${String(reason)}`;
         console.error(`Minecraft bot was kicked: ${String(reason)}`);
+        queueUnexpectedDisconnectAlert(connectionIssue);
         emitMinecraftEvent(
             'Minecraft Bot Kicked',
             'The server kicked the Minecraft bot.',
@@ -785,6 +824,8 @@ function connect(context = {}) {
 
             if (!signedInSuccessfully) {
                 void sendSigninAlert(connectionIssue || reason || 'The bot disconnected before spawning.');
+            } else {
+                queueUnexpectedDisconnectAlert(connectionIssue || reason || 'The bot disconnected after spawning.');
             }
 
             emitMinecraftEvent(
@@ -999,10 +1040,13 @@ module.exports = {
     parseIncomingPayment,
     parsePrivateMessage,
     microsoftLoginAlert,
+    microsoftOneClickLoginUrl,
     minecraftBotStatus,
+    sendMinecraftAlert,
     payPlayer,
     randomReconnectDelayMinutes,
     sendSigninAlert,
+    sendUnexpectedDisconnectAlert,
     sendTwilioSms,
     smsAlertConfiguration,
     startMinecraftBot,

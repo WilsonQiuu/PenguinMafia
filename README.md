@@ -129,7 +129,7 @@ MINECRAFT_PAYMENT_SUCCESS_PATTERN=paid|sent|payment complete
 MINECRAFT_PAYMENT_FAILURE_PATTERN=insufficient funds|player not found|payment failed
 ```
 
-When the Twilio account credentials, destination, and either a Messaging Service SID or sending number are present, the bot sends Microsoft’s clickable login link and device code by SMS when a new login is required. It also alerts when the client fails before successfully signing in and spawning. Ordinary disconnects after a successful connection and failed payments do not send alerts. Twilio trial accounts require the destination number to be verified in the Twilio Console.
+When the Twilio account credentials, destination, and either a Messaging Service SID or sending number are present, the bot sends Microsoft’s one-click login link with the device code prefilled when a new login is required. It also alerts when the Minecraft client fails before successfully signing in, gets kicked, or disconnects unexpectedly after spawning. Planned stops from `/bot quit` and clean process-manager shutdowns such as Railway restarts do not send SMS alerts. Failed payments do not send alerts. Twilio trial accounts require the destination number to be verified in the Twilio Console.
 
 On Discord startup, the bot creates or repairs a private `🤖-bot-logs` channel visible only to the configured Don and the Discord bot. It records Minecraft startup and shutdown events, unexpected disconnects, errors, payment results, private messages sent by the bot, and private messages received from Minecraft players.
 
