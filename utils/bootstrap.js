@@ -420,8 +420,34 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        create table if not exists giveaway_payment_requests (
+            id bigserial primary key,
+            guild_id text not null,
+            channel_id text not null,
+            host_discord_id text not null references players(discord_id) on delete cascade,
+            host_minecraft_ign text not null,
+            payment_bot_user text not null,
+            amount bigint not null check (amount > 0),
+            duration_ms bigint not null check (duration_ms > 0),
+            status text not null default 'pending' check (status in ('pending', 'processing', 'hosted', 'cancelled', 'failed')),
+            paid_amount bigint,
+            payment_message text,
+            giveaway_id bigint references giveaways(id) on delete set null,
+            created_at timestamptz not null default now(),
+            paid_at timestamptz,
+            updated_at timestamptz not null default now()
+        )
+    `;
+
+    await sql`
         create index if not exists idx_giveaways_active_end
         on giveaways(guild_id, status, ends_at)
+    `;
+
+    await sql`
+        create index if not exists idx_giveaway_payment_requests_pending
+        on giveaway_payment_requests(guild_id, lower(host_minecraft_ign), amount, created_at)
+        where status = 'pending'
     `;
 
     await sql`

@@ -61,8 +61,12 @@ const {
     cleanupEndedGiveawaysForGuild,
     handleGiveawayButton,
     handleGiveawayLinkModal,
-    finishExpiredGiveawaysForGuild
+    finishExpiredGiveawaysForGuild,
+    processIncomingGiveawayPayment
 } = require('./utils/giveaways.js');
+const {
+    formatDonationAmount
+} = require('./utils/donations.js');
 const {
     ensureReactionRolesMessage,
     handleReactionRole
@@ -80,6 +84,7 @@ const {
     postMinecraftBotLog
 } = require('./utils/minecraftBotLogs.js');
 const {
+    emitMinecraftEvent,
     minecraftEvents,
     stopMinecraftBot
 } = require('./minecraft-bot.js');
@@ -132,6 +137,55 @@ minecraftEvents.on('log', event => {
             console.error(`Could not post Minecraft bot log for ${guild.name}:`);
             console.error(error);
         });
+
+        if (event.title === 'Incoming Payment Received') {
+            const payment = {
+                player: event.details?.Player,
+                amount: event.details?.Amount,
+                message: event.details?.['Server response']
+            };
+
+            processIncomingGiveawayPayment(guild, payment, sql)
+                .then(result => {
+                    if (result.status === 'hosted') {
+                        emitMinecraftEvent(
+                            'Paid Giveaway Hosted',
+                            `${result.request.host_minecraft_ign} funded a giveaway.`,
+                            'success',
+                            {
+                                Host: `<@${result.request.host_discord_id}>`,
+                                'Minecraft IGN': result.request.host_minecraft_ign,
+                                'Required amount': formatDonationAmount(result.request.amount),
+                                'Paid amount': formatDonationAmount(result.paidAmount),
+                                Giveaway: result.message.url
+                            }
+                        );
+                    } else if (result.status === 'too_low') {
+                        emitMinecraftEvent(
+                            'Giveaway Payment Too Low',
+                            `${result.request.host_minecraft_ign} paid less than their pending giveaway amount.`,
+                            'warning',
+                            {
+                                Host: `<@${result.request.host_discord_id}>`,
+                                'Minecraft IGN': result.request.host_minecraft_ign,
+                                'Required amount': formatDonationAmount(result.request.amount),
+                                'Paid amount': formatDonationAmount(result.paidAmount)
+                            }
+                        );
+                    }
+                })
+                .catch(error => {
+                    emitMinecraftEvent(
+                        'Paid Giveaway Hosting Failed',
+                        error.message,
+                        'error',
+                        {
+                            Player: payment.player,
+                            Amount: payment.amount
+                        }
+                    );
+                });
+        }
     }
 });
 

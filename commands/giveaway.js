@@ -8,23 +8,24 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
-    createGiveaway,
+    createGiveawayPaymentRequest,
     GIVEAWAY_CHANNEL_ID,
-    parseGiveawayDuration,
-    renderGiveaway,
-    renderGiveawayHostControls
+    giveawayPaymentBotUser,
+    parseGiveawayDuration
 } = require('../utils/giveaways.js');
 const {
+    formattedMinecraftIgn,
+    linkedAccountLabel
+} = require('../utils/payouts.js');
+const {
+    formatDonationAmount,
     parseDonationAmount
 } = require('../utils/donations.js');
-const {
-    getRankIndex
-} = require('../utils/ranks.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('giveaway')
-        .setDescription('Host a timed money giveaway. Penguin General or higher.')
+        .setDescription('Request a paid timed money giveaway.')
         .addStringOption(option =>
             option
                 .setName('amount')
@@ -56,7 +57,12 @@ module.exports = {
 
         try {
             const hostRows = await sql`
-                select rank_name
+                select
+                    discord_id,
+                    discord_username,
+                    discord_display_name,
+                    minecraft_ign,
+                    minecraft_edition
                 from players
                 where discord_id = ${interaction.user.id}
                     and status = 'active'
@@ -64,16 +70,23 @@ module.exports = {
                 limit 1
             `;
             const host = hostRows[0];
-            const hostRank = host ? getRankIndex(host.rank_name) : undefined;
-            const generalRank = getRankIndex('Penguin General');
 
-            if (hostRank === undefined || hostRank < generalRank) {
+            if (!host) {
                 await interaction.editReply(
-                    '❌ You need to be a registered Penguin General or Emperor Penguin to host a giveaway.'
+                    '❌ You need to finish welcome before hosting a giveaway.'
                 );
                 return;
             }
 
+            if (!host.minecraft_ign || !host.minecraft_edition) {
+                await interaction.editReply(
+                    '❌ Link your Minecraft account first with `/link` before hosting a paid giveaway.'
+                );
+                return;
+            }
+
+            const hostMinecraftIgn = formattedMinecraftIgn(host);
+            const paymentBotUser = giveawayPaymentBotUser();
             const giveawayChannel = interaction.guild.channels.cache.get(GIVEAWAY_CHANNEL_ID) ||
                 (await interaction.guild.channels.fetch(GIVEAWAY_CHANNEL_ID).catch(() => null));
 
@@ -84,50 +97,23 @@ module.exports = {
                 return;
             }
 
-            const giveaway = await createGiveaway({
+            await createGiveawayPaymentRequest({
                 guildId: interaction.guild.id,
                 channelId: giveawayChannel.id,
                 hostDiscordId: interaction.user.id,
+                hostMinecraftIgn,
+                paymentBotUser,
                 amount,
                 durationMs
             }, sql);
-            let giveawayMessage;
 
-            try {
-                giveawayMessage = await giveawayChannel.send(renderGiveaway(giveaway, 0, null, {
-                    pingGiveawayRole: true
-                }));
-
-                await sql`
-                    update giveaways
-                    set message_id = ${giveawayMessage.id}
-                    where id = ${giveaway.id}
-                `;
-            } catch (error) {
-                await sql`
-                    update giveaways
-                    set
-                        status = 'cancelled',
-                        ended_at = now()
-                    where id = ${giveaway.id}
-                `;
-                throw error;
-            }
-
-            try {
-                const hostControls = renderGiveawayHostControls(giveaway);
-
-                await interaction.editReply({
-                    ...hostControls,
-                    content:
-                        `✅ Giveaway posted in <#${giveawayChannel.id}>.\n` +
-                        `[Open Giveaway](${giveawayMessage.url})\n\n` +
-                        `${hostControls.content}`
-                });
-            } catch (error) {
-                console.warn(`Giveaway ${giveaway.id} was posted, but its private host controls could not be sent.`);
-                console.warn(error);
-            }
+            await interaction.editReply(
+                `✅ Giveaway request created.\n\n` +
+                `To host it, pay the Minecraft bot at least **${formatDonationAmount(amount)}** from your linked account:\n` +
+                `\`\`\`\n/pay ${paymentBotUser} ${formatDonationAmount(amount)}\n\`\`\`\n` +
+                `Linked account: **${linkedAccountLabel(host)}**\n\n` +
+                `Once the bot sees that payment from **${hostMinecraftIgn}**, it will post the giveaway in <#${giveawayChannel.id}>.`
+            );
         } catch (error) {
             logCommandError(interaction, '/giveaway', error);
 

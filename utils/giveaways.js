@@ -12,7 +12,8 @@ const {
 const sql = require('../db.js');
 const {
     formatCents,
-    formatDonationAmount
+    formatDonationAmount,
+    parseDonationAmount
 } = require('./donations.js');
 const {
     calculatePayout,
@@ -35,6 +36,21 @@ const GIVEAWAY_CLOSE_BUTTON_PREFIX = 'giveaway_close:';
 const GIVEAWAY_LINK_MODAL_PREFIX = 'giveaway_link:';
 const MIN_GIVEAWAY_DURATION_MS = 60 * 1000;
 const MAX_GIVEAWAY_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+const DEFAULT_PAYMENT_BOT_USER = 'Ash_L567';
+
+function giveawayPaymentBotUser() {
+    return process.env.BOT_USER?.trim() || DEFAULT_PAYMENT_BOT_USER;
+}
+
+function normalizeMinecraftUsername(username) {
+    return String(username || '').trim().toLowerCase();
+}
+
+function parseMinecraftPaymentAmount(amount) {
+    const normalizedAmount = String(amount || '').replace(/[$,\s]/g, '');
+
+    return parseDonationAmount(normalizedAmount);
+}
 
 function parseGiveawayDuration(input) {
     const rawDuration = input.trim().toLowerCase();
@@ -99,11 +115,18 @@ function leaveGiveawayButton(giveawayId, disabled = false) {
         .setDisabled(disabled);
 }
 
-function renderGiveawayHostControls(giveaway) {
+function renderGiveawayHostControls(giveaway, options = {}) {
+    const title = options.private === false
+        ? `🎛️ **Giveaway Controls for <@${giveaway.host_discord_id}>**`
+        : '🎛️ **Private Giveaway Controls**';
+    const visibilityLine = options.private === false
+        ? 'Only the giveaway host can use these buttons.'
+        : 'Only you can see this panel.';
+
     return {
         content:
-            `🎛️ **Private Giveaway Controls**\n\n` +
-            `Only you can see this panel.\n` +
+            `${title}\n\n` +
+            `${visibilityLine}\n` +
             `**End Giveaway** closes entries and randomly picks a winner.\n` +
             `The original giveaway post is deleted immediately when it ends.\n` +
             `**Close Giveaway Messages** deletes the remaining winner and payout results.\n\n` +
@@ -188,6 +211,42 @@ async function createGiveaway(options, db = sql) {
     return rows[0];
 }
 
+async function createGiveawayPaymentRequest(options, db = sql) {
+    await db`
+        update giveaway_payment_requests
+        set
+            status = 'cancelled',
+            updated_at = now()
+        where guild_id = ${options.guildId}
+            and host_discord_id = ${options.hostDiscordId}
+            and status = 'pending'
+    `;
+
+    const rows = await db`
+        insert into giveaway_payment_requests (
+            guild_id,
+            channel_id,
+            host_discord_id,
+            host_minecraft_ign,
+            payment_bot_user,
+            amount,
+            duration_ms
+        )
+        values (
+            ${options.guildId},
+            ${options.channelId},
+            ${options.hostDiscordId},
+            ${options.hostMinecraftIgn},
+            ${options.paymentBotUser},
+            ${options.amount.toString()}::bigint,
+            ${options.durationMs.toString()}::bigint
+        )
+        returning *
+    `;
+
+    return rows[0];
+}
+
 async function fetchGiveawayChannel(guild, giveaway) {
     const channel = guild.channels.cache.get(giveaway.channel_id) ||
         (await guild.channels.fetch(giveaway.channel_id).catch(() => null));
@@ -205,6 +264,174 @@ async function fetchGiveawayMessage(channel, giveaway) {
     }
 
     return channel.messages.fetch(giveaway.message_id).catch(() => null);
+}
+
+async function postGiveaway(guild, giveaway, db = sql) {
+    const giveawayChannel = await fetchGiveawayChannel(guild, giveaway);
+
+    if (!giveawayChannel) {
+        throw new Error(`The configured giveaway channel <#${giveaway.channel_id}> could not be found or is not a text channel.`);
+    }
+
+    let giveawayMessage;
+
+    try {
+        giveawayMessage = await giveawayChannel.send(renderGiveaway(giveaway, 0, null, {
+            pingGiveawayRole: true
+        }));
+
+        await db`
+            update giveaways
+            set message_id = ${giveawayMessage.id}
+            where id = ${giveaway.id}
+        `;
+    } catch (error) {
+        await db`
+            update giveaways
+            set
+                status = 'cancelled',
+                ended_at = now()
+            where id = ${giveaway.id}
+        `;
+        throw error;
+    }
+
+    return {
+        channel: giveawayChannel,
+        message: giveawayMessage
+    };
+}
+
+async function sendPublicHostControls(channel, giveaway, giveawayMessage) {
+    const hostControls = renderGiveawayHostControls(giveaway, {
+        private: false
+    });
+
+    return channel.send({
+        ...hostControls,
+        content:
+            `<@${giveaway.host_discord_id}> your paid giveaway is live.\n` +
+            `[Open Giveaway](${giveawayMessage.url})\n\n` +
+            `${hostControls.content}`,
+        allowedMentions: {
+            users: [giveaway.host_discord_id]
+        }
+    });
+}
+
+async function processIncomingGiveawayPayment(guild, payment, db = sql) {
+    const paymentPlayer = normalizeMinecraftUsername(payment.player);
+    let paidAmount;
+
+    if (!paymentPlayer) {
+        return {
+            status: 'ignored'
+        };
+    }
+
+    try {
+        paidAmount = parseMinecraftPaymentAmount(payment.amount);
+    } catch {
+        return {
+            status: 'ignored'
+        };
+    }
+
+    const matchingRows = await db`
+        select *
+        from giveaway_payment_requests
+        where guild_id = ${guild.id}
+            and status = 'pending'
+            and lower(host_minecraft_ign) = ${paymentPlayer}
+            and amount <= ${paidAmount.toString()}::bigint
+        order by created_at asc
+        limit 1
+    `;
+    const request = matchingRows[0];
+
+    if (!request) {
+        const lowRows = await db`
+            select *
+            from giveaway_payment_requests
+            where guild_id = ${guild.id}
+                and status = 'pending'
+                and lower(host_minecraft_ign) = ${paymentPlayer}
+            order by created_at asc
+            limit 1
+        `;
+
+        if (lowRows[0]) {
+            return {
+                status: 'too_low',
+                request: lowRows[0],
+                paidAmount
+            };
+        }
+
+        return {
+            status: 'none'
+        };
+    }
+
+    const claimedRows = await db`
+        update giveaway_payment_requests
+        set
+            status = 'processing',
+            paid_amount = ${paidAmount.toString()}::bigint,
+            payment_message = ${payment.message || null},
+            paid_at = now(),
+            updated_at = now()
+        where id = ${request.id}
+            and status = 'pending'
+        returning *
+    `;
+    const claimedRequest = claimedRows[0];
+
+    if (!claimedRequest) {
+        return {
+            status: 'already_processing'
+        };
+    }
+
+    try {
+        const giveaway = await createGiveaway({
+            guildId: claimedRequest.guild_id,
+            channelId: claimedRequest.channel_id,
+            hostDiscordId: claimedRequest.host_discord_id,
+            amount: BigInt(claimedRequest.amount),
+            durationMs: Number(claimedRequest.duration_ms)
+        }, db);
+        const posted = await postGiveaway(guild, giveaway, db);
+
+        await db`
+            update giveaway_payment_requests
+            set
+                status = 'hosted',
+                giveaway_id = ${giveaway.id},
+                updated_at = now()
+            where id = ${claimedRequest.id}
+        `;
+
+        await sendPublicHostControls(posted.channel, giveaway, posted.message);
+
+        return {
+            status: 'hosted',
+            request: claimedRequest,
+            giveaway,
+            message: posted.message,
+            paidAmount
+        };
+    } catch (error) {
+        await db`
+            update giveaway_payment_requests
+            set
+                status = 'failed',
+                updated_at = now()
+            where id = ${claimedRequest.id}
+        `;
+
+        throw error;
+    }
 }
 
 function payoutAnnouncementChunks(giveaway, payoutResult, winnerId) {
@@ -907,15 +1134,18 @@ module.exports = {
     cleanupEndedGiveawaysForGuild,
     closeGiveawayMessages,
     createGiveaway,
+    createGiveawayPaymentRequest,
     endGiveawayEarly,
     enterGiveaway,
     finishExpiredGiveawaysForGuild,
     finishGiveaway,
+    giveawayPaymentBotUser,
     giveawayLinkModal,
     handleGiveawayButton,
     handleGiveawayLinkModal,
     leaveGiveaway,
     parseGiveawayDuration,
+    processIncomingGiveawayPayment,
     renderGiveaway,
     renderGiveawayHostControls
 };
