@@ -69,12 +69,61 @@ function formatPayoutLine(payout, index, options = {}) {
     const discordMention = options.includeDiscordMention && payout.player.discord_id
         ? `<@${payout.player.discord_id}> — `
         : '';
+    const label = options.includeLabel !== false && payout.label
+        ? ` | ${payout.label}`
+        : '';
 
     return (
         `${index + 1}. ${discordMention}**${linkedAccountLabel(payout.player)}**\n` +
         `   Role: **${payout.roleName}** | Share: **${formatRate(payout.rateBasisPoints)}** | ` +
-        `Amount: **${formatCents(payout.amountCents)}**${payout.label ? ` | ${payout.label}` : ''}`
+        `Amount: **${formatCents(payout.amountCents)}**${label}`
     );
+}
+
+function payoutRecipientKey(payout) {
+    if (payout.player.discord_id) {
+        return `discord:${payout.player.discord_id}`;
+    }
+
+    const minecraftName = formattedMinecraftIgn(payout.player);
+
+    if (minecraftName) {
+        return `minecraft:${minecraftName.toLowerCase()}`;
+    }
+
+    return `name:${playerName(payout.player).toLowerCase()}`;
+}
+
+function combinePayouts(payouts) {
+    const combined = [];
+    const byRecipient = new Map();
+
+    for (const payout of payouts) {
+        const key = payoutRecipientKey(payout);
+        const existing = byRecipient.get(key);
+
+        if (!existing) {
+            const copy = {
+                ...payout,
+                label: payout.label || null
+            };
+
+            byRecipient.set(key, copy);
+            combined.push(copy);
+            continue;
+        }
+
+        existing.amountCents += payout.amountCents;
+        existing.rateBasisPoints += payout.rateBasisPoints;
+
+        if (payout.label && !String(existing.label || '').split(' + ').includes(payout.label)) {
+            existing.label = existing.label
+                ? `${existing.label} + ${payout.label}`
+                : payout.label;
+        }
+    }
+
+    return combined;
 }
 
 async function calculatePayout(playerDiscordId, amount, donDiscordId, db = sql) {
@@ -246,7 +295,7 @@ async function calculatePayout(playerDiscordId, amount, donDiscordId, db = sql) 
 
     return {
         player: playerRows[0],
-        payouts,
+        payouts: combinePayouts(payouts),
         stoppedAtFinalRank,
         totalAmountCents,
         totalPaidCents

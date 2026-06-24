@@ -11,14 +11,12 @@ const {
 
 const sql = require('../db.js');
 const {
-    formatCents,
     formatDonationAmount,
     parseDonationAmount
 } = require('./donations.js');
 const {
     calculatePayout,
-    formatPayoutLine,
-    linkedAccountLabel
+    formatPayoutLine
 } = require('./payouts.js');
 const {
     GIVEAWAY_PING_ROLE_ID
@@ -566,20 +564,16 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
 function payoutAnnouncementChunks(giveaway, payoutResult, winnerId) {
     const payoutLines = payoutResult.payouts.map((payout, index) => {
         return formatPayoutLine(payout, index, {
-            includeDiscordMention: payout.amountCents > 0n
+            includeDiscordMention: payout.amountCents > 0n,
+            includeLabel: false
         });
     });
     const header =
         `# 🎉 GIVEAWAY WINNER & PAYOUT\n\n` +
         `Hosted by: <@${giveaway.host_discord_id}>\n` +
         `Winner: <@${winnerId}>\n` +
-        `Winner account: **${linkedAccountLabel(payoutResult.player)}**\n` +
         `Giveaway amount: **${formatDonationAmount(giveaway.amount)}**\n` +
-        `Total distributed: **${formatCents(payoutResult.totalPaidCents)}**\n\n` +
         `## Complete Pay List\n`;
-    const footer =
-        `\n\nThe winner received their rank commission. The remaining money followed their recruiter chain exactly like \`/pay\`.` +
-        (payoutResult.stoppedAtFinalRank ? `\nFinal rank reached: **yes**` : '');
     const chunks = [];
     let current = header;
 
@@ -594,13 +588,7 @@ function payoutAnnouncementChunks(giveaway, payoutResult, winnerId) {
         }
     }
 
-    if (current.length + footer.length <= 1950) {
-        current += footer;
-        chunks.push(current);
-    } else {
-        chunks.push(current);
-        chunks.push(footer.trim());
-    }
+    chunks.push(current);
 
     return chunks;
 }
