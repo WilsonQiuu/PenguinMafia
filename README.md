@@ -119,7 +119,7 @@ This sends `/pay PenguinPlayer 100m` to Minecraft chat. The Don can also control
 
 After sending a payment, the bot waits up to 30 seconds for the server's chat response. It reports the payment as completed only when a success response mentions the player, reports a known failure response, or warns that confirmation timed out. Only one payment can wait for confirmation at a time. Server messages are logged with timestamps and their raw packet contents for troubleshooting.
 
-Giveaways are funded by player payments to `BOT_USER`. When a player runs `/giveaway amount duration`, the bot checks that their Minecraft account is linked, tells them to pay `/pay BOT_USER amount`, and adds the giveaway to one shared active-giveaways board only after it sees an incoming payment from that linked Java or Bedrock IGN for at least the requested amount. Each funded giveaway also pings the giveaway role in `GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID`.
+Giveaways are funded by player payments to `BOT_USER`. When a player runs `/giveaway amount duration`, the bot requires at least `1m`, checks that their Minecraft account is linked, tells them to pay `/pay BOT_USER amount`, and adds the giveaway to one shared active-giveaways board only after it sees an incoming payment from that linked Java or Bedrock IGN for at least the requested amount. Each funded giveaway also pings the giveaway role in `GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID`.
 
 If your server uses unusual payment messages, you can optionally provide case-insensitive regular expressions in `.env`:
 

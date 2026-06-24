@@ -22,6 +22,8 @@ const {
     parseDonationAmount
 } = require('../utils/donations.js');
 
+const MIN_GIVEAWAY_AMOUNT = 1_000_000n;
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('giveaway')
@@ -29,7 +31,7 @@ module.exports = {
         .addStringOption(option =>
             option
                 .setName('amount')
-                .setDescription('Amount to give away, like 500, 10k, 2.5m, 1b, or 1t')
+                .setDescription('Amount to give away, minimum 1m')
                 .setRequired(true)
         )
         .addStringOption(option =>
@@ -52,6 +54,13 @@ module.exports = {
             durationMs = parseGiveawayDuration(interaction.options.getString('duration'));
         } catch (error) {
             await interaction.editReply(`❌ ${error.message}`);
+            return;
+        }
+
+        if (amount < MIN_GIVEAWAY_AMOUNT) {
+            await interaction.editReply(
+                `❌ Giveaway amount must be at least **${formatDonationAmount(MIN_GIVEAWAY_AMOUNT)}**.`
+            );
             return;
         }
 
