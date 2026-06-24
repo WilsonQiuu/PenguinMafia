@@ -1764,6 +1764,36 @@ client.once(Events.ClientReady, async () => {
         }
     }, 60_000);
 
+    let giveawayTimerCheckRunning = false;
+    async function runGiveawayTimerCheck() {
+        if (giveawayTimerCheckRunning) {
+            return;
+        }
+
+        giveawayTimerCheckRunning = true;
+
+        try {
+            for (const [, guild] of client.guilds.cache) {
+                try {
+                    const finished = await finishExpiredGiveawaysForGuild(guild, sql);
+
+                    if (finished.length > 0) {
+                        console.log(`Ended ${finished.length} expired giveaway(s) for ${guild.name}.`);
+                    }
+                } catch (error) {
+                    console.error(`Giveaway timer check failed for ${guild.name}:`);
+                    console.error(error);
+                }
+            }
+        } finally {
+            giveawayTimerCheckRunning = false;
+        }
+    }
+
+    setInterval(() => {
+        runGiveawayTimerCheck();
+    }, 1_000);
+
     setInterval(async () => {
         for (const [, guild] of client.guilds.cache) {
             try {
@@ -1799,18 +1829,6 @@ client.once(Events.ClientReady, async () => {
                 }
             } catch (error) {
                 console.error(`Election result board reset failed for ${guild.name}:`);
-                console.error(error);
-            }
-
-            try {
-                const finished = await finishExpiredGiveawaysForGuild(guild, sql);
-
-                if (finished.length > 0) {
-                    console.log(`Ended ${finished.length} expired giveaway(s) for ${guild.name}.`);
-                    await upsertActiveGiveawaysBoard(guild, sql);
-                }
-            } catch (error) {
-                console.error(`Giveaway timer check failed for ${guild.name}:`);
                 console.error(error);
             }
 

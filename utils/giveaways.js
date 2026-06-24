@@ -605,7 +605,7 @@ function payoutAnnouncementChunks(giveaway, payoutResult, winnerId) {
     return chunks;
 }
 
-async function sendPayoutAnnouncement(channel, message, giveaway, payoutResult, winnerId) {
+async function sendPayoutAnnouncement(channel, giveaway, payoutResult, winnerId) {
     const chunks = payoutAnnouncementChunks(giveaway, payoutResult, winnerId);
     const paidUserIds = [...new Set(
         payoutResult.payouts
@@ -625,16 +625,22 @@ async function sendPayoutAnnouncement(channel, message, giveaway, payoutResult, 
 
         let sentMessage;
 
-        if (index === 0 && message) {
-            sentMessage = await message.reply(payload);
-        } else {
-            sentMessage = await channel.send(payload);
-        }
+        sentMessage = await channel.send(payload);
 
         sentMessageIds.push(sentMessage.id);
     }
 
     return sentMessageIds;
+}
+
+async function refreshActiveGiveawaysBoard(guild, db = sql) {
+    try {
+        return await upsertActiveGiveawaysBoard(guild, db);
+    } catch (error) {
+        console.error(`Could not refresh active giveaway board for ${guild.name}:`);
+        console.error(error);
+        return null;
+    }
 }
 
 function giveawayLinkModal(giveawayId, player) {
@@ -1180,15 +1186,13 @@ async function finishGiveaway(guild, giveawayId, db = sql) {
     }
 
     const channel = await fetchGiveawayChannel(guild, giveaway);
-    const message = channel
-        ? await fetchGiveawayMessage(channel, giveaway)
-        : null;
     const cleanupMessageIds = [];
+
+    await refreshActiveGiveawaysBoard(guild, db);
 
     if (channel && winnerId) {
         const payoutMessageIds = await sendPayoutAnnouncement(
             channel,
-            message,
             giveaway,
             payoutResult,
             winnerId
@@ -1205,19 +1209,6 @@ async function finishGiveaway(guild, giveawayId, db = sql) {
         });
         cleanupMessageIds.push(noWinnerMessage.id);
     }
-
-    if (message) {
-        try {
-            await message.delete();
-        } catch (error) {
-            cleanupMessageIds.push(message.id);
-            console.warn(
-                `Could not immediately delete giveaway message ${message.id} for giveaway ${giveaway.id}: ${error.message}`
-            );
-        }
-    }
-
-    await upsertActiveGiveawaysBoard(guild, db);
 
     await db`
         update giveaways
