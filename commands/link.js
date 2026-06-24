@@ -18,7 +18,7 @@ const DEFAULT_RANK_NAME = 'Penguin Soldier';
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('link')
+        .setName('penguinlink')
         .setDescription('Link your Minecraft IGN to your Penguin Mafia account.')
         .addStringOption(option =>
             option
@@ -101,7 +101,7 @@ module.exports = {
 
             if (buttonInteraction.customId === `link_cancel:${interaction.user.id}`) {
                 await buttonInteraction.update({
-                    content: `❌ Minecraft IGN linking cancelled. You can run \`/link\` again.`,
+                    content: `❌ Minecraft IGN linking cancelled. You can run \`/penguinlink\` again.`,
                     components: []
                 });
                 return;
@@ -150,7 +150,7 @@ module.exports = {
                 buttonInteraction.member,
                 minecraftIGN
             );
-            console.log(`/link IGN for ${buttonInteraction.member.user.tag}: ${minecraftIGN} (${editionLabel}). Nickname updated=${nicknameUpdated ? 'yes' : 'no'}.`);
+            console.log(`/penguinlink IGN for ${buttonInteraction.member.user.tag}: ${minecraftIGN} (${editionLabel}). Nickname updated=${nicknameUpdated ? 'yes' : 'no'}.`);
 
             await buttonInteraction.update({
                 content:
@@ -158,16 +158,16 @@ module.exports = {
                     `Discord: ${interaction.user}\n` +
                     `Minecraft IGN: **${minecraftIGN}**\n` +
                     `Edition: **${editionLabel}**\n\n` +
-                    `You can run \`/link\` again if this was wrong.`,
+                    `You can run \`/penguinlink\` again if this was wrong.`,
                 components: []
             });
         } catch (error) {
-            logCommandError(interaction, '/link', error);
+            logCommandError(interaction, '/penguinlink', error);
 
             await interaction.editReply({
                 content:
                     `⏰ Minecraft IGN confirmation expired.\n\n` +
-                    `Please run \`/link\` again with your IGN and edition.`,
+                    `Please run \`/penguinlink\` again with your IGN and edition.`,
                 components: []
             });
         }

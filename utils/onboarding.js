@@ -214,7 +214,7 @@ function ignMessage(userId, isTest = false) {
 function finalMessage(userId, linkedIgn = null, edition = null, isTest = false, skipMessage = null) {
     const linkedLine = linkedIgn
         ? `✅ IGN linked: **${linkedIgn}**${edition ? ` (${minecraftEditionLabel(edition)})` : ''}`
-        : (skipMessage || `⏭️ IGN skipped. Use \`/link\` before events.`);
+        : (skipMessage || `⏭️ IGN skipped. Use \`/penguinlink\` before events.`);
     return {
         content:
             `# 🐧 WELCOME TO THE\n# PENGUIN MAFIA 🎉\n\n` +
@@ -606,7 +606,7 @@ async function handleWelcomeButton(interaction) {
             null,
             null,
             isTest,
-            `⏭️ No Minecraft username linked. If you ever want giveaway payouts, use \`/link\`.`
+            `⏭️ No Minecraft username linked. If you ever want giveaway payouts, use \`/penguinlink\`.`
         ));
         return true;
     }
@@ -647,7 +647,7 @@ async function handleWelcomeButton(interaction) {
             null,
             null,
             isTest,
-            `⏭️ Username skipped for now. You can link it later with \`/link\`.`
+            `⏭️ Username skipped for now. You can link it later with \`/penguinlink\`.`
         ));
         return true;
     }

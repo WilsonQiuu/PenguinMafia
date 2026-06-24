@@ -19,6 +19,9 @@ const {
     formatPayoutLine
 } = require('./payouts.js');
 const {
+    settleGiveawayPayouts
+} = require('./commissionPayments.js');
+const {
     GIVEAWAY_PING_ROLE_ID
 } = require('./reactionRoles.js');
 const {
@@ -573,7 +576,7 @@ function payoutAnnouncementChunks(giveaway, payoutResult, winnerId) {
         `Hosted by: <@${giveaway.host_discord_id}>\n` +
         `Winner: <@${winnerId}>\n` +
         `Giveaway amount: **${formatDonationAmount(giveaway.amount)}**\n` +
-        `## Complete Pay List\n`;
+        `## Pay List\n`;
     const chunks = [];
     let current = header;
 
@@ -702,7 +705,7 @@ async function enterAllActiveGiveaways(interaction, db = sql) {
     }
 
     if (!player.minecraft_ign || !player.minecraft_edition) {
-        await interaction.editReply('❌ Link your Minecraft account first with `/link` before entering giveaways.');
+        await interaction.editReply('❌ Link your Minecraft account first with `/penguinlink` before entering giveaways.');
         return true;
     }
 
@@ -1186,6 +1189,11 @@ async function finishGiveaway(guild, giveawayId, db = sql) {
             winnerId
         );
         cleanupMessageIds.push(...payoutMessageIds);
+
+        settleGiveawayPayouts(giveaway, payoutResult, db).catch(error => {
+            console.error(`Could not settle giveaway payout ${giveaway.id}:`);
+            console.error(error);
+        });
     } else if (channel) {
         const noWinnerMessage = await channel.send({
             content:

@@ -89,7 +89,7 @@ module.exports = {
 
             if (!host.minecraft_ign || !host.minecraft_edition) {
                 await interaction.editReply(
-                    '❌ Link your Minecraft account first with `/link` before hosting a paid giveaway.'
+                    '❌ Link your Minecraft account first with `/penguinlink` before hosting a paid giveaway.'
                 );
                 return;
             }

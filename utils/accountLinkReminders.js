@@ -75,9 +75,9 @@ function reminderPayload(player) {
             `${status}\n\n` +
             `Press **Link Account** below to enter your IGN and choose your edition.\n\n` +
             `If the button does not work, go to the Penguin Mafia server and run:\n` +
-            `\`/link ign:${exampleIgn} edition:Java\`\n` +
+            `\`/penguinlink ign:${exampleIgn} edition:Java\`\n` +
             `or\n` +
-            `\`/link ign:${exampleIgn} edition:Bedrock\`\n\n` +
+            `\`/penguinlink ign:${exampleIgn} edition:Bedrock\`\n\n` +
             `You will receive this reminder at most once every **7 days** until your account is fully linked.`,
         components: [
             new ActionRowBuilder().addComponents(
