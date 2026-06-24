@@ -8,6 +8,7 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
+    formatCents,
     formatDonationAmount
 } = require('../utils/donations.js');
 
@@ -50,6 +51,8 @@ module.exports = {
                     child.discord_display_name,
                     child.minecraft_ign,
                     child.donations,
+                    child.personal_production,
+                    child.team_overrides,
                     child.rank_name,
                     child.staff_rank_name,
                     child.ban_points_remaining,
@@ -188,6 +191,8 @@ module.exports = {
                 `Discord: ${playerUser} \`${player.discord_id}\`\n` +
                 `IGN: \`${minecraftIGN}\`\n` +
                 `Donations: \`${formatDonationAmount(player.donations)}\`\n` +
+                `Personal production: \`${formatCents(player.personal_production)}\`\n` +
+                `Team overrides: \`${formatCents(player.team_overrides)}\`\n` +
                 `Role: \`${player.rank_name}\`\n` +
                 `Staff role: \`${player.staff_rank_name || 'None'}\`\n` +
                 `Ban points: **${player.ban_points_remaining}**\n` +

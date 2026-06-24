@@ -53,7 +53,9 @@ module.exports = {
                     discord_username,
                     discord_display_name,
                     minecraft_ign,
-                    unpaid_commissions
+                    unpaid_commissions,
+                    personal_production,
+                    team_overrides
                 from players
                 where discord_id = ${requestedUser.id}
                 limit 1
@@ -75,7 +77,9 @@ module.exports = {
                 `💰 **Unpaid Commissions**\n\n` +
                 `Player: **${playerName(player, requestedUser.username)}**\n` +
                 `${linkStatus}\n` +
-                `Amount: **${formatCents(player.unpaid_commissions)}**`
+                `Amount: **${formatCents(player.unpaid_commissions)}**\n` +
+                `Personal production: **${formatCents(player.personal_production)}**\n` +
+                `Team overrides: **${formatCents(player.team_overrides)}**`
             );
         } catch (error) {
             logCommandError(interaction, '/commissions', error);

@@ -258,6 +258,9 @@ async function ensureDatabaseSchema(sql) {
             claims_available int not null default 0,
             donations bigint not null default 0 check (donations >= 0),
             unpaid_commissions bigint not null default 0 check (unpaid_commissions >= 0),
+            personal_production bigint not null default 0 check (personal_production >= 0),
+            team_overrides bigint not null default 0 check (team_overrides >= 0),
+            payout_notifications_enabled boolean not null default true,
             rank_name text not null default 'Penguin Soldier' references ranks(name),
             staff_rank_name text references staff_ranks(name),
             ban_points_remaining int not null default 0 check (ban_points_remaining >= 0),
@@ -303,6 +306,21 @@ async function ensureDatabaseSchema(sql) {
     await sql`
         alter table players
         add column if not exists unpaid_commissions bigint not null default 0 check (unpaid_commissions >= 0)
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists personal_production bigint not null default 0 check (personal_production >= 0)
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists team_overrides bigint not null default 0 check (team_overrides >= 0)
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists payout_notifications_enabled boolean not null default true
     `;
 
     await sql`

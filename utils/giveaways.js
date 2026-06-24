@@ -28,7 +28,8 @@ const {
     updateDonationLeaderboardForGuild
 } = require('./leaderboards.js');
 const {
-    GIVEAWAY_PING_ROLE_ID
+    GIVEAWAY_PING_ROLE_ID,
+    REACTION_ROLES_CHANNEL_ID
 } = require('./reactionRoles.js');
 const {
     setMemberNicknameToIgn
@@ -36,6 +37,8 @@ const {
 
 const GIVEAWAY_CHANNEL_ID =
     process.env.GIVEAWAY_CHANNEL_ID || '1517413426358390814';
+const GIVEAWAY_WINNER_CHANNEL_ID =
+    process.env.GIVEAWAY_WINNER_CHANNEL_ID || '1519484184425398312';
 const GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID =
     process.env.GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID || '1498442322638147604';
 const GIVEAWAY_BUTTON_PREFIX = 'giveaway_enter:';
@@ -351,6 +354,10 @@ async function fetchGiveawayChannel(guild, giveaway) {
     return channel;
 }
 
+async function fetchGiveawayWinnerChannel(guild) {
+    return fetchGiveawayTextChannel(guild, GIVEAWAY_WINNER_CHANNEL_ID);
+}
+
 async function fetchGiveawayMessage(channel, giveaway) {
     if (!giveaway.message_id) {
         return null;
@@ -378,6 +385,12 @@ async function fetchActiveGiveawayRows(guildId, db = sql) {
             and g.ends_at > now()
         order by g.ends_at asc, g.id asc
     `;
+}
+
+async function activeGiveawayTotalAmount(guildId, db = sql) {
+    const activeGiveaways = await fetchActiveGiveawayRows(guildId, db);
+
+    return totalGiveawayAmount(activeGiveaways);
 }
 
 async function fetchGiveawayTextChannel(guild, channelId) {
@@ -513,6 +526,72 @@ async function recordGiveawayDonation(guild, giveaway, db = sql) {
     });
 
     return donationRow.donations;
+}
+
+async function sendWeeklyGiveawayPingReminderForGuild(guild, db = sql) {
+    const totalAmount = await activeGiveawayTotalAmount(guild.id, db);
+
+    if (totalAmount <= 0n) {
+        return {
+            sent: 0,
+            failed: 0,
+            skipped: true,
+            totalAmount
+        };
+    }
+
+    const role = guild.roles.cache.get(GIVEAWAY_PING_ROLE_ID) ||
+        (await guild.roles.fetch(GIVEAWAY_PING_ROLE_ID).catch(() => null));
+
+    if (!role) {
+        console.warn(`Giveaway ping role ${GIVEAWAY_PING_ROLE_ID} was not found.`);
+        return {
+            sent: 0,
+            failed: 0,
+            skipped: true,
+            totalAmount
+        };
+    }
+
+    const rows = await db`
+        select discord_id
+        from players
+        where status = 'active'
+            and welcome_completed = true
+        order by discord_display_name asc, discord_username asc
+    `;
+    let sent = 0;
+    let failed = 0;
+
+    for (const player of rows) {
+        const member = guild.members.cache.get(player.discord_id) ||
+            (await guild.members.fetch(player.discord_id).catch(() => null));
+
+        if (!member || member.user.bot || member.roles.cache.has(role.id)) {
+            continue;
+        }
+
+        await member.send({
+            content:
+                `🎉 Penguin Mafia has **${formatDonationAmount(totalAmount)}** in active giveaways right now in <#${GIVEAWAY_CHANNEL_ID}>.\n\n` +
+                `You do not currently have the giveaway ping role. Use the **Notify Me** button in the giveaway channel or react in <#${REACTION_ROLES_CHANNEL_ID}> if you want new giveaway pings.`,
+            allowedMentions: {
+                parse: []
+            }
+        }).then(() => {
+            sent += 1;
+        }).catch(error => {
+            failed += 1;
+            console.log(`Could not DM weekly giveaway reminder to ${player.discord_id}: ${error.message}`);
+        });
+    }
+
+    return {
+        sent,
+        failed,
+        skipped: false,
+        totalAmount
+    };
 }
 
 async function startFundedGiveaway(guild, options, db = sql) {
@@ -1299,7 +1378,7 @@ async function finishGiveaway(guild, giveawayId, db = sql) {
         `;
     }
 
-    const channel = await fetchGiveawayChannel(guild, giveaway);
+    const channel = await fetchGiveawayWinnerChannel(guild);
     const cleanupMessageIds = [];
 
     await refreshActiveGiveawaysBoard(guild, db);
@@ -1313,7 +1392,7 @@ async function finishGiveaway(guild, giveawayId, db = sql) {
         );
         cleanupMessageIds.push(...payoutMessageIds);
 
-        settleGiveawayPayouts(giveaway, payoutResult, db).catch(error => {
+        settleGiveawayPayouts(guild, giveaway, payoutResult, db).catch(error => {
             console.error(`Could not settle giveaway payout ${giveaway.id}:`);
             console.error(error);
         });
@@ -1368,10 +1447,23 @@ async function finishExpiredGiveawaysForGuild(guild, db = sql) {
 }
 
 async function deleteGiveawayMessages(guild, giveaway) {
-    const channel = guild.channels.cache.get(giveaway.channel_id) ||
+    const winnerChannel = await fetchGiveawayWinnerChannel(guild);
+    const originalChannel = guild.channels.cache.get(giveaway.channel_id) ||
         (await guild.channels.fetch(giveaway.channel_id).catch(() => null));
+    const channels = [];
 
-    if (!channel?.isTextBased()) {
+    if (winnerChannel?.isTextBased()) {
+        channels.push(winnerChannel);
+    }
+
+    if (
+        originalChannel?.isTextBased() &&
+        !channels.some(channel => channel.id === originalChannel.id)
+    ) {
+        channels.push(originalChannel);
+    }
+
+    if (channels.length === 0) {
         return {
             deleted: 0,
             failed: true
@@ -1385,7 +1477,15 @@ async function deleteGiveawayMessages(guild, giveaway) {
     let failed = false;
 
     for (const messageId of messageIds) {
-        const message = await channel.messages.fetch(messageId).catch(() => null);
+        let message = null;
+
+        for (const channel of channels) {
+            message = await channel.messages.fetch(messageId).catch(() => null);
+
+            if (message) {
+                break;
+            }
+        }
 
         if (!message) {
             continue;
@@ -1507,8 +1607,10 @@ module.exports = {
     GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID,
     GIVEAWAY_BUTTON_PREFIX,
     GIVEAWAY_CHANNEL_ID,
+    GIVEAWAY_WINNER_CHANNEL_ID,
     addGiveawayPingRole,
     announceGiveawayStarted,
+    activeGiveawayTotalAmount,
     cleanupEndedGiveawaysForGuild,
     closeGiveawayMessages,
     createGiveaway,
@@ -1526,6 +1628,7 @@ module.exports = {
     processIncomingGiveawayPayment,
     renderGiveaway,
     renderGiveawayHostControls,
+    sendWeeklyGiveawayPingReminderForGuild,
     startFundedGiveaway,
     upsertActiveGiveawaysBoard
 };

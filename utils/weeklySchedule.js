@@ -7,6 +7,9 @@ const {
     resetWeeklyRecruitsAndSaveTopThree,
     updateWeeklyRecruitsLeaderboardForGuild
 } = require('./leaderboards.js');
+const {
+    sendWeeklyGiveawayPingReminderForGuild
+} = require('./giveaways.js');
 
 const EASTERN_TIME_ZONE = 'America/Toronto';
 const runningGuildSchedules = new Set();
@@ -54,16 +57,23 @@ async function readScheduleState(db, key) {
     if (!rows[0]?.value) {
         return {
             weeklyReset: false,
-            electionStarted: false
+            electionStarted: false,
+            giveawayPingReminderSent: false
         };
     }
 
     try {
-        return JSON.parse(rows[0].value);
+        return {
+            weeklyReset: false,
+            electionStarted: false,
+            giveawayPingReminderSent: false,
+            ...JSON.parse(rows[0].value)
+        };
     } catch {
         return {
             weeklyReset: false,
-            electionStarted: false
+            electionStarted: false,
+            giveawayPingReminderSent: false
         };
     }
 }
@@ -92,7 +102,8 @@ async function runFridayNoonScheduleForGuild(guild, db = sql, now = new Date()) 
         return {
             due: false,
             weeklyReset: false,
-            electionStarted: false
+            electionStarted: false,
+            giveawayPingReminderSent: false
         };
     }
 
@@ -100,7 +111,8 @@ async function runFridayNoonScheduleForGuild(guild, db = sql, now = new Date()) 
         return {
             due: true,
             weeklyReset: false,
-            electionStarted: false
+            electionStarted: false,
+            giveawayPingReminderSent: false
         };
     }
 
@@ -111,6 +123,8 @@ async function runFridayNoonScheduleForGuild(guild, db = sql, now = new Date()) 
         let state = await readScheduleState(db, stateKey);
         let weeklyReset = false;
         let electionStarted = false;
+        let giveawayPingReminderSent = false;
+        let giveawayPingReminderResult = null;
 
         if (!state.weeklyReset) {
             state = {
@@ -147,10 +161,22 @@ async function runFridayNoonScheduleForGuild(guild, db = sql, now = new Date()) 
             await writeScheduleState(db, stateKey, state);
         }
 
+        if (eastern.hour >= 13 && !state.giveawayPingReminderSent) {
+            giveawayPingReminderResult = await sendWeeklyGiveawayPingReminderForGuild(guild, db);
+            giveawayPingReminderSent = true;
+            state = {
+                ...state,
+                giveawayPingReminderSent: true
+            };
+            await writeScheduleState(db, stateKey, state);
+        }
+
         return {
             due: true,
             weeklyReset,
-            electionStarted
+            electionStarted,
+            giveawayPingReminderSent,
+            giveawayPingReminderResult
         };
     } finally {
         runningGuildSchedules.delete(guild.id);

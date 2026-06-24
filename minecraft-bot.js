@@ -51,6 +51,10 @@ function actionDetails(context = {}) {
     return details;
 }
 
+function shouldSuppressPaymentLog(context = {}) {
+    return Boolean(context.suppressPaymentLog);
+}
+
 function parsePrivateMessage(message, botUsername = '') {
     const text = cleanMinecraftMessage(message);
     const escapedBotUsername = botUsername
@@ -692,30 +696,34 @@ function handlePaymentResponse(message) {
     clearTimeout(payment.timeout);
 
     if (result.status === 'completed') {
-        emitMinecraftEvent(
-            'Payment Successful',
-            `The server confirmed the payment to ${payment.player}.`,
-            'success',
-            {
-                Player: payment.player,
-                Amount: payment.amount,
-                'Server response': result.message,
-                ...actionDetails(payment.context)
-            }
-        );
+        if (!shouldSuppressPaymentLog(payment.context)) {
+            emitMinecraftEvent(
+                'Payment Successful',
+                `The server confirmed the payment to ${payment.player}.`,
+                'success',
+                {
+                    Player: payment.player,
+                    Amount: payment.amount,
+                    'Server response': result.message,
+                    ...actionDetails(payment.context)
+                }
+            );
+        }
         payment.resolve(result);
     } else {
-        emitMinecraftEvent(
-            'Payment Unsuccessful',
-            `The server rejected the payment to ${payment.player}.`,
-            'error',
-            {
-                Player: payment.player,
-                Amount: payment.amount,
-                'Server response': result.message,
-                ...actionDetails(payment.context)
-            }
-        );
+        if (!shouldSuppressPaymentLog(payment.context)) {
+            emitMinecraftEvent(
+                'Payment Unsuccessful',
+                `The server rejected the payment to ${payment.player}.`,
+                'error',
+                {
+                    Player: payment.player,
+                    Amount: payment.amount,
+                    'Server response': result.message,
+                    ...actionDetails(payment.context)
+                }
+            );
+        }
         payment.reject(new Error(result.message));
     }
 }
@@ -872,17 +880,19 @@ function payPlayer(player, amount, context = {}) {
             }
 
             pendingPayment = null;
-            emitMinecraftEvent(
-                'Payment Confirmation Timed Out',
-                `No server confirmation was received for the payment to ${player}.`,
-                'warning',
-                {
-                    Player: player,
-                    Amount: amount,
-                    Timeout: `${timeoutMs / 1000} seconds`,
-                    ...actionDetails(context)
-                }
-            );
+            if (!shouldSuppressPaymentLog(context)) {
+                emitMinecraftEvent(
+                    'Payment Confirmation Timed Out',
+                    `No server confirmation was received for the payment to ${player}.`,
+                    'warning',
+                    {
+                        Player: player,
+                        Amount: amount,
+                        Timeout: `${timeoutMs / 1000} seconds`,
+                        ...actionDetails(context)
+                    }
+                );
+            }
             reject(
                 new Error(
                     `No payment confirmation was received within ${timeoutMs / 1000} seconds. Check Minecraft chat before retrying.`
@@ -899,16 +909,18 @@ function payPlayer(player, amount, context = {}) {
         } catch (error) {
             pendingPayment = null;
             clearTimeout(timeout);
-            emitMinecraftEvent(
-                'Payment Failed to Send',
-                error.message,
-                'error',
-                {
-                    Player: player,
-                    Amount: amount,
-                    ...actionDetails(context)
-                }
-            );
+            if (!shouldSuppressPaymentLog(context)) {
+                emitMinecraftEvent(
+                    'Payment Failed to Send',
+                    error.message,
+                    'error',
+                    {
+                        Player: player,
+                        Amount: amount,
+                        ...actionDetails(context)
+                    }
+                );
+            }
             reject(error);
         }
     });

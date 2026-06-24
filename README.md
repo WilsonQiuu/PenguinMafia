@@ -76,6 +76,7 @@ MINECRAFT_BALANCE_TIMEOUT_MS=30000
 MINECRAFT_PAYMENT_SPACING_MS=3000
 MINECRAFT_PAYOUT_CONNECT_TIMEOUT_MS=120000
 GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID=1498442322638147604
+GIVEAWAY_WINNER_CHANNEL_ID=1519484184425398312
 
 # Optional Twilio sign-in alerts. Use E.164 phone numbers with a leading +.
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -124,7 +125,7 @@ This sends `/pay PenguinPlayer 100m` to Minecraft chat. The Don can also control
 
 After sending a payment, the bot waits up to 30 seconds for the server's chat response. It reports the payment as completed only when a success response mentions the player, reports a known failure response, or warns that confirmation timed out. Only one payment can wait for confirmation at a time. Server messages are logged with timestamps and their raw packet contents for troubleshooting.
 
-Giveaways are funded by player payments to `BOT_USER`. When a player runs `/giveaway amount duration`, the bot requires at least `1m`, checks that their Minecraft account is linked, tells them to pay `/pay BOT_USER amount`, and adds the giveaway to one shared active-giveaways board only after it sees an incoming payment from that linked Java or Bedrock IGN for at least the requested amount. If the Don hosts a giveaway and the bot balance already covers the amount, the giveaway starts immediately without requiring a new payment. If the Don's automatic balance check fails, the giveaway still starts because the Don is assumed to have verified the bot balance manually. Each funded giveaway also pings the giveaway role in `GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID`, and the active giveaway board has a button players can use to add the giveaway ping role. When a giveaway ends, the result posts immediately and the bot tries to pay the winner payout tree from Minecraft with at least 3 seconds between payment commands. If the Minecraft bot is offline, it attempts to connect first. Any giveaway payout that cannot be sent because the recipient is unlinked, missing an edition, invalid, or the payment fails is added to unpaid commissions for later `/payallcommissions`.
+Giveaways are funded by player payments to `BOT_USER`. When a player runs `/giveaway amount duration`, the bot requires at least `1m`, checks that their Minecraft account is linked, tells them to pay `/pay BOT_USER amount`, and adds the giveaway to one shared active-giveaways board only after it sees an incoming payment from that linked Java or Bedrock IGN for at least the requested amount. If the Don hosts a giveaway and the bot balance already covers the amount, the giveaway starts immediately without requiring a new payment. If the Don's automatic balance check fails, the giveaway still starts because the Don is assumed to have verified the bot balance manually. Each funded giveaway also pings the giveaway role in `GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID`, and the active giveaway board has a button players can use to add the giveaway ping role. When a giveaway ends, the result posts immediately in `GIVEAWAY_WINNER_CHANNEL_ID` and the bot tries to pay the winner payout tree from Minecraft with at least 3 seconds between payment commands. If the Minecraft bot is offline, it attempts to connect first. Any giveaway payout that cannot be sent because the recipient is unlinked, missing an edition, invalid, or the payment fails is added to unpaid commissions for later `/payallcommissions`.
 
 If your server uses unusual payment messages, you can optionally provide case-insensitive regular expressions in `.env`:
 
@@ -188,6 +189,7 @@ Money and donation commands:
 - `/bot bal`
 - `/giveaway`
 - `/commissions`
+- `/payoutnotifications`
 - `/payallcommissions`
 - `/clearcommission`
 - `/donationadd`

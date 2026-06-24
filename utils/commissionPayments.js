@@ -1,6 +1,7 @@
 const sql = require('../db.js');
 const {
-    formatCents
+    formatCents,
+    formatDonationAmount
 } = require('./donations.js');
 const {
     formattedMinecraftIgn,
@@ -90,6 +91,204 @@ function commissionPaymentContext(source, extra = {}) {
     };
 }
 
+function payoutLogRecipient(player) {
+    if (!player) {
+        return 'Unknown player';
+    }
+
+    return player.discord_id
+        ? `<@${player.discord_id}>`
+        : playerName(player);
+}
+
+function compactLogLines(lines, maxLength = 950) {
+    if (lines.length === 0) {
+        return 'None';
+    }
+
+    const kept = [];
+    let currentLength = 0;
+
+    for (let index = 0; index < lines.length; index++) {
+        const line = lines[index];
+        const nextLength = currentLength + line.length + (kept.length > 0 ? 1 : 0);
+
+        if (nextLength > maxLength) {
+            kept.push(`...and ${lines.length - index} more.`);
+            break;
+        }
+
+        kept.push(line);
+        currentLength = nextLength;
+    }
+
+    return kept.join('\n');
+}
+
+function giveawaySettlementLogDetails(giveaway, payoutResult, results, paidTotalCents, creditedTotalCents) {
+    const paidLines = results
+        .filter(result => result.status === 'paid')
+        .map(result => {
+            const player = result.payout?.player;
+
+            return `${payoutLogRecipient(player)} — ${formatCents(result.amountCents)} paid to ${result.minecraftName}`;
+        });
+    const creditedLines = results
+        .filter(result => result.status === 'credited')
+        .map(result => {
+            const player = result.payout?.player;
+
+            return `${payoutLogRecipient(player)} — ${formatCents(result.amountCents)} added to commissions (${result.reason || result.error || 'payment failed'})`;
+        });
+    const failedLines = results
+        .filter(result => ['credit_failed', 'failed'].includes(result.status))
+        .map(result => {
+            const player = result.payout?.player || result.player;
+
+            return `${payoutLogRecipient(player)} — ${formatCents(result.amountCents)} not paid (${result.reason || result.error || 'unknown reason'})`;
+        });
+
+    return {
+        Giveaway: String(giveaway.id),
+        Host: `<@${giveaway.host_discord_id}>`,
+        Winner: payoutResult?.player?.discord_id
+            ? `<@${payoutResult.player.discord_id}>`
+            : playerName(payoutResult?.player || {}, 'Unknown winner'),
+        'Paid total': formatCents(paidTotalCents),
+        'Commission added total': formatCents(creditedTotalCents),
+        'Players paid': compactLogLines(paidLines),
+        'Added to commissions': compactLogLines(creditedLines),
+        Failed: compactLogLines(failedLines)
+    };
+}
+
+async function fetchPlayerDisplayName(discordId, fallback, db = sql) {
+    if (!discordId) {
+        return fallback;
+    }
+
+    const rows = await db`
+        select
+            discord_username,
+            discord_display_name,
+            minecraft_ign
+        from players
+        where discord_id = ${discordId}
+        limit 1
+    `;
+
+    return rows[0]
+        ? playerName(rows[0], fallback)
+        : fallback;
+}
+
+async function sendPayoutNotification(guild, discordId, message) {
+    if (!discordId) {
+        return false;
+    }
+
+    const user = guild.client.users.cache.get(discordId) ||
+        (await guild.client.users.fetch(discordId).catch(() => null));
+
+    if (!user) {
+        return false;
+    }
+
+    await user.send({
+        content: message,
+        allowedMentions: {
+            parse: []
+        }
+    });
+    return true;
+}
+
+function payoutNotificationMessage({
+    amountCents,
+    giveawayAmount,
+    hostName,
+    winnerName,
+    isWinner,
+    status,
+    reason
+}) {
+    const verb = status === 'paid' ? 'received' : 'earned';
+    const sourceLine = isWinner
+        ? `from winning a **${formatDonationAmount(giveawayAmount)}** giveaway hosted by **${hostName}**.`
+        : `from your teammate **${winnerName}** winning a **${formatDonationAmount(giveawayAmount)}** giveaway hosted by **${hostName}**.`;
+    const creditedLine = status === 'credited'
+        ? `\n\nIt was added to your unpaid commissions because ${reason || 'the Minecraft payment could not be sent'}.`
+        : '';
+
+    return (
+        `You ${verb} **${formatCents(amountCents)}** ${sourceLine}` +
+        `${creditedLine}\n\n` +
+        'Use `/payoutnotifications off` if you do not want these DMs.'
+    );
+}
+
+async function recordGiveawayPayoutEarnings(guild, giveaway, payoutResult, results, db = sql) {
+    const winnerId = payoutResult?.player?.discord_id || null;
+    const winnerName = playerName(payoutResult?.player || {}, 'your teammate');
+    const hostName = await fetchPlayerDisplayName(
+        giveaway.host_discord_id,
+        'the giveaway host',
+        db
+    );
+
+    for (const result of results) {
+        if (!['paid', 'credited'].includes(result.status)) {
+            continue;
+        }
+
+        const discordId = result.payout?.player?.discord_id;
+        const amountCents = BigInt(result.amountCents || 0);
+
+        if (!discordId || amountCents <= 0n) {
+            continue;
+        }
+
+        const isWinner = discordId === winnerId;
+        const rows = isWinner
+            ? await db`
+                update players
+                set
+                    personal_production = personal_production + ${amountCents.toString()}::bigint,
+                    updated_at = now()
+                where discord_id = ${discordId}
+                returning payout_notifications_enabled
+            `
+            : await db`
+                update players
+                set
+                    team_overrides = team_overrides + ${amountCents.toString()}::bigint,
+                    updated_at = now()
+                where discord_id = ${discordId}
+                returning payout_notifications_enabled
+            `;
+        const player = rows[0];
+
+        if (!player?.payout_notifications_enabled) {
+            continue;
+        }
+
+        const message = payoutNotificationMessage({
+            amountCents,
+            giveawayAmount: BigInt(giveaway.amount),
+            hostName,
+            winnerName,
+            isWinner,
+            status: result.status,
+            reason: result.reason || result.error
+        });
+
+        await sendPayoutNotification(guild, discordId, message).catch(error => {
+            console.log(`Could not DM payout notification to ${discordId}: ${error.message}`);
+            return false;
+        });
+    }
+}
+
 async function ensureMinecraftBotConnected(context = {}) {
     const firstStatus = minecraftBotStatus();
     let reconnectRestarted = false;
@@ -125,6 +324,10 @@ async function ensureMinecraftBotConnected(context = {}) {
 
 async function creditUnpaidCommission(player, amountCents, reason, db = sql, details = {}) {
     const cents = BigInt(amountCents);
+    const {
+        suppressCommissionLog = false,
+        ...logDetails
+    } = details;
 
     if (cents <= 0n) {
         return {
@@ -150,17 +353,19 @@ async function creditUnpaidCommission(player, amountCents, reason, db = sql, det
     `;
 
     if (rows.length === 0) {
-        emitMinecraftEvent(
-            'Commission Credit Failed',
-            `Could not add an unpaid commission balance for ${playerName(player)}.`,
-            'error',
-            {
-                Player: `<@${player.discord_id}>`,
-                Amount: formatCents(cents),
-                Reason: reason,
-                ...details
-            }
-        );
+        if (!suppressCommissionLog) {
+            emitMinecraftEvent(
+                'Commission Credit Failed',
+                `Could not add an unpaid commission balance for ${playerName(player)}.`,
+                'error',
+                {
+                    Player: `<@${player.discord_id}>`,
+                    Amount: formatCents(cents),
+                    Reason: reason,
+                    ...logDetails
+                }
+            );
+        }
 
         return {
             status: 'credit_failed',
@@ -168,18 +373,20 @@ async function creditUnpaidCommission(player, amountCents, reason, db = sql, det
         };
     }
 
-    emitMinecraftEvent(
-        'Commission Added to Balance',
-        `${playerName(player)} could not be paid in Minecraft, so the amount was added to unpaid commissions.`,
-        'warning',
-        {
-            Player: `<@${player.discord_id}>`,
-            Amount: formatCents(cents),
-            'New unpaid balance': formatCents(rows[0].unpaid_commissions),
-            Reason: reason,
-            ...details
-        }
-    );
+    if (!suppressCommissionLog) {
+        emitMinecraftEvent(
+            'Commission Added to Balance',
+            `${playerName(player)} could not be paid in Minecraft, so the amount was added to unpaid commissions.`,
+            'warning',
+            {
+                Player: `<@${player.discord_id}>`,
+                Amount: formatCents(cents),
+                'New unpaid balance': formatCents(rows[0].unpaid_commissions),
+                Reason: reason,
+                ...logDetails
+            }
+        );
+    }
 
     return {
         status: 'credited',
@@ -188,12 +395,14 @@ async function creditUnpaidCommission(player, amountCents, reason, db = sql, det
     };
 }
 
-async function settleGiveawayPayouts(giveaway, payoutResult, db = sql) {
+async function settleGiveawayPayouts(guild, giveaway, payoutResult, db = sql) {
     const payouts = (payoutResult?.payouts || [])
         .filter(payout => BigInt(payout.amountCents) > 0n);
     const payablePayouts = payouts.filter(payout => payoutMinecraftTarget(payout.player));
     const source = `Giveaway ${giveaway.id}`;
-    const context = commissionPaymentContext(source);
+    const context = commissionPaymentContext(source, {
+        suppressPaymentLog: true
+    });
     const results = [];
     let connectionError = null;
     let lastPaymentAttemptAt = 0;
@@ -203,15 +412,7 @@ async function settleGiveawayPayouts(giveaway, payoutResult, db = sql) {
             await ensureMinecraftBotConnected(context);
         } catch (error) {
             connectionError = error;
-            emitMinecraftEvent(
-                'Giveaway Payout Bot Connection Failed',
-                'The Minecraft bot could not connect before giveaway payouts.',
-                'error',
-                {
-                    Giveaway: String(giveaway.id),
-                    Error: error.message
-                }
-            );
+            console.error(`Minecraft bot could not connect before giveaway payout ${giveaway.id}: ${error.message}`);
         }
     }
 
@@ -220,7 +421,8 @@ async function settleGiveawayPayouts(giveaway, payoutResult, db = sql) {
         const minecraftName = payoutMinecraftTarget(payout.player);
         const details = {
             Giveaway: String(giveaway.id),
-            Host: `<@${giveaway.host_discord_id}>`
+            Host: `<@${giveaway.host_discord_id}>`,
+            suppressCommissionLog: true
         };
 
         if (!minecraftName) {
@@ -302,14 +504,20 @@ async function settleGiveawayPayouts(giveaway, payoutResult, db = sql) {
         .filter(result => result.status === 'credited')
         .reduce((total, result) => total + result.amountCents, 0n);
 
+    await recordGiveawayPayoutEarnings(guild, giveaway, payoutResult, results, db);
+
     emitMinecraftEvent(
         'Giveaway Payout Settlement Finished',
         'Giveaway payout settlement finished.',
         creditedTotalCents > 0n ? 'warning' : 'success',
         {
-            Giveaway: String(giveaway.id),
-            Paid: formatCents(paidTotalCents),
-            'Added to commissions': formatCents(creditedTotalCents)
+            ...giveawaySettlementLogDetails(
+                giveaway,
+                payoutResult,
+                results,
+                paidTotalCents,
+                creditedTotalCents
+            )
         }
     );
 

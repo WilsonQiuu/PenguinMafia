@@ -1698,10 +1698,16 @@ client.once(Events.ClientReady, async () => {
         try {
             const scheduleResult = await runFridayNoonScheduleForGuild(guild, sql);
 
-            if (scheduleResult.weeklyReset || scheduleResult.electionStarted) {
+            if (
+                scheduleResult.weeklyReset ||
+                scheduleResult.electionStarted ||
+                scheduleResult.giveawayPingReminderSent
+            ) {
                 console.log(
                     `Friday noon schedule ran for ${guild.name}: ` +
-                    `weekly reset=${scheduleResult.weeklyReset}, election started=${scheduleResult.electionStarted}.`
+                    `weekly reset=${scheduleResult.weeklyReset}, ` +
+                    `election started=${scheduleResult.electionStarted}, ` +
+                    `giveaway reminder=${scheduleResult.giveawayPingReminderSent}.`
                 );
             }
 
@@ -1850,10 +1856,16 @@ client.once(Events.ClientReady, async () => {
             try {
                 const scheduleResult = await runFridayNoonScheduleForGuild(guild, sql);
 
-                if (scheduleResult.weeklyReset || scheduleResult.electionStarted) {
+                if (
+                    scheduleResult.weeklyReset ||
+                    scheduleResult.electionStarted ||
+                    scheduleResult.giveawayPingReminderSent
+                ) {
                     console.log(
                         `Friday noon schedule ran for ${guild.name}: ` +
-                        `weekly reset=${scheduleResult.weeklyReset}, election started=${scheduleResult.electionStarted}.`
+                        `weekly reset=${scheduleResult.weeklyReset}, ` +
+                        `election started=${scheduleResult.electionStarted}, ` +
+                        `giveaway reminder=${scheduleResult.giveawayPingReminderSent}.`
                     );
                 }
             } catch (error) {
