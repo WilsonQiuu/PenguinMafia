@@ -246,6 +246,7 @@ module.exports = {
                 const result = await checkBalance(actionContext);
                 await interaction.editReply(
                     `✅ Bot balance: **${formatDonationAmount(result.amount)}**\n\n` +
+                    `**Command used:** \`${result.command}\`\n` +
                     `**Server response:** ${result.message}`
                 );
                 return;

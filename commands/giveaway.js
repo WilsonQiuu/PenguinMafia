@@ -31,6 +31,26 @@ const {
 
 const MIN_GIVEAWAY_AMOUNT = 1_000_000n;
 
+async function startDonGiveawayFromBotBalance(interaction, giveawayChannel, amount, durationMs) {
+    await sql`
+        update giveaway_payment_requests
+        set
+            status = 'cancelled',
+            updated_at = now()
+        where guild_id = ${interaction.guild.id}
+            and host_discord_id = ${interaction.user.id}
+            and status = 'pending'
+    `;
+
+    return startFundedGiveaway(interaction.guild, {
+        guildId: interaction.guild.id,
+        channelId: giveawayChannel.id,
+        hostDiscordId: interaction.user.id,
+        amount,
+        durationMs
+    }, sql);
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('giveaway')
@@ -129,24 +149,14 @@ module.exports = {
                     const balance = await checkBalance(actionContext);
 
                     if (balance.amount >= amount) {
-                        await sql`
-                            update giveaway_payment_requests
-                            set
-                                status = 'cancelled',
-                                updated_at = now()
-                            where guild_id = ${interaction.guild.id}
-                                and host_discord_id = ${interaction.user.id}
-                                and status = 'pending'
-                        `;
                         const {
                             boardMessage
-                        } = await startFundedGiveaway(interaction.guild, {
-                            guildId: interaction.guild.id,
-                            channelId: giveawayChannel.id,
-                            hostDiscordId: interaction.user.id,
+                        } = await startDonGiveawayFromBotBalance(
+                            interaction,
+                            giveawayChannel,
                             amount,
                             durationMs
-                        }, sql);
+                        );
 
                         await interaction.editReply(
                             `✅ Giveaway started using the bot balance.\n\n` +
@@ -161,8 +171,24 @@ module.exports = {
                     balanceNote =
                         `\nBot balance is only **${formatDonationAmount(balance.amount)}**, so payment is still required.\n`;
                 } catch (error) {
-                    balanceNote =
-                        `\nI could not verify the bot balance automatically: **${error.message}**\n`;
+                    const {
+                        boardMessage
+                    } = await startDonGiveawayFromBotBalance(
+                        interaction,
+                        giveawayChannel,
+                        amount,
+                        durationMs
+                    );
+
+                    await interaction.editReply(
+                        `✅ Giveaway started using the bot balance.\n\n` +
+                        `Amount: **${formatDonationAmount(amount)}**\n` +
+                        `Balance check: **failed**, assuming the Don already verified the bot balance.\n` +
+                        `Reason: **${error.message}**\n` +
+                        `Giveaway channel: <#${giveawayChannel.id}>` +
+                        (boardMessage ? `\nBoard: ${boardMessage.url}` : '')
+                    );
+                    return;
                 }
             }
 

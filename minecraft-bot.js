@@ -9,13 +9,17 @@ const AUTH_CACHE_DIRECTORY = path.join(__dirname, '.minecraft-bot-auth');
 const MIN_RECONNECT_DELAY_MINUTES = 5;
 const MAX_RECONNECT_DELAY_MINUTES = 15;
 const DEFAULT_PAYMENT_TIMEOUT_MS = 30_000;
+const DEFAULT_BALANCE_COMMAND_TIMEOUT_MS = 8_000;
 const DEFAULT_ALERT_COOLDOWN_MS = 15 * 60 * 1_000;
+const DEFAULT_BALANCE_COMMANDS = ['/balance', '/money', '/bal'];
 const DEFAULT_PAYMENT_SUCCESS_PATTERN =
     String.raw`\b(?:paid|sent|transferred)\b|\bpayment\b.*\b(?:complete|completed|successful|sent)\b`;
 const DEFAULT_PAYMENT_FAILURE_PATTERN =
     String.raw`\b(?:insufficient funds|(?:do not have |don't have )?enough (?:money|funds)|not enough (?:money|funds)|player not found|unknown player|invalid (?:player|amount)|cannot pay|can't pay|payment failed|payment was not sent|usage:.*pay)\b`;
 const DEFAULT_BALANCE_RESPONSE_PATTERN =
-    String.raw`\b(?:balance|bal|money)\b[^0-9$]*\$?\s*([\d,]+(?:\.\d+)?\s*[kmbt]?)|\$?\s*([\d,]+(?:\.\d+)?\s*[kmbt]?)\s*(?:is\s+)?(?:your\s+)?(?:balance|money)\b`;
+    String.raw`\b(?:balance|bal|money|cash)\b[^0-9$]*\$?\s*([\d,]+(?:\.\d+)?\s*[kmbt]?)|\$?\s*([\d,]+(?:\.\d+)?\s*[kmbt]?)\s*(?:is\s+)?(?:your\s+)?(?:balance|money|cash)\b|\byou\s+have\s+\$?\s*([\d,]+(?:\.\d+)?\s*[kmbt]?)\b`;
+const DEFAULT_BALANCE_FAILURE_PATTERN =
+    String.raw`\b(?:unknown command|command not found|unknown or incomplete command|invalid command|incorrect argument|usage:.*(?:bal|balance|money)|you do not have permission|no permission)\b`;
 
 let bot = null;
 let reconnectTimer = null;
@@ -453,6 +457,32 @@ function validateMinecraftCommand(command, fallback = '/bal') {
     return trimmedCommand;
 }
 
+function parseMinecraftCommandList(commands) {
+    return String(commands || '')
+        .split(',')
+        .map(command => command.trim())
+        .filter(Boolean);
+}
+
+function uniqueMinecraftCommands(commands) {
+    const seen = new Set();
+    const uniqueCommands = [];
+
+    for (const command of commands) {
+        const validatedCommand = validateMinecraftCommand(command);
+        const commandKey = validatedCommand.toLowerCase();
+
+        if (seen.has(commandKey)) {
+            continue;
+        }
+
+        seen.add(commandKey);
+        uniqueCommands.push(validatedCommand);
+    }
+
+    return uniqueCommands;
+}
+
 function buildPaymentCommand(player, amount) {
     validatePlayer(player);
     validatePaymentAmount(amount);
@@ -471,8 +501,24 @@ function buildMessageCommand(player, message) {
     return `/msg ${player} ${trimmedMessage}`;
 }
 
+function buildBalanceCommands() {
+    const configuredCommands = process.env.MINECRAFT_BALANCE_COMMANDS
+        ? parseMinecraftCommandList(process.env.MINECRAFT_BALANCE_COMMANDS)
+        : [
+            process.env.MINECRAFT_BALANCE_COMMAND,
+            ...DEFAULT_BALANCE_COMMANDS
+        ].filter(Boolean);
+    const commands = uniqueMinecraftCommands(configuredCommands);
+
+    if (commands.length === 0) {
+        throw new Error('At least one Minecraft balance command must be configured.');
+    }
+
+    return commands;
+}
+
 function buildBalanceCommand() {
-    return validateMinecraftCommand(process.env.MINECRAFT_BALANCE_COMMAND, '/bal');
+    return buildBalanceCommands()[0];
 }
 
 function paymentTimeoutMs() {
@@ -494,6 +540,19 @@ function balanceTimeoutMs() {
 
     if (!Number.isInteger(timeout) || timeout < 1_000 || timeout > 60_000) {
         throw new Error('MINECRAFT_BALANCE_TIMEOUT_MS must be between 1000 and 60000.');
+    }
+
+    return timeout;
+}
+
+function balanceCommandTimeoutMs() {
+    const timeout = Number(
+        process.env.MINECRAFT_BALANCE_COMMAND_TIMEOUT_MS ||
+        DEFAULT_BALANCE_COMMAND_TIMEOUT_MS
+    );
+
+    if (!Number.isInteger(timeout) || timeout < 1_000 || timeout > 60_000) {
+        throw new Error('MINECRAFT_BALANCE_COMMAND_TIMEOUT_MS must be between 1000 and 60000.');
     }
 
     return timeout;
@@ -524,6 +583,17 @@ function balanceResponsePattern() {
         );
     } catch (error) {
         throw new Error(`Invalid Minecraft balance response pattern: ${error.message}`);
+    }
+}
+
+function balanceFailurePattern() {
+    try {
+        return new RegExp(
+            process.env.MINECRAFT_BALANCE_FAILURE_PATTERN || DEFAULT_BALANCE_FAILURE_PATTERN,
+            'i'
+        );
+    } catch (error) {
+        throw new Error(`Invalid Minecraft balance failure pattern: ${error.message}`);
     }
 }
 
@@ -595,6 +665,18 @@ function classifyBalanceResponse(message, pattern = balanceResponsePattern()) {
     };
 }
 
+function classifyBalanceFailure(message, pattern = balanceFailurePattern()) {
+    const cleaned = cleanMinecraftMessage(message);
+
+    if (!pattern.test(cleaned)) {
+        return null;
+    }
+
+    return {
+        message: cleaned
+    };
+}
+
 function handlePaymentResponse(message) {
     if (!pendingPayment) {
         return;
@@ -638,45 +720,166 @@ function handlePaymentResponse(message) {
     }
 }
 
+function failBalanceCheck(balance, reason) {
+    if (pendingBalance !== balance) {
+        return;
+    }
+
+    pendingBalance = null;
+
+    if (balance.timeout) {
+        clearTimeout(balance.timeout);
+        balance.timeout = null;
+    }
+
+    const commandsText = balance.commands.join(', ');
+    const message = `No balance response was received after trying ${commandsText}.`;
+
+    emitMinecraftEvent(
+        'Balance Check Failed',
+        message,
+        'warning',
+        {
+            Commands: commandsText,
+            Reason: reason,
+            Timeout: `${balance.totalTimeoutMs / 1000} seconds`,
+            ...actionDetails(balance.context)
+        }
+    );
+    balance.reject(new Error(`${message} Last result: ${reason}`));
+}
+
+function sendBalanceAttempt(balance) {
+    if (pendingBalance !== balance) {
+        return;
+    }
+
+    const command = balance.commands[balance.commandIndex];
+    const remainingMs = balance.deadlineAt - Date.now();
+
+    if (!command || remainingMs <= 0) {
+        failBalanceCheck(balance, 'The balance check timed out.');
+        return;
+    }
+
+    const timeoutMs = Math.min(balance.attemptTimeoutMs, remainingMs);
+
+    balance.command = command;
+    balance.timeout = setTimeout(() => {
+        if (pendingBalance !== balance) {
+            return;
+        }
+
+        tryNextBalanceCommand(
+            balance,
+            `${command} did not produce a balance response within ${Math.ceil(timeoutMs / 1000)} seconds.`
+        );
+    }, timeoutMs);
+
+    try {
+        sendChat(command);
+        console.log(`Balance command sent: ${command}`);
+        emitMinecraftEvent(
+            'Balance Check Sent',
+            'Waiting for the server to report the Minecraft bot balance.',
+            'info',
+            {
+                Command: command,
+                Attempt: `${balance.commandIndex + 1}/${balance.commands.length}`,
+                ...actionDetails(balance.context)
+            }
+        );
+    } catch (error) {
+        pendingBalance = null;
+        clearTimeout(balance.timeout);
+        balance.timeout = null;
+        emitMinecraftEvent(
+            'Balance Check Failed to Send',
+            error.message,
+            'error',
+            {
+                Command: command,
+                ...actionDetails(balance.context)
+            }
+        );
+        balance.reject(error);
+    }
+}
+
+function tryNextBalanceCommand(balance, reason) {
+    if (pendingBalance !== balance) {
+        return;
+    }
+
+    if (balance.timeout) {
+        clearTimeout(balance.timeout);
+        balance.timeout = null;
+    }
+
+    balance.commandIndex += 1;
+
+    if (balance.commandIndex >= balance.commands.length) {
+        failBalanceCheck(balance, reason);
+        return;
+    }
+
+    emitMinecraftEvent(
+        'Balance Command Retrying',
+        reason,
+        'warning',
+        {
+            PreviousCommand: balance.command,
+            NextCommand: balance.commands[balance.commandIndex],
+            ...actionDetails(balance.context)
+        }
+    );
+    sendBalanceAttempt(balance);
+}
+
 function handleBalanceResponse(message) {
     if (!pendingBalance) {
         return;
     }
 
+    const balance = pendingBalance;
     let result;
 
     try {
-        result = classifyBalanceResponse(message, pendingBalance.pattern);
+        result = classifyBalanceResponse(message, balance.pattern);
     } catch (error) {
-        result = {
-            error
-        };
-    }
-
-    if (!result) {
+        pendingBalance = null;
+        clearTimeout(balance.timeout);
+        balance.reject(error);
         return;
     }
 
-    const balance = pendingBalance;
-    pendingBalance = null;
-    clearTimeout(balance.timeout);
+    if (result) {
+        pendingBalance = null;
+        clearTimeout(balance.timeout);
 
-    if (result.error) {
-        balance.reject(result.error);
+        emitMinecraftEvent(
+            'Balance Checked',
+            'The Minecraft bot balance was read from server chat.',
+            'success',
+            {
+                Amount: result.amount.toString(),
+                Command: balance.command,
+                'Server response': result.message,
+                ...actionDetails(balance.context)
+            }
+        );
+        balance.resolve({
+            ...result,
+            command: balance.command
+        });
         return;
     }
 
-    emitMinecraftEvent(
-        'Balance Checked',
-        'The Minecraft bot balance was read from server chat.',
-        'success',
-        {
-            Amount: result.amount.toString(),
-            'Server response': result.message,
-            ...actionDetails(balance.context)
-        }
-    );
-    balance.resolve(result);
+    const failure = classifyBalanceFailure(message, balance.failurePattern);
+
+    if (failure) {
+        tryNextBalanceCommand(balance, `${balance.command} was rejected: ${failure.message}`);
+    }
 }
 
 function cancelPendingPayment(reason) {
@@ -781,58 +984,29 @@ function checkBalance(context = {}) {
         throw new Error('A balance check is still waiting for confirmation.');
     }
 
-    const command = buildBalanceCommand();
+    const commands = buildBalanceCommands();
     const pattern = balanceResponsePattern();
-    const timeoutMs = balanceTimeoutMs();
+    const failurePattern = balanceFailurePattern();
+    const totalTimeoutMs = balanceTimeoutMs();
+    const attemptTimeoutMs = balanceCommandTimeoutMs();
 
     return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-            if (pendingBalance?.timeout !== timeout) {
-                return;
-            }
+        pendingBalance = {
+            commands,
+            command: null,
+            commandIndex: 0,
+            pattern,
+            failurePattern,
+            timeout: null,
+            deadlineAt: Date.now() + totalTimeoutMs,
+            totalTimeoutMs,
+            attemptTimeoutMs,
+            resolve,
+            reject,
+            context
+        };
 
-            pendingBalance = null;
-            emitMinecraftEvent(
-                'Balance Check Timed Out',
-                'No server balance response was received.',
-                'warning',
-                {
-                    Command: command,
-                    Timeout: `${timeoutMs / 1000} seconds`,
-                    ...actionDetails(context)
-                }
-            );
-            reject(new Error(`No balance response was received within ${timeoutMs / 1000} seconds.`));
-        }, timeoutMs);
-
-        pendingBalance = { command, pattern, timeout, resolve, reject, context };
-
-        try {
-            sendChat(command);
-            console.log(`Balance command sent: ${command}`);
-            emitMinecraftEvent(
-                'Balance Check Sent',
-                'Waiting for the server to report the Minecraft bot balance.',
-                'info',
-                {
-                    Command: command,
-                    ...actionDetails(context)
-                }
-            );
-        } catch (error) {
-            pendingBalance = null;
-            clearTimeout(timeout);
-            emitMinecraftEvent(
-                'Balance Check Failed to Send',
-                error.message,
-                'error',
-                {
-                    Command: command,
-                    ...actionDetails(context)
-                }
-            );
-            reject(error);
-        }
+        sendBalanceAttempt(pendingBalance);
     });
 }
 
@@ -1238,8 +1412,10 @@ module.exports = {
     alertCooldownMs,
     buildMessageCommand,
     buildBalanceCommand,
+    buildBalanceCommands,
     buildPaymentCommand,
     checkBalance,
+    classifyBalanceFailure,
     classifyBalanceResponse,
     classifyPaymentResponse,
     cleanMinecraftMessage,

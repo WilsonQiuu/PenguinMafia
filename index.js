@@ -87,6 +87,7 @@ const {
 const {
     emitMinecraftEvent,
     minecraftEvents,
+    startMinecraftBot,
     stopMinecraftBot
 } = require('./minecraft-bot.js');
 
@@ -131,6 +132,53 @@ const client = new Client({
 client.commands = new Collection();
 client.invites = new Collection();
 client.joinBatches = new Collection();
+
+function isDisabledEnvironmentValue(value) {
+    return ['0', 'false', 'no', 'off'].includes(String(value || '').trim().toLowerCase());
+}
+
+function isEnabledEnvironmentValue(value) {
+    return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
+
+function shouldAutoStartMinecraftBot() {
+    if (isDisabledEnvironmentValue(process.env.MINECRAFT_AUTO_START)) {
+        return false;
+    }
+
+    if (isEnabledEnvironmentValue(process.env.MINECRAFT_AUTO_START)) {
+        return true;
+    }
+
+    return Boolean(process.env.MINECRAFT_HOST?.trim() && process.env.MINECRAFT_EMAIL?.trim());
+}
+
+function autoStartMinecraftBot() {
+    if (!shouldAutoStartMinecraftBot()) {
+        console.log('Minecraft bot auto-start disabled or missing Minecraft configuration.');
+        return;
+    }
+
+    try {
+        const result = startMinecraftBot({
+            actorTag: 'Railway/process startup',
+            source: 'Discord ready auto-start'
+        });
+
+        console.log(`Minecraft bot auto-start requested: ${result.status}.`);
+    } catch (error) {
+        console.error('Minecraft bot auto-start failed:');
+        console.error(error);
+        emitMinecraftEvent(
+            'Minecraft Auto-Start Failed',
+            error.message,
+            'error',
+            {
+                Source: 'Discord ready auto-start'
+            }
+        );
+    }
+}
 
 minecraftEvents.on('log', event => {
     for (const [, guild] of client.guilds.cache) {
@@ -1634,6 +1682,9 @@ client.once(Events.ClientReady, async () => {
             console.error(error);
         }
     }
+
+    autoStartMinecraftBot();
+    logReadyStep('minecraft auto-start checked');
 
     await deployCommands();
     logReadyStep('slash commands deployed');
