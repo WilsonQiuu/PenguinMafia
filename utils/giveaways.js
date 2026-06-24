@@ -29,8 +29,12 @@ const {
 
 const GIVEAWAY_CHANNEL_ID =
     process.env.GIVEAWAY_CHANNEL_ID || '1517413426358390814';
+const GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID =
+    process.env.GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID || '1498442322638147604';
 const GIVEAWAY_BUTTON_PREFIX = 'giveaway_enter:';
 const GIVEAWAY_LEAVE_BUTTON_PREFIX = 'giveaway_leave:';
+const GIVEAWAY_ENTER_ALL_BUTTON_ID = 'giveaway_enter_all';
+const GIVEAWAY_LEAVE_ALL_BUTTON_ID = 'giveaway_leave_all';
 const GIVEAWAY_END_BUTTON_PREFIX = 'giveaway_end:';
 const GIVEAWAY_CLOSE_BUTTON_PREFIX = 'giveaway_close:';
 const GIVEAWAY_LINK_MODAL_PREFIX = 'giveaway_link:';
@@ -115,6 +119,24 @@ function leaveGiveawayButton(giveawayId, disabled = false) {
         .setDisabled(disabled);
 }
 
+function enterAllGiveawaysButton(disabled = false) {
+    return new ButtonBuilder()
+        .setCustomId(GIVEAWAY_ENTER_ALL_BUTTON_ID)
+        .setLabel('Enter All')
+        .setEmoji('🎉')
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(disabled);
+}
+
+function leaveAllGiveawaysButton(disabled = false) {
+    return new ButtonBuilder()
+        .setCustomId(GIVEAWAY_LEAVE_ALL_BUTTON_ID)
+        .setLabel('Leave All')
+        .setEmoji('👋')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(disabled);
+}
+
 function renderGiveawayHostControls(giveaway, options = {}) {
     const title = options.private === false
         ? `🎛️ **Giveaway Controls for <@${giveaway.host_discord_id}>**`
@@ -184,6 +206,49 @@ function renderGiveaway(giveaway, entrantCount, winnerId = null, options = {}) {
             roles: !ended && options.pingGiveawayRole
                 ? [GIVEAWAY_PING_ROLE_ID]
                 : []
+        }
+    };
+}
+
+function renderActiveGiveawaysBoard(activeGiveaways) {
+    const hasActiveGiveaways = activeGiveaways.length > 0;
+    const lines = [
+        '# 🎉 ACTIVE GIVEAWAYS',
+        '',
+        hasActiveGiveaways
+            ? 'Click **Enter All** to join every active giveaway you are eligible for. Your own giveaways are skipped automatically.'
+            : 'No active giveaways right now.',
+        ''
+    ];
+
+    for (let index = 0; index < activeGiveaways.length; index++) {
+        const giveaway = activeGiveaways[index];
+        const endsAt = Math.floor(new Date(giveaway.ends_at).getTime() / 1000);
+        const entrantCount = Number(giveaway.entrant_count || 0);
+        const line =
+            `${index + 1}. Host: <@${giveaway.host_discord_id}> | ` +
+            `Amount: **${formatDonationAmount(giveaway.amount)}** | ` +
+            `Time left: <t:${endsAt}:R> | ` +
+            `Entries: **${entrantCount}**`;
+
+        if (lines.join('\n').length + line.length > 1850) {
+            lines.push(`...and **${activeGiveaways.length - index}** more active giveaway${activeGiveaways.length - index === 1 ? '' : 's'}.`);
+            break;
+        }
+
+        lines.push(line);
+    }
+
+    return {
+        content: lines.join('\n').trim(),
+        components: [
+            new ActionRowBuilder().addComponents(
+                enterAllGiveawaysButton(!hasActiveGiveaways),
+                leaveAllGiveawaysButton(!hasActiveGiveaways)
+            )
+        ],
+        allowedMentions: {
+            parse: []
         }
     };
 }
@@ -266,54 +331,118 @@ async function fetchGiveawayMessage(channel, giveaway) {
     return channel.messages.fetch(giveaway.message_id).catch(() => null);
 }
 
-async function postGiveaway(guild, giveaway, db = sql) {
-    const giveawayChannel = await fetchGiveawayChannel(guild, giveaway);
-
-    if (!giveawayChannel) {
-        throw new Error(`The configured giveaway channel <#${giveaway.channel_id}> could not be found or is not a text channel.`);
-    }
-
-    let giveawayMessage;
-
-    try {
-        giveawayMessage = await giveawayChannel.send(renderGiveaway(giveaway, 0, null, {
-            pingGiveawayRole: true
-        }));
-
-        await db`
-            update giveaways
-            set message_id = ${giveawayMessage.id}
-            where id = ${giveaway.id}
-        `;
-    } catch (error) {
-        await db`
-            update giveaways
-            set
-                status = 'cancelled',
-                ended_at = now()
-            where id = ${giveaway.id}
-        `;
-        throw error;
-    }
-
-    return {
-        channel: giveawayChannel,
-        message: giveawayMessage
-    };
+async function fetchActiveGiveawayRows(guildId, db = sql) {
+    return db`
+        select
+            g.*,
+            coalesce(entry_counts.entrant_count, 0)::int as entrant_count
+        from giveaways g
+        left join (
+            select
+                giveaway_id,
+                count(*)::int as entrant_count
+            from giveaway_entries
+            group by giveaway_id
+        ) entry_counts
+            on entry_counts.giveaway_id = g.id
+        where g.guild_id = ${guildId}
+            and g.status = 'active'
+            and g.ends_at > now()
+        order by g.ends_at asc, g.id asc
+    `;
 }
 
-async function sendPublicHostControls(channel, giveaway, giveawayMessage) {
-    const hostControls = renderGiveawayHostControls(giveaway, {
-        private: false
-    });
+async function fetchGiveawayTextChannel(guild, channelId) {
+    const channel = guild.channels.cache.get(channelId) ||
+        (await guild.channels.fetch(channelId).catch(() => null));
 
-    return channel.send({
-        ...hostControls,
+    if (!channel?.isTextBased()) {
+        return null;
+    }
+
+    return channel;
+}
+
+async function fetchGiveawayBoardMessage(channel, guildId, db = sql) {
+    const boardRows = await db`
+        select message_id
+        from giveaway_boards
+        where guild_id = ${guildId}
+        limit 1
+    `;
+    const boardMessageId = boardRows[0]?.message_id || null;
+
+    if (boardMessageId) {
+        const message = await channel.messages.fetch(boardMessageId).catch(() => null);
+
+        if (message) {
+            return message;
+        }
+    }
+
+    const recentMessages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
+
+    return recentMessages?.find(message => {
+        return message.author.id === channel.client.user.id &&
+            message.content.includes('ACTIVE GIVEAWAYS');
+    }) || null;
+}
+
+async function upsertActiveGiveawaysBoard(guild, db = sql) {
+    const channel = await fetchGiveawayTextChannel(guild, GIVEAWAY_CHANNEL_ID);
+
+    if (!channel) {
+        return null;
+    }
+
+    const activeGiveaways = await fetchActiveGiveawayRows(guild.id, db);
+    const payload = renderActiveGiveawaysBoard(activeGiveaways);
+    let message = await fetchGiveawayBoardMessage(channel, guild.id, db);
+
+    if (message) {
+        message = await message.edit(payload);
+    } else {
+        message = await channel.send(payload);
+    }
+
+    await db`
+        insert into giveaway_boards (
+            guild_id,
+            channel_id,
+            message_id,
+            updated_at
+        )
+        values (
+            ${guild.id},
+            ${channel.id},
+            ${message.id},
+            now()
+        )
+        on conflict (guild_id) do update
+        set
+            channel_id = excluded.channel_id,
+            message_id = excluded.message_id,
+            updated_at = now()
+    `;
+
+    return message;
+}
+
+async function announceGiveawayStarted(guild, giveaway, boardMessage = null) {
+    const announcementChannel = await fetchGiveawayTextChannel(guild, GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID);
+
+    if (!announcementChannel) {
+        return null;
+    }
+
+    return announcementChannel.send({
         content:
-            `<@${giveaway.host_discord_id}> your paid giveaway is live.\n` +
-            `[Open Giveaway](${giveawayMessage.url})\n\n` +
-            `${hostControls.content}`,
+            `<@&${GIVEAWAY_PING_ROLE_ID}>\n\n` +
+            `<@${giveaway.host_discord_id}> started a **${formatDonationAmount(giveaway.amount)}** giveaway. ` +
+            `Go to <#${GIVEAWAY_CHANNEL_ID}> to join.` +
+            (boardMessage ? `\n${boardMessage.url}` : ''),
         allowedMentions: {
+            roles: [GIVEAWAY_PING_ROLE_ID],
             users: [giveaway.host_discord_id]
         }
     });
@@ -401,7 +530,7 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
             amount: BigInt(claimedRequest.amount),
             durationMs: Number(claimedRequest.duration_ms)
         }, db);
-        const posted = await postGiveaway(guild, giveaway, db);
+        const boardMessage = await upsertActiveGiveawaysBoard(guild, db);
 
         await db`
             update giveaway_payment_requests
@@ -412,13 +541,13 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
             where id = ${claimedRequest.id}
         `;
 
-        await sendPublicHostControls(posted.channel, giveaway, posted.message);
+        await announceGiveawayStarted(guild, giveaway, boardMessage);
 
         return {
             status: 'hosted',
             request: claimedRequest,
             giveaway,
-            message: posted.message,
+            message: boardMessage,
             paidAmount
         };
     } catch (error) {
@@ -553,6 +682,116 @@ function giveawayLinkModal(giveawayId, player) {
         );
 }
 
+async function enterAllActiveGiveaways(interaction, db = sql) {
+    if (interaction.customId !== GIVEAWAY_ENTER_ALL_BUTTON_ID) {
+        return false;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const playerRows = await db`
+        select
+            discord_id,
+            minecraft_ign,
+            minecraft_edition
+        from players
+        where discord_id = ${interaction.user.id}
+            and status = 'active'
+            and welcome_completed = true
+        limit 1
+    `;
+    const player = playerRows[0];
+
+    if (!player) {
+        await interaction.editReply('❌ You need to be a registered Penguin Mafia player to enter giveaways.');
+        return true;
+    }
+
+    if (!player.minecraft_ign || !player.minecraft_edition) {
+        await interaction.editReply('❌ Link your Minecraft account first with `/link` before entering giveaways.');
+        return true;
+    }
+
+    const activeGiveaways = await db`
+        select id, host_discord_id
+        from giveaways
+        where guild_id = ${interaction.guild.id}
+            and status = 'active'
+            and ends_at > now()
+        order by ends_at asc, id asc
+    `;
+    const eligibleGiveaways = activeGiveaways.filter(giveaway => {
+        return giveaway.host_discord_id !== interaction.user.id;
+    });
+    let inserted = 0;
+
+    for (const giveaway of eligibleGiveaways) {
+        const insertedRows = await db`
+            insert into giveaway_entries (
+                giveaway_id,
+                player_discord_id
+            )
+            values (
+                ${giveaway.id},
+                ${interaction.user.id}
+            )
+            on conflict (giveaway_id, player_discord_id) do nothing
+            returning giveaway_id
+        `;
+
+        if (insertedRows.length > 0) {
+            inserted++;
+        }
+    }
+
+    await upsertActiveGiveawaysBoard(interaction.guild, db);
+
+    const ownSkipped = activeGiveaways.length - eligibleGiveaways.length;
+
+    if (eligibleGiveaways.length === 0) {
+        await interaction.editReply(
+            ownSkipped > 0
+                ? 'ℹ️ The only active giveaway is yours, so you were not entered.'
+                : 'ℹ️ There are no active giveaways to enter right now.'
+        );
+        return true;
+    }
+
+    await interaction.editReply(
+        `✅ Entered **${inserted}** new giveaway${inserted === 1 ? '' : 's'}. ` +
+        `You are now in **${eligibleGiveaways.length}** active giveaway${eligibleGiveaways.length === 1 ? '' : 's'} you are eligible for.` +
+        (ownSkipped > 0 ? ` Skipped **${ownSkipped}** of your own giveaway${ownSkipped === 1 ? '' : 's'}.` : '')
+    );
+    return true;
+}
+
+async function leaveAllActiveGiveaways(interaction, db = sql) {
+    if (interaction.customId !== GIVEAWAY_LEAVE_ALL_BUTTON_ID) {
+        return false;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const removedRows = await db`
+        delete from giveaway_entries ge
+        using giveaways g
+        where ge.giveaway_id = g.id
+            and ge.player_discord_id = ${interaction.user.id}
+            and g.guild_id = ${interaction.guild.id}
+            and g.status = 'active'
+            and g.ends_at > now()
+        returning ge.giveaway_id
+    `;
+
+    await upsertActiveGiveawaysBoard(interaction.guild, db);
+    await interaction.editReply(
+        removedRows.length > 0
+            ? `✅ Left **${removedRows.length}** active giveaway${removedRows.length === 1 ? '' : 's'}.`
+            : 'ℹ️ You were not entered in any active giveaways.'
+    );
+    return true;
+}
+
 async function enterGiveaway(interaction, db = sql) {
     if (!interaction.customId.startsWith(GIVEAWAY_BUTTON_PREFIX)) {
         return false;
@@ -602,6 +841,14 @@ async function enterGiveaway(interaction, db = sql) {
 
     const player = playerRows[0];
 
+    if (interaction.user.id === giveaway.host_discord_id) {
+        await interaction.reply({
+            content: '❌ You cannot enter your own giveaway.',
+            ephemeral: true
+        });
+        return true;
+    }
+
     if (!player.minecraft_ign || !player.minecraft_edition) {
         await interaction.showModal(giveawayLinkModal(giveaway.id, player));
         return true;
@@ -629,6 +876,7 @@ async function enterGiveaway(interaction, db = sql) {
     const entrantCount = countRows[0].count;
 
     await interaction.message.edit(renderGiveaway(giveaway, entrantCount));
+    await upsertActiveGiveawaysBoard(interaction.guild, db);
     await interaction.editReply(
         inserted.length > 0
             ? `✅ You entered the giveaway! There ${entrantCount === 1 ? 'is' : 'are'} now **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.`
@@ -678,6 +926,11 @@ async function handleGiveawayLinkModal(interaction, db = sql) {
         }
 
         await interaction.editReply('❌ This giveaway has already ended.');
+        return true;
+    }
+
+    if (interaction.user.id === giveaway.host_discord_id) {
+        await interaction.editReply('❌ You cannot enter your own giveaway.');
         return true;
     }
 
@@ -744,6 +997,7 @@ async function handleGiveawayLinkModal(interaction, db = sql) {
     if (message) {
         await message.edit(renderGiveaway(giveaway, entryResult.entrantCount));
     }
+    await upsertActiveGiveawaysBoard(interaction.guild, db);
 
     const editionLabel = minecraftEdition === 'bedrock' ? 'Bedrock' : 'Java';
 
@@ -795,6 +1049,7 @@ async function leaveGiveaway(interaction, db = sql) {
     const entrantCount = countRows[0].count;
 
     await interaction.message.edit(renderGiveaway(giveaway, entrantCount));
+    await upsertActiveGiveawaysBoard(interaction.guild, db);
     await interaction.editReply(
         removedRows.length > 0
             ? `✅ You left the giveaway. There ${entrantCount === 1 ? 'is' : 'are'} now **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.`
@@ -850,6 +1105,14 @@ async function endGiveawayEarly(interaction, db = sql) {
 }
 
 async function handleGiveawayButton(interaction, db = sql) {
+    if (await enterAllActiveGiveaways(interaction, db)) {
+        return true;
+    }
+
+    if (await leaveAllActiveGiveaways(interaction, db)) {
+        return true;
+    }
+
     if (await enterGiveaway(interaction, db)) {
         return true;
     }
@@ -953,6 +1216,8 @@ async function finishGiveaway(guild, giveawayId, db = sql) {
             );
         }
     }
+
+    await upsertActiveGiveawaysBoard(guild, db);
 
     await db`
         update giveaways
@@ -1129,6 +1394,7 @@ async function cleanupEndedGiveawaysForGuild(guild, db = sql) {
 }
 
 module.exports = {
+    GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID,
     GIVEAWAY_BUTTON_PREFIX,
     GIVEAWAY_CHANNEL_ID,
     cleanupEndedGiveawaysForGuild,
@@ -1147,5 +1413,6 @@ module.exports = {
     parseGiveawayDuration,
     processIncomingGiveawayPayment,
     renderGiveaway,
-    renderGiveawayHostControls
+    renderGiveawayHostControls,
+    upsertActiveGiveawaysBoard
 };

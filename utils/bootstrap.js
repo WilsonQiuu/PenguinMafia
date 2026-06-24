@@ -440,6 +440,15 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        create table if not exists giveaway_boards (
+            guild_id text primary key,
+            channel_id text not null,
+            message_id text not null,
+            updated_at timestamptz not null default now()
+        )
+    `;
+
+    await sql`
         create index if not exists idx_giveaways_active_end
         on giveaways(guild_id, status, ends_at)
     `;

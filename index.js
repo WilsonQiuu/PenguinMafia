@@ -62,7 +62,8 @@ const {
     handleGiveawayButton,
     handleGiveawayLinkModal,
     finishExpiredGiveawaysForGuild,
-    processIncomingGiveawayPayment
+    processIncomingGiveawayPayment,
+    upsertActiveGiveawaysBoard
 } = require('./utils/giveaways.js');
 const {
     formatDonationAmount
@@ -157,7 +158,7 @@ minecraftEvents.on('log', event => {
                                 'Minecraft IGN': result.request.host_minecraft_ign,
                                 'Required amount': formatDonationAmount(result.request.amount),
                                 'Paid amount': formatDonationAmount(result.paidAmount),
-                                Giveaway: result.message.url
+                                Giveaway: result.message?.url || 'Board message unavailable'
                             }
                         );
                     } else if (result.status === 'too_low') {
@@ -1661,6 +1662,7 @@ client.once(Events.ClientReady, async () => {
             await resetExpiredElectionResultBoardForGuild(guild, sql);
             await finishExpiredGiveawaysForGuild(guild, sql);
             await cleanupEndedGiveawaysForGuild(guild, sql);
+            await upsertActiveGiveawaysBoard(guild, sql);
             const refreshed = await updateElectionLeaderboard(guild, sql);
 
             if (!refreshed) {
@@ -1805,6 +1807,7 @@ client.once(Events.ClientReady, async () => {
 
                 if (finished.length > 0) {
                     console.log(`Ended ${finished.length} expired giveaway(s) for ${guild.name}.`);
+                    await upsertActiveGiveawaysBoard(guild, sql);
                 }
             } catch (error) {
                 console.error(`Giveaway timer check failed for ${guild.name}:`);
