@@ -237,7 +237,7 @@ module.exports = {
             }
 
             if (subcommand === 'home') {
-                goHome(actionContext);
+                await goHome(actionContext);
                 await interaction.editReply('✅ Sent `/home 1` to the Minecraft bot.');
                 return;
             }
@@ -253,7 +253,7 @@ module.exports = {
             if (subcommand === 'msg') {
                 const player = interaction.options.getString('player', true);
                 const message = interaction.options.getString('message', true);
-                messagePlayer(player, message, actionContext);
+                await messagePlayer(player, message, actionContext);
                 await interaction.editReply(`✅ Private message sent to **${player}**.`);
                 return;
             }

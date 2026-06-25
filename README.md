@@ -123,7 +123,7 @@ pay PenguinPlayer 100m
 
 This sends `/pay PenguinPlayer 100m` to Minecraft chat. The Don can also control the same client from Discord with `/bot start`, `/bot bal`, `/bot pay`, `/bot msg`, `/bot home`, and `/bot quit`. Discord `/bot pay` accepts either a linked Discord user or a typed Minecraft username; linked Bedrock accounts are paid with the leading `.` automatically. `/bot bal` tries the configured balance command aliases, defaults to `/balance`, `/money`, then `/bal`, and waits for the server balance response. `/bot home` sends `/home 1` in Minecraft. Run the Discord bot with `npm run start`; do not run the standalone `npm run minecraft` process at the same time.
 
-After sending a payment, the bot waits up to 30 seconds for the server's chat response. It reports the payment as completed only when a success response mentions the player, reports a known failure response, or warns that confirmation timed out. Only one payment can wait for confirmation at a time. Server messages are logged with timestamps and their raw packet contents for troubleshooting.
+After sending a payment, the bot waits up to 30 seconds for the server's chat response. It checks the bot balance before and after the payment, reports known failure responses quickly, and treats the payment as sent if the balance dropped even when chat confirmation failed. Payment and balance commands share one queue, so later payouts wait for the active payment confirmation instead of being failed immediately. Server messages are logged with timestamps and their raw packet contents for troubleshooting.
 
 Giveaways are funded by player payments to `BOT_USER`. When a player runs `/giveaway amount duration`, the bot requires at least `1m`, checks that their Minecraft account is linked, tells them to pay `/pay BOT_USER amount`, and adds the giveaway to one shared active-giveaways board only after it sees an incoming payment from that linked Java or Bedrock IGN for at least the requested amount. If the Don hosts a giveaway and the bot balance already covers the amount, the giveaway starts immediately without requiring a new payment. If the Don's automatic balance check fails, the giveaway still starts because the Don is assumed to have verified the bot balance manually. Each funded giveaway also pings the giveaway role in `GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID`, and the active giveaway board has a button players can use to add the giveaway ping role. When a giveaway ends, the result posts immediately in `GIVEAWAY_WINNER_CHANNEL_ID` and the bot tries to pay the winner payout tree from Minecraft with at least 3 seconds between payment commands. If the Minecraft bot is offline, it attempts to connect first. Any giveaway payout that cannot be sent because the recipient is unlinked, missing an edition, invalid, or the payment fails is added to unpaid commissions for later `/payallcommissions`.
 
@@ -131,7 +131,7 @@ If your server uses unusual payment messages, you can optionally provide case-in
 
 ```env
 MINECRAFT_PAYMENT_SUCCESS_PATTERN=paid|sent|payment complete
-MINECRAFT_PAYMENT_FAILURE_PATTERN=insufficient funds|player not found|payment failed
+MINECRAFT_PAYMENT_FAILURE_PATTERN=insufficient funds|player not found|could not find|not online|does not exist|payment failed
 MINECRAFT_BALANCE_COMMANDS=/balance,/money,/bal
 MINECRAFT_BALANCE_COMMAND_TIMEOUT_MS=8000
 MINECRAFT_BALANCE_PATTERN=balance[^0-9$]*\$?\s*([\d,]+(?:\.\d+)?\s*[kmbt]?)

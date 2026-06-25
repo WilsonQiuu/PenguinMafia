@@ -133,6 +133,9 @@ client.commands = new Collection();
 client.invites = new Collection();
 client.joinBatches = new Collection();
 
+const COMMUNITY_ONBOARDING_ROLE_CACHE_MS = 5 * 60 * 1000;
+const communityOnboardingRoleCache = new Map();
+
 function isDisabledEnvironmentValue(value) {
     return ['0', 'false', 'no', 'off'].includes(String(value || '').trim().toLowerCase());
 }
@@ -1206,6 +1209,121 @@ function roleDiff(oldMember, newMember) {
     };
 }
 
+function valuesFromCollectionOrArray(value) {
+    if (!value) {
+        return [];
+    }
+
+    if (Array.isArray(value)) {
+        return value;
+    }
+
+    if (typeof value.values === 'function') {
+        return [...value.values()];
+    }
+
+    return [];
+}
+
+function addRoleIds(roleSource, roleIds) {
+    if (!roleSource) {
+        return;
+    }
+
+    if (Array.isArray(roleSource)) {
+        for (const role of roleSource) {
+            addRoleIds(role, roleIds);
+        }
+
+        return;
+    }
+
+    if (typeof roleSource === 'string') {
+        roleIds.add(roleSource);
+        return;
+    }
+
+    if (typeof roleSource.keys === 'function') {
+        for (const roleId of roleSource.keys()) {
+            roleIds.add(roleId);
+        }
+
+        return;
+    }
+
+    if (roleSource.id) {
+        roleIds.add(roleSource.id);
+    }
+}
+
+function getOnboardingRoleIds(onboarding) {
+    const roleIds = new Set();
+
+    if (onboarding?.enabled === false) {
+        return roleIds;
+    }
+
+    for (const prompt of valuesFromCollectionOrArray(onboarding?.prompts)) {
+        for (const option of valuesFromCollectionOrArray(prompt?.options)) {
+            addRoleIds(option?.roles, roleIds);
+            addRoleIds(option?.roleIds, roleIds);
+            addRoleIds(option?.role_ids, roleIds);
+        }
+    }
+
+    return roleIds;
+}
+
+async function fetchCommunityOnboardingRoleIds(guild) {
+    const cached = communityOnboardingRoleCache.get(guild.id);
+
+    if (cached && Date.now() - cached.fetchedAt < COMMUNITY_ONBOARDING_ROLE_CACHE_MS) {
+        return cached.roleIds;
+    }
+
+    try {
+        if (typeof guild.fetchOnboarding !== 'function') {
+            return new Set();
+        }
+
+        const onboarding = await guild.fetchOnboarding();
+        const roleIds = getOnboardingRoleIds(onboarding);
+
+        communityOnboardingRoleCache.set(guild.id, {
+            fetchedAt: Date.now(),
+            roleIds
+        });
+
+        return roleIds;
+    } catch (error) {
+        communityOnboardingRoleCache.set(guild.id, {
+            fetchedAt: Date.now(),
+            roleIds: new Set()
+        });
+
+        return new Set();
+    }
+}
+
+function clearCommunityOnboardingRoleCache(guild) {
+    if (guild?.id) {
+        communityOnboardingRoleCache.delete(guild.id);
+    }
+}
+
+async function filterCommunityOnboardingRoles(guild, diff) {
+    const onboardingRoleIds = await fetchCommunityOnboardingRoleIds(guild);
+
+    if (onboardingRoleIds.size === 0) {
+        return diff;
+    }
+
+    return {
+        added: diff.added.filter(role => !onboardingRoleIds.has(role.id)),
+        removed: diff.removed.filter(role => !onboardingRoleIds.has(role.id))
+    };
+}
+
 function channelTypeName(channel) {
     const entry = Object.entries(ChannelType).find(([, value]) => value === channel?.type);
 
@@ -1261,6 +1379,12 @@ async function logMemberRoleChanges(oldMember, newMember) {
         return;
     }
 
+    const filteredDiff = await filterCommunityOnboardingRoles(newMember.guild, diff);
+
+    if (filteredDiff.added.length === 0 && filteredDiff.removed.length === 0) {
+        return;
+    }
+
     const auditEntry = await findRecentHumanAuditEntry(
         newMember.guild,
         AuditLogEvent.MemberRoleUpdate,
@@ -1282,11 +1406,11 @@ async function logMemberRoleChanges(oldMember, newMember) {
         },
         {
             name: 'Roles Added',
-            value: formatRoleList(diff.added)
+            value: formatRoleList(filteredDiff.added)
         },
         {
             name: 'Roles Removed',
-            value: formatRoleList(diff.removed)
+            value: formatRoleList(filteredDiff.removed)
         },
         {
             name: 'Reason',
@@ -2023,6 +2147,7 @@ client.on(Events.GuildMemberAdd, async member => {
 
 client.on(Events.GuildRoleCreate, async role => {
     invalidateGuildRoleCache(role.guild);
+    clearCommunityOnboardingRoleCache(role.guild);
     console.log(`[cache:${role.guild.name}] role cache invalidated after role create: ${role.name}`);
 
     try {
@@ -2058,6 +2183,7 @@ client.on(Events.GuildRoleCreate, async role => {
 
 client.on(Events.GuildRoleUpdate, async (oldRole, newRole) => {
     invalidateGuildRoleCache(newRole.guild);
+    clearCommunityOnboardingRoleCache(newRole.guild);
     console.log(`[cache:${newRole.guild.name}] role cache invalidated after role update: ${oldRole.name} -> ${newRole.name}`);
 
     try {
@@ -2100,6 +2226,7 @@ client.on(Events.GuildRoleUpdate, async (oldRole, newRole) => {
 
 client.on(Events.GuildRoleDelete, async role => {
     invalidateGuildRoleCache(role.guild);
+    clearCommunityOnboardingRoleCache(role.guild);
     console.log(`[cache:${role.guild.name}] role cache invalidated after role delete: ${role.name}`);
 
     try {

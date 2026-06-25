@@ -16,8 +16,10 @@ const {
 } = require('../minecraft-bot.js');
 
 const DEFAULT_PAYOUT_CONNECT_TIMEOUT_MS = 120_000;
+const DEFAULT_BUSY_PAYMENT_RETRY_TIMEOUT_MS = 120_000;
 const PAYOUT_CONNECT_POLL_MS = 1_000;
 const MIN_PAYMENT_SPACING_MS = 3_000;
+const BUSY_PAYMENT_PATTERN = /\b(?:payment to .+ is still waiting for confirmation|balance check is still waiting for confirmation)\b/i;
 
 function sleep(ms) {
     return new Promise(resolve => {
@@ -51,6 +53,19 @@ function paymentSpacingMs() {
     return spacingMs;
 }
 
+function busyPaymentRetryTimeoutMs() {
+    const timeoutMs = Number(
+        process.env.MINECRAFT_BUSY_PAYMENT_RETRY_TIMEOUT_MS ||
+        DEFAULT_BUSY_PAYMENT_RETRY_TIMEOUT_MS
+    );
+
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 300_000) {
+        throw new Error('MINECRAFT_BUSY_PAYMENT_RETRY_TIMEOUT_MS must be between 1000 and 300000.');
+    }
+
+    return timeoutMs;
+}
+
 async function waitForPaymentSpacing(lastPaymentAt) {
     if (!lastPaymentAt) {
         return;
@@ -60,6 +75,40 @@ async function waitForPaymentSpacing(lastPaymentAt) {
 
     if (waitMs > 0) {
         await sleep(waitMs);
+    }
+}
+
+function isBusyPaymentError(error) {
+    return BUSY_PAYMENT_PATTERN.test(String(error?.message || ''));
+}
+
+async function payPlayerAfterBusyWait(player, amount, context = {}) {
+    const deadline = Date.now() + busyPaymentRetryTimeoutMs();
+    let attempt = 0;
+
+    while (true) {
+        attempt += 1;
+
+        try {
+            return await payPlayer(player, amount, context);
+        } catch (error) {
+            if (!isBusyPaymentError(error)) {
+                throw error;
+            }
+
+            const remainingMs = deadline - Date.now();
+
+            if (remainingMs <= 0) {
+                throw error;
+            }
+
+            const waitMs = Math.min(paymentSpacingMs(), remainingMs);
+            console.log(
+                `Payment to ${player} is waiting for another Minecraft payment or balance check. ` +
+                `Retrying in ${Math.ceil(waitMs / 1000)} seconds. Attempt ${attempt}.`
+            );
+            await sleep(waitMs);
+        }
     }
 }
 
@@ -201,6 +250,26 @@ async function sendPayoutNotification(guild, discordId, message) {
         }
     });
     return true;
+}
+
+function paymentFailureNotificationMessage(amountCents, minecraftName) {
+    return (
+        `Your payment of **${formatCents(amountCents)}** to username **${minecraftName}** failed.\n\n` +
+        'Please double check your account name and use `/penguinlink` to change the account name if it is wrong.'
+    );
+}
+
+async function sendPaymentFailureNotification(guild, player, amountCents, minecraftName) {
+    if (!guild || !player?.discord_id || !minecraftName) {
+        return false;
+    }
+
+    const message = paymentFailureNotificationMessage(amountCents, minecraftName);
+
+    return sendPayoutNotification(guild, player.discord_id, message).catch(error => {
+        console.log(`Could not DM payment failure notification to ${player.discord_id}: ${error.message}`);
+        return false;
+    });
 }
 
 function payoutNotificationMessage({
@@ -466,7 +535,7 @@ async function settleGiveawayPayouts(guild, giveaway, payoutResult, db = sql) {
         try {
             await waitForPaymentSpacing(lastPaymentAttemptAt);
             lastPaymentAttemptAt = Date.now();
-            const payment = await payPlayer(minecraftName, amount, {
+            const payment = await payPlayerAfterBusyWait(minecraftName, amount, {
                 ...context,
                 actorId: payout.player.discord_id
             });
@@ -479,6 +548,15 @@ async function settleGiveawayPayouts(guild, giveaway, payoutResult, db = sql) {
                 response: payment.message
             });
         } catch (error) {
+            if (error.paymentAttempted !== false) {
+                await sendPaymentFailureNotification(
+                    guild,
+                    payout.player,
+                    amountCents,
+                    minecraftName
+                );
+            }
+
             const credited = await creditUnpaidCommission(
                 payout.player,
                 amountCents,
@@ -595,7 +673,7 @@ async function payOutstandingCommissions(db = sql, context = {}) {
         try {
             await waitForPaymentSpacing(lastPaymentAttemptAt);
             lastPaymentAttemptAt = Date.now();
-            const payment = await payPlayer(minecraftName, amount, {
+            const payment = await payPlayerAfterBusyWait(minecraftName, amount, {
                 ...paymentContext,
                 actorId: player.discord_id
             });
@@ -630,6 +708,15 @@ async function payOutstandingCommissions(db = sql, context = {}) {
                 response: payment.message
             });
         } catch (error) {
+            if (error.paymentAttempted !== false) {
+                await sendPaymentFailureNotification(
+                    context.guild,
+                    player,
+                    amountCents,
+                    minecraftName
+                );
+            }
+
             results.push({
                 status: 'failed',
                 reason: error.message,

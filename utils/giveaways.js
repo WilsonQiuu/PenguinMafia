@@ -234,33 +234,33 @@ function renderActiveGiveawaysBoard(activeGiveaways) {
     const totalAmount = totalGiveawayAmount(activeGiveaways);
     const lines = [
         '# 🎉 ACTIVE GIVEAWAYS',
-        '',
-        hasActiveGiveaways
-            ? `Total active prize pool: **${formatDonationAmount(totalAmount)}**`
-            : null,
-        hasActiveGiveaways ? '' : null,
-        hasActiveGiveaways
-            ? 'Click **Enter All** to join every active giveaway you are eligible for. Your own giveaways are skipped automatically.'
-            : 'No active giveaways right now.',
         ''
     ].filter(line => line !== null);
+
+    if (!hasActiveGiveaways) {
+        lines.push('No active giveaways right now.');
+    }
 
     for (let index = 0; index < activeGiveaways.length; index++) {
         const giveaway = activeGiveaways[index];
         const endsAt = Math.floor(new Date(giveaway.ends_at).getTime() / 1000);
         const entrantCount = Number(giveaway.entrant_count || 0);
         const line =
-            `${index + 1}. Host: <@${giveaway.host_discord_id}> | ` +
-            `Amount: **${formatDonationAmount(giveaway.amount)}** | ` +
-            `Time left: <t:${endsAt}:R> | ` +
-            `Entries: **${entrantCount}**`;
+            `${index + 1}. <@${giveaway.host_discord_id}> | ` +
+            `**${formatDonationAmount(giveaway.amount)}** | ` +
+            `<t:${endsAt}:R> | ` +
+            `**${entrantCount}** ${entrantCount === 1 ? 'entry' : 'entries'}`;
 
-        if (lines.join('\n').length + line.length > 1850) {
+        if (lines.join('\n').length + line.length > 1750) {
             lines.push(`...and **${activeGiveaways.length - index}** more active giveaway${activeGiveaways.length - index === 1 ? '' : 's'}.`);
             break;
         }
 
         lines.push(line);
+    }
+
+    if (hasActiveGiveaways) {
+        lines.push('', `Total active prize pool: **${formatDonationAmount(totalAmount)}**`);
     }
 
     return {
@@ -383,7 +383,7 @@ async function fetchActiveGiveawayRows(guildId, db = sql) {
         where g.guild_id = ${guildId}
             and g.status = 'active'
             and g.ends_at > now()
-        order by g.ends_at asc, g.id asc
+        order by g.ends_at desc, g.id desc
     `;
 }
 

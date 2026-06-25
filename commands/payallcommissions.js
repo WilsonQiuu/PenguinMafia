@@ -76,7 +76,8 @@ module.exports = {
             const summary = await payOutstandingCommissions(sql, {
                 actorId: interaction.user.id,
                 actorTag: interaction.user.tag || interaction.user.username,
-                source: 'Discord /payallcommissions'
+                source: 'Discord /payallcommissions',
+                guild: interaction.guild
             });
 
             if (summary.totalPlayers === 0) {
