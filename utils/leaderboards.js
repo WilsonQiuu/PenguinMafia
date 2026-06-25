@@ -9,11 +9,16 @@ const {
     formatDonationAmount,
     parseDonationAmount
 } = require('./donations.js');
+const {
+    formatEasternHourRange
+} = require('./time.js');
 
 const PREVIOUS_WEEKLY_RECRUITS_STATE_KEY = 'previous_weekly_recruits_top_three';
 const WEEKLY_RECRUITS_LAST_RESET_STATE_KEY = 'weekly_recruits_last_reset_at';
 const WEEKLY_RECRUITS_TIME_ZONE = 'America/Toronto';
-const DEFAULT_HOURLY_RECRUIT_REWARD_AMOUNT = '1m';
+const DEFAULT_HOURLY_RECRUIT_REWARD_AMOUNT = '2m';
+const LEADERBOARD_REFRESH_DELAY_MS = 2_000;
+const leaderboardRefreshes = new Map();
 
 function leaderboardName(player) {
     return player.minecraft_ign ||
@@ -33,9 +38,16 @@ function hourlyRecruitRewardAmount() {
     return parseDonationAmount(process.env.HOURLY_RECRUIT_REWARD_AMOUNT || DEFAULT_HOURLY_RECRUIT_REWARD_AMOUNT);
 }
 
+function previousCompletedHourStart() {
+    const date = new Date();
+    date.setMinutes(0, 0, 0);
+    date.setHours(date.getHours() - 1);
+    return date;
+}
+
 async function updateLeaderboardChannel(guild, channelId, channelName, marker, content) {
-    const channels = await guild.channels.fetch();
-    const channel = channels.get(channelId);
+    const channel = guild.channels.cache.get(channelId) ||
+        (await guild.channels.fetch(channelId).catch(() => null));
 
     if (!channel) {
         console.log(`Leaderboard channel ${channelName} was not found by ID ${channelId}.`);
@@ -389,7 +401,8 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
             recruiter_totals.discord_username,
             recruiter_totals.discord_display_name,
             recruiter_totals.minecraft_ign,
-            recruiter_totals.recruit_count
+            recruiter_totals.recruit_count,
+            hour_window.started_at as reward_hour
         from recruiter_totals
         cross join hour_window
         left join lateral (
@@ -476,9 +489,12 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
     `;
     const previousHourWinner = previousHourWinnerRows[0];
     const previousTopCount = previousHourWinner?.recruit_count || 0;
+    const previousHourRange = previousHourWinner
+        ? formatEasternHourRange(previousHourWinner.reward_hour)
+        : formatEasternHourRange(previousCompletedHourStart());
     const winnerLine = !previousHourWinner
-        ? 'No one had a recruit last hour.'
-        : `🏆 **Last Hour’s Winner:** **${leaderboardName(previousHourWinner)}** with **${previousTopCount}** recruit${previousTopCount === 1 ? '' : 's'}`;
+        ? `No one had a recruit during the last completed EDT hour (**${previousHourRange}**).`
+        : `🏆 **Last Hour’s Winner:** **${leaderboardName(previousHourWinner)}** with **${previousTopCount}** recruit${previousTopCount === 1 ? '' : 's'} during **${previousHourRange}**`;
     const currentHourLines = currentHourRows.length > 0
         ? currentHourRows.map((player, index) => {
             return leaderboardLine(
@@ -510,8 +526,71 @@ async function updateLeaderboardsForGuild(guild, sql) {
     await updateHourlyRecruitsLeaderboardForGuild(guild, sql);
 }
 
+function scheduleLeaderboardsRefreshForGuild(guild, sql, delayMs = LEADERBOARD_REFRESH_DELAY_MS) {
+    const key = guild.id;
+    let task = leaderboardRefreshes.get(key);
+
+    if (!task) {
+        task = {
+            guild,
+            sql,
+            timer: null,
+            running: false,
+            rerun: false
+        };
+        leaderboardRefreshes.set(key, task);
+    } else {
+        task.guild = guild;
+        task.sql = sql;
+    }
+
+    if (task.timer) {
+        clearTimeout(task.timer);
+    }
+
+    task.timer = setTimeout(() => {
+        runScheduledLeaderboardsRefresh(key, delayMs);
+    }, delayMs);
+}
+
+async function runScheduledLeaderboardsRefresh(key, delayMs) {
+    const task = leaderboardRefreshes.get(key);
+
+    if (!task) {
+        return;
+    }
+
+    task.timer = null;
+
+    if (task.running) {
+        task.rerun = true;
+        return;
+    }
+
+    task.running = true;
+
+    try {
+        await updateLeaderboardsForGuild(task.guild, task.sql);
+    } catch (error) {
+        console.error(`Scheduled leaderboard refresh failed for ${task.guild?.name || key}:`);
+        console.error(error);
+    } finally {
+        task.running = false;
+
+        if (task.rerun) {
+            task.rerun = false;
+            task.timer = setTimeout(() => {
+                runScheduledLeaderboardsRefresh(key, delayMs);
+            }, delayMs);
+        } else {
+            leaderboardRefreshes.delete(key);
+        }
+    }
+}
+
 module.exports = {
     resetWeeklyRecruitsAndSaveTopThree,
+    scheduleLeaderboardsRefreshForGuild,
     updateDonationLeaderboardForGuild,
     updateHourlyRecruitsLeaderboardForGuild,
     updateWeeklyRecruitsLeaderboardForGuild,

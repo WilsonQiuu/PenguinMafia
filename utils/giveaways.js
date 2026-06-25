@@ -52,8 +52,19 @@ const GIVEAWAY_END_BUTTON_PREFIX = 'giveaway_end:';
 const GIVEAWAY_CLOSE_BUTTON_PREFIX = 'giveaway_close:';
 const GIVEAWAY_LINK_MODAL_PREFIX = 'giveaway_link:';
 const MIN_GIVEAWAY_DURATION_MS = 60 * 1000;
-const MAX_GIVEAWAY_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+const WEEK_MS = 7 * DAY_MS;
+const MILLION_AMOUNT = 1_000_000n;
+const DAILY_GIVEAWAY_AMOUNT_STEP = 20_000_000n;
+const MAX_GIVEAWAY_DURATION_MS = WEEK_MS;
 const DEFAULT_PAYMENT_BOT_USER = 'Ash_L567';
+const ACTIVE_GIVEAWAYS_BOARD_REFRESH_DELAY_MS = 1_500;
+const DONATION_LEADERBOARD_REFRESH_DELAY_MS = 2_000;
+const GIVEAWAY_MESSAGE_REFRESH_DELAY_MS = 1_250;
+const activeGiveawaysBoardRefreshes = new Map();
+const donationLeaderboardRefreshes = new Map();
+const giveawayMessageRefreshes = new Map();
 
 function giveawayPaymentBotUser() {
     return process.env.BOT_USER?.trim() || DEFAULT_PAYMENT_BOT_USER;
@@ -84,9 +95,12 @@ function parseGiveawayDuration(input) {
         hours: 60 * 60 * 1000,
         d: 24 * 60 * 60 * 1000,
         day: 24 * 60 * 60 * 1000,
-        days: 24 * 60 * 60 * 1000
+        days: 24 * 60 * 60 * 1000,
+        w: WEEK_MS,
+        week: WEEK_MS,
+        weeks: WEEK_MS
     };
-    const tokenPattern = /(\d+)\s*(minutes?|mins?|m|hours?|hrs?|h|days?|d)/g;
+    const tokenPattern = /(\d+)\s*(minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w)/g;
     let durationMs = 0;
     let matchedText = '';
     let match;
@@ -100,7 +114,7 @@ function parseGiveawayDuration(input) {
     const normalizedMatches = matchedText.replace(/\s+/g, '');
 
     if (!matchedText || normalizedMatches !== normalizedInput) {
-        throw new Error('Use a duration like `30m`, `1h`, `1 hour`, `2h 30m`, or `1d`.');
+        throw new Error('Use a duration like `30m`, `1h`, `1 hour`, `2h 30m`, `1d`, or `1w`.');
     }
 
     if (durationMs < MIN_GIVEAWAY_DURATION_MS) {
@@ -108,10 +122,58 @@ function parseGiveawayDuration(input) {
     }
 
     if (durationMs > MAX_GIVEAWAY_DURATION_MS) {
-        throw new Error('Giveaway duration cannot be longer than 30 days.');
+        throw new Error('Giveaway duration cannot be longer than 7 days.');
     }
 
     return durationMs;
+}
+
+function maxGiveawayDurationForAmount(amount) {
+    const prizeAmount = BigInt(amount);
+
+    if (prizeAmount < DAILY_GIVEAWAY_AMOUNT_STEP) {
+        return Number(prizeAmount / MILLION_AMOUNT) * HOUR_MS;
+    }
+
+    const unlockedDays = Number(prizeAmount / DAILY_GIVEAWAY_AMOUNT_STEP);
+
+    return Math.min(unlockedDays * DAY_MS, MAX_GIVEAWAY_DURATION_MS);
+}
+
+function formatDurationLimit(durationMs) {
+    if (durationMs >= DAY_MS) {
+        const days = durationMs / DAY_MS;
+
+        if (days === 7) {
+            return '7 days / 1 week';
+        }
+
+        return `${days} day${days === 1 ? '' : 's'}`;
+    }
+
+    const hours = durationMs / HOUR_MS;
+
+    if (hours >= 1) {
+        return `${hours} hour${hours === 1 ? '' : 's'}`;
+    }
+
+    const minutes = Math.max(1, durationMs / (60 * 1000));
+
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+}
+
+function validateGiveawayDurationForAmount(amount, durationMs) {
+    const maxDurationMs = maxGiveawayDurationForAmount(amount);
+
+    if (durationMs <= maxDurationMs) {
+        return true;
+    }
+
+    throw new Error(
+        `That prize pool can run for up to **${formatDurationLimit(maxDurationMs)}**.\n` +
+        `Duration limits: every full **1m** unlocks **1 hour** up to **20m**; ` +
+        `then every full **20m** unlocks **1 day**, capped at **7 days / 1 week**.`
+    );
 }
 
 function enterGiveawayButton(giveawayId, disabled = false) {
@@ -471,6 +533,129 @@ async function upsertActiveGiveawaysBoard(guild, db = sql) {
     return message;
 }
 
+function scheduleCoalescedTask(tasks, key, delayMs, runner, errorLabel) {
+    let task = tasks.get(key);
+
+    if (!task) {
+        task = {
+            running: false,
+            timer: null,
+            pending: false,
+            runner,
+            errorLabel
+        };
+        tasks.set(key, task);
+    }
+
+    task.runner = runner;
+    task.errorLabel = errorLabel;
+    task.pending = true;
+
+    if (task.timer) {
+        clearTimeout(task.timer);
+        task.timer = null;
+    }
+
+    if (!task.running) {
+        task.timer = setTimeout(() => {
+            runCoalescedTask(tasks, key, delayMs);
+        }, delayMs);
+    }
+}
+
+async function runCoalescedTask(tasks, key, delayMs) {
+    const task = tasks.get(key);
+
+    if (!task || task.running) {
+        return;
+    }
+
+    if (task.timer) {
+        clearTimeout(task.timer);
+        task.timer = null;
+    }
+
+    task.running = true;
+    task.pending = false;
+
+    try {
+        await task.runner();
+    } catch (error) {
+        console.error(task.errorLabel || `Scheduled task ${key} failed:`);
+        console.error(error);
+    } finally {
+        task.running = false;
+
+        if (task.pending) {
+            task.timer = setTimeout(() => {
+                runCoalescedTask(tasks, key, delayMs);
+            }, delayMs);
+        } else {
+            tasks.delete(key);
+        }
+    }
+}
+
+function scheduleActiveGiveawaysBoardRefresh(guild, db = sql) {
+    scheduleCoalescedTask(
+        activeGiveawaysBoardRefreshes,
+        guild.id,
+        ACTIVE_GIVEAWAYS_BOARD_REFRESH_DELAY_MS,
+        () => upsertActiveGiveawaysBoard(guild, db),
+        `Could not refresh active giveaway board for ${guild.name}:`
+    );
+}
+
+function scheduleDonationLeaderboardRefresh(guild, db = sql) {
+    scheduleCoalescedTask(
+        donationLeaderboardRefreshes,
+        guild.id,
+        DONATION_LEADERBOARD_REFRESH_DELAY_MS,
+        () => updateDonationLeaderboardForGuild(guild, db),
+        `Could not refresh donation leaderboard for ${guild.name}:`
+    );
+}
+
+async function refreshGiveawayMessage(guild, giveawayId, db = sql, fallbackMessage = null) {
+    const rows = await db`
+        select *
+        from giveaways
+        where id = ${giveawayId}
+        limit 1
+    `;
+    const giveaway = rows[0];
+
+    if (!giveaway) {
+        return null;
+    }
+
+    const countRows = await db`
+        select count(*)::int as count
+        from giveaway_entries
+        where giveaway_id = ${giveaway.id}
+    `;
+    const entrantCount = countRows[0].count;
+    const channel = fallbackMessage ? null : await fetchGiveawayChannel(guild, giveaway);
+    const message = fallbackMessage ||
+        (channel ? await fetchGiveawayMessage(channel, giveaway) : null);
+
+    if (!message) {
+        return null;
+    }
+
+    return message.edit(renderGiveaway(giveaway, entrantCount, giveaway.winner_discord_id));
+}
+
+function scheduleGiveawayMessageRefresh(guild, giveawayId, db = sql, fallbackMessage = null) {
+    scheduleCoalescedTask(
+        giveawayMessageRefreshes,
+        `${guild.id}:${giveawayId}`,
+        GIVEAWAY_MESSAGE_REFRESH_DELAY_MS,
+        () => refreshGiveawayMessage(guild, giveawayId, db, fallbackMessage),
+        `Could not refresh giveaway message ${giveawayId} for ${guild.name}:`
+    );
+}
+
 async function announceGiveawayStarted(guild, giveaway, boardMessage = null, totalActiveAmount = null) {
     const announcementChannel = await fetchGiveawayTextChannel(guild, GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID);
 
@@ -521,11 +706,7 @@ async function recordGiveawayDonation(guild, giveaway, db = sql) {
         return false;
     });
 
-    await updateDonationLeaderboardForGuild(guild, db).catch(error => {
-        console.error(`Could not refresh donation leaderboard after giveaway ${giveaway.id}:`);
-        console.error(error);
-        return false;
-    });
+    scheduleDonationLeaderboardRefresh(guild, db);
 
     return donationRow.donations;
 }
@@ -602,11 +783,7 @@ async function recordDirectDonation(guild, playerId, amount, db = sql, options =
         return false;
     });
 
-    await updateDonationLeaderboardForGuild(guild, db).catch(error => {
-        console.error(`Could not refresh donation leaderboard after ${options.source || 'Minecraft payment'}:`);
-        console.error(error);
-        return false;
-    });
+    scheduleDonationLeaderboardRefresh(guild, db);
 
     return {
         playerId,
@@ -689,16 +866,16 @@ async function startFundedGiveaway(guild, options, db = sql) {
         amount: options.amount,
         durationMs: options.durationMs
     }, db);
-    const boardMessage = await upsertActiveGiveawaysBoard(guild, db);
     const activeGiveaways = await fetchActiveGiveawayRows(guild.id, db);
     const totalActiveAmount = totalGiveawayAmount(activeGiveaways);
 
+    scheduleActiveGiveawaysBoardRefresh(guild, db);
     await recordGiveawayDonation(guild, giveaway, db);
-    await announceGiveawayStarted(guild, giveaway, boardMessage, totalActiveAmount);
+    await announceGiveawayStarted(guild, giveaway, null, totalActiveAmount);
 
     return {
         giveaway,
-        boardMessage
+        boardMessage: null
     };
 }
 
@@ -1043,45 +1220,49 @@ async function enterAllActiveGiveaways(interaction, db = sql) {
         return true;
     }
 
-    const activeGiveaways = await db`
-        select id, host_discord_id
-        from giveaways
-        where guild_id = ${interaction.guild.id}
-            and status = 'active'
-            and ends_at > now()
-        order by ends_at asc, id asc
-    `;
-    const eligibleGiveaways = activeGiveaways.filter(giveaway => {
-        return giveaway.host_discord_id !== interaction.user.id;
-    });
-    let inserted = 0;
-
-    for (const giveaway of eligibleGiveaways) {
-        const insertedRows = await db`
+    const resultRows = await db`
+        with active_giveaways as (
+            select id, host_discord_id
+            from giveaways
+            where guild_id = ${interaction.guild.id}
+                and status = 'active'
+                and ends_at > now()
+        ),
+        eligible_giveaways as (
+            select id
+            from active_giveaways
+            where host_discord_id <> ${interaction.user.id}
+        ),
+        inserted_entries as (
             insert into giveaway_entries (
                 giveaway_id,
                 player_discord_id
             )
-            values (
-                ${giveaway.id},
+            select
+                id,
                 ${interaction.user.id}
-            )
+            from eligible_giveaways
             on conflict (giveaway_id, player_discord_id) do nothing
             returning giveaway_id
-        `;
+        )
+        select
+            (select count(*) from eligible_giveaways)::int as eligible_count,
+            (select count(*) from active_giveaways where host_discord_id = ${interaction.user.id})::int as own_skipped,
+            (select count(*) from inserted_entries)::int as inserted_count
+    `;
+    const result = resultRows[0] || {
+        eligible_count: 0,
+        own_skipped: 0,
+        inserted_count: 0
+    };
 
-        if (insertedRows.length > 0) {
-            inserted++;
-        }
+    if (result.inserted_count > 0) {
+        scheduleActiveGiveawaysBoardRefresh(interaction.guild, db);
     }
 
-    await upsertActiveGiveawaysBoard(interaction.guild, db);
-
-    const ownSkipped = activeGiveaways.length - eligibleGiveaways.length;
-
-    if (eligibleGiveaways.length === 0) {
+    if (result.eligible_count === 0) {
         await interaction.editReply(
-            ownSkipped > 0
+            result.own_skipped > 0
                 ? 'ℹ️ The only active giveaway is yours, so you were not entered.'
                 : 'ℹ️ There are no active giveaways to enter right now.'
         );
@@ -1089,9 +1270,9 @@ async function enterAllActiveGiveaways(interaction, db = sql) {
     }
 
     await interaction.editReply(
-        `✅ Entered **${inserted}** new giveaway${inserted === 1 ? '' : 's'}. ` +
-        `You are now in **${eligibleGiveaways.length}** active giveaway${eligibleGiveaways.length === 1 ? '' : 's'} you are eligible for.` +
-        (ownSkipped > 0 ? ` Skipped **${ownSkipped}** of your own giveaway${ownSkipped === 1 ? '' : 's'}.` : '')
+        `✅ Entered **${result.inserted_count}** new giveaway${result.inserted_count === 1 ? '' : 's'}. ` +
+        `You are now in **${result.eligible_count}** active giveaway${result.eligible_count === 1 ? '' : 's'} you are eligible for.` +
+        (result.own_skipped > 0 ? ` Skipped **${result.own_skipped}** of your own giveaway${result.own_skipped === 1 ? '' : 's'}.` : '')
     );
     return true;
 }
@@ -1114,12 +1295,16 @@ async function leaveAllActiveGiveaways(interaction, db = sql) {
         returning ge.giveaway_id
     `;
 
-    await upsertActiveGiveawaysBoard(interaction.guild, db);
     await interaction.editReply(
         removedRows.length > 0
             ? `✅ Left **${removedRows.length}** active giveaway${removedRows.length === 1 ? '' : 's'}.`
             : 'ℹ️ You were not entered in any active giveaways.'
     );
+
+    if (removedRows.length > 0) {
+        scheduleActiveGiveawaysBoardRefresh(interaction.guild, db);
+    }
+
     return true;
 }
 
@@ -1187,32 +1372,41 @@ async function enterGiveaway(interaction, db = sql) {
 
     await interaction.deferReply({ ephemeral: true });
 
-    const inserted = await db`
-        insert into giveaway_entries (
-            giveaway_id,
-            player_discord_id
+    const resultRows = await db`
+        with inserted_entry as (
+            insert into giveaway_entries (
+                giveaway_id,
+                player_discord_id
+            )
+            values (
+                ${giveaway.id},
+                ${interaction.user.id}
+            )
+            on conflict (giveaway_id, player_discord_id) do nothing
+            returning player_discord_id
         )
-        values (
-            ${giveaway.id},
-            ${interaction.user.id}
-        )
-        on conflict (giveaway_id, player_discord_id) do nothing
-        returning player_discord_id
+        select
+            (select count(*) from inserted_entry)::int as inserted_count,
+            ((
+                select count(*)::int
+                from giveaway_entries
+                where giveaway_id = ${giveaway.id}
+            ) + (select count(*) from inserted_entry)::int) as entrant_count
     `;
-    const countRows = await db`
-        select count(*)::int as count
-        from giveaway_entries
-        where giveaway_id = ${giveaway.id}
-    `;
-    const entrantCount = countRows[0].count;
+    const result = resultRows[0];
+    const entrantCount = result.entrant_count;
 
-    await interaction.message.edit(renderGiveaway(giveaway, entrantCount));
-    await upsertActiveGiveawaysBoard(interaction.guild, db);
     await interaction.editReply(
-        inserted.length > 0
+        result.inserted_count > 0
             ? `✅ You entered the giveaway! There ${entrantCount === 1 ? 'is' : 'are'} now **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.`
             : `ℹ️ You are already entered. There ${entrantCount === 1 ? 'is' : 'are'} **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.`
     );
+
+    if (result.inserted_count > 0) {
+        scheduleGiveawayMessageRefresh(interaction.guild, giveaway.id, db, interaction.message);
+        scheduleActiveGiveawaysBoardRefresh(interaction.guild, db);
+    }
+
     return true;
 }
 
@@ -1318,18 +1512,6 @@ async function handleGiveawayLinkModal(interaction, db = sql) {
         return true;
     }
 
-    await setMemberNicknameToIgn(interaction.member, minecraftIgn);
-
-    const channel = await fetchGiveawayChannel(interaction.guild, giveaway);
-    const message = channel
-        ? await fetchGiveawayMessage(channel, giveaway)
-        : null;
-
-    if (message) {
-        await message.edit(renderGiveaway(giveaway, entryResult.entrantCount));
-    }
-    await upsertActiveGiveawaysBoard(interaction.guild, db);
-
     const editionLabel = minecraftEdition === 'bedrock' ? 'Bedrock' : 'Java';
 
     await interaction.editReply(
@@ -1338,6 +1520,17 @@ async function handleGiveawayLinkModal(interaction, db = sql) {
         `Edition: **${editionLabel}**\n` +
         `Entrants: **${entryResult.entrantCount}**`
     );
+
+    setMemberNicknameToIgn(interaction.member, minecraftIgn).catch(error => {
+        console.error(`Could not update nickname for ${interaction.user.id} after giveaway link modal:`);
+        console.error(error);
+    });
+
+    if (entryResult.inserted) {
+        scheduleGiveawayMessageRefresh(interaction.guild, giveaway.id, db);
+        scheduleActiveGiveawaysBoardRefresh(interaction.guild, db);
+    }
+
     return true;
 }
 
@@ -1366,26 +1559,35 @@ async function leaveGiveaway(interaction, db = sql) {
         return true;
     }
 
-    const removedRows = await db`
-        delete from giveaway_entries
-        where giveaway_id = ${giveaway.id}
-            and player_discord_id = ${interaction.user.id}
-        returning player_discord_id
+    const resultRows = await db`
+        with removed_entry as (
+            delete from giveaway_entries
+            where giveaway_id = ${giveaway.id}
+                and player_discord_id = ${interaction.user.id}
+            returning player_discord_id
+        )
+        select
+            (select count(*) from removed_entry)::int as removed_count,
+            greatest(0, (
+                select count(*)::int
+                from giveaway_entries
+                where giveaway_id = ${giveaway.id}
+            ) - (select count(*) from removed_entry)::int) as entrant_count
     `;
-    const countRows = await db`
-        select count(*)::int as count
-        from giveaway_entries
-        where giveaway_id = ${giveaway.id}
-    `;
-    const entrantCount = countRows[0].count;
+    const result = resultRows[0];
+    const entrantCount = result.entrant_count;
 
-    await interaction.message.edit(renderGiveaway(giveaway, entrantCount));
-    await upsertActiveGiveawaysBoard(interaction.guild, db);
     await interaction.editReply(
-        removedRows.length > 0
+        result.removed_count > 0
             ? `✅ You left the giveaway. There ${entrantCount === 1 ? 'is' : 'are'} now **${entrantCount}** entrant${entrantCount === 1 ? '' : 's'}.`
             : 'ℹ️ You were not entered in this giveaway.'
     );
+
+    if (result.removed_count > 0) {
+        scheduleGiveawayMessageRefresh(interaction.guild, giveaway.id, db, interaction.message);
+        scheduleActiveGiveawaysBoardRefresh(interaction.guild, db);
+    }
+
     return true;
 }
 
@@ -1790,11 +1992,13 @@ module.exports = {
     handleGiveawayButton,
     handleGiveawayLinkModal,
     leaveGiveaway,
+    maxGiveawayDurationForAmount,
     parseGiveawayDuration,
     processIncomingGiveawayPayment,
     renderGiveaway,
     renderGiveawayHostControls,
     sendWeeklyGiveawayPingReminderForGuild,
     startFundedGiveaway,
-    upsertActiveGiveawaysBoard
+    upsertActiveGiveawaysBoard,
+    validateGiveawayDurationForAmount
 };

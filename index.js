@@ -17,6 +17,7 @@ const {
     syncMemberStaffRankFromRoles
 } = require('./utils/bootstrap.js');
 const {
+    scheduleLeaderboardsRefreshForGuild,
     updateHourlyRecruitsLeaderboardForGuild,
     updateLeaderboardsForGuild
 } = require('./utils/leaderboards.js');
@@ -34,6 +35,7 @@ const {
     finishExpiredElectionsForGuild,
     removePlayerFromActiveElection,
     resetExpiredElectionResultBoardForGuild,
+    scheduleElectionLeaderboardUpdate,
     updateElectionLeaderboard
 } = require('./utils/elections.js');
 const {
@@ -1126,7 +1128,7 @@ async function processJoinBatch(guild) {
                 return [];
             });
 
-            await updateLeaderboardsForGuild(guild, sql);
+            scheduleLeaderboardsRefreshForGuild(guild, sql);
 
             console.log(`${member.user.tag} was safely assigned to ${inviter.tag}.`);
             return;
@@ -1971,12 +1973,39 @@ client.once(Events.ClientReady, async () => {
 
     await sendDueAccountLinkReminders();
 
-    setInterval(() => {
-        sendDueWelcomeReminders();
-        sendDueAccountLinkReminders();
-    }, 24 * 60 * 60 * 1000);
+    function createNonOverlappingRunner(label, runner) {
+        let running = false;
 
-    setInterval(async () => {
+        return () => {
+            if (running) {
+                console.log(`${label} skipped because the previous run is still active.`);
+                return;
+            }
+
+            running = true;
+
+            Promise.resolve()
+                .then(runner)
+                .catch(error => {
+                    console.error(`${label} failed:`);
+                    console.error(error);
+                })
+                .finally(() => {
+                    running = false;
+                });
+        };
+    }
+
+    const runReminderScans = createNonOverlappingRunner('Reminder scan', async () => {
+        await Promise.all([
+            sendDueWelcomeReminders(),
+            sendDueAccountLinkReminders()
+        ]);
+    });
+
+    setInterval(runReminderScans, 24 * 60 * 60 * 1000);
+
+    const runHourlyRecruitRefresh = createNonOverlappingRunner('Hourly recruit refresh', async () => {
         for (const [, guild] of client.guilds.cache) {
             try {
                 await updateHourlyRecruitsLeaderboardForGuild(guild, sql);
@@ -1988,7 +2017,9 @@ client.once(Events.ClientReady, async () => {
                 console.error(error);
             }
         }
-    }, 60_000);
+    });
+
+    setInterval(runHourlyRecruitRefresh, 60_000);
 
     let giveawayTimerCheckRunning = false;
     async function runGiveawayTimerCheck() {
@@ -2018,10 +2049,13 @@ client.once(Events.ClientReady, async () => {
     }
 
     setInterval(() => {
-        runGiveawayTimerCheck();
+        runGiveawayTimerCheck().catch(error => {
+            console.error('Giveaway timer runner failed:');
+            console.error(error);
+        });
     }, 1_000);
 
-    setInterval(async () => {
+    const runPayoutQueue = createNonOverlappingRunner('Payout queue', async () => {
         for (const [, guild] of client.guilds.cache) {
             try {
                 await processPendingGiveawayPayoutsForGuild(guild, sql);
@@ -2035,9 +2069,11 @@ client.once(Events.ClientReady, async () => {
                 console.error(error);
             }
         }
-    }, 15_000);
+    });
 
-    setInterval(async () => {
+    setInterval(runPayoutQueue, 15_000);
+
+    const runScheduledMaintenance = createNonOverlappingRunner('Scheduled maintenance', async () => {
         for (const [, guild] of client.guilds.cache) {
             try {
                 const scheduleResult = await runFridayNoonScheduleForGuild(guild, sql);
@@ -2092,7 +2128,9 @@ client.once(Events.ClientReady, async () => {
                 console.error(error);
             }
         }
-    }, 60_000);
+    });
+
+    setInterval(runScheduledMaintenance, 60_000);
 });
 
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
@@ -2436,15 +2474,9 @@ client.on(Events.GuildMemberRemove, async member => {
                     `${removedPlayer.rank_name}, no direct recruits.`
                 );
 
-                await updateLeaderboardsForGuild(member.guild, sql).catch(error => {
-                    console.error('Leaderboard refresh failed after leave cleanup:');
-                    console.error(error);
-                });
+                scheduleLeaderboardsRefreshForGuild(member.guild, sql);
 
-                await updateElectionLeaderboard(member.guild, sql).catch(error => {
-                    console.error('Election leaderboard refresh failed after leave cleanup:');
-                    console.error(error);
-                });
+                scheduleElectionLeaderboardUpdate(member.guild, sql);
             }
         } catch (error) {
             console.error(`Could not clean up leaving member ${member.user.tag} from database:`);

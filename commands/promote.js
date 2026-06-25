@@ -12,7 +12,7 @@ const {
     postPromotionEvent
 } = require('../utils/events.js');
 const {
-    updateElectionLeaderboard
+    scheduleElectionLeaderboardUpdate
 } = require('../utils/elections.js');
 const {
     RANK_NAMES,
@@ -349,10 +349,7 @@ module.exports = {
                 return [];
             });
 
-            await updateElectionLeaderboard(interaction.guild, sql).catch(error => {
-                console.error('Election leaderboard refresh failed after /promote:');
-                console.error(error);
-            });
+            scheduleElectionLeaderboardUpdate(interaction.guild, sql);
         } catch (error) {
             logCommandError(interaction, '/promote', error);
 

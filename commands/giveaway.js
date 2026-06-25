@@ -12,7 +12,8 @@ const {
     GIVEAWAY_CHANNEL_ID,
     giveawayPaymentBotUser,
     parseGiveawayDuration,
-    startFundedGiveaway
+    startFundedGiveaway,
+    validateGiveawayDurationForAmount
 } = require('../utils/giveaways.js');
 const {
     ensureMinecraftBotConnected
@@ -64,7 +65,7 @@ module.exports = {
         .addStringOption(option =>
             option
                 .setName('duration')
-                .setDescription('How long it runs: 30m, 1h, 1 hour, 2h 30m, or 1d')
+                .setDescription('30m, 1h, 1d, 1w. Larger prize pools unlock longer timers.')
                 .setRequired(true)
         ),
 
@@ -88,6 +89,13 @@ module.exports = {
             await interaction.editReply(
                 `❌ Giveaway amount must be at least **${formatDonationAmount(MIN_GIVEAWAY_AMOUNT)}**.`
             );
+            return;
+        }
+
+        try {
+            validateGiveawayDurationForAmount(amount, durationMs);
+        } catch (error) {
+            await interaction.editReply(`❌ ${error.message}`);
             return;
         }
 
@@ -138,6 +146,8 @@ module.exports = {
             let balanceNote = '';
 
             if (isDonHost) {
+                await interaction.editReply('⏳ Checking the Minecraft bot balance for Don-hosted giveaway funding...');
+
                 const actionContext = {
                     actorId: interaction.user.id,
                     actorTag: interaction.user.tag || interaction.user.username,

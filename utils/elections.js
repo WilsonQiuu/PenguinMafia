@@ -3,6 +3,8 @@ const sql = require('../db.js');
 const ELECTION_LEADERBOARD_CHANNEL_ID = process.env.ELECTION_LEADERBOARD_CHANNEL_ID || '1513392373437169664';
 const ELECTION_EVENTS_CHANNEL_ID = process.env.ELECTION_EVENTS_CHANNEL_ID || '1513393832845115453';
 const ELECTION_COMMANDS_CHANNEL_ID = process.env.ELECTION_COMMANDS_CHANNEL_ID || '1513405907051221092';
+const ELECTION_LEADERBOARD_REFRESH_DELAY_MS = 1_500;
+const electionLeaderboardRefreshes = new Map();
 
 const VOTE_WEIGHTS = new Map([
     ['Penguin Soldier', 1],
@@ -283,6 +285,76 @@ async function updateElectionLeaderboard(guild, db = sql, options = {}) {
     return true;
 }
 
+function scheduleElectionLeaderboardUpdate(guild, db = sql, options = {}, delayMs = ELECTION_LEADERBOARD_REFRESH_DELAY_MS) {
+    const electionKey = options.election?.id || 'active';
+    const key = `${guild.id}:${electionKey}`;
+    let task = electionLeaderboardRefreshes.get(key);
+
+    if (!task) {
+        task = {
+            guild,
+            db,
+            options: {
+                ...options
+            },
+            timer: null,
+            running: false,
+            rerun: false
+        };
+        electionLeaderboardRefreshes.set(key, task);
+    } else {
+        task.guild = guild;
+        task.db = db;
+        task.options = {
+            ...task.options,
+            ...options
+        };
+    }
+
+    if (task.timer) {
+        clearTimeout(task.timer);
+    }
+
+    task.timer = setTimeout(() => {
+        runScheduledElectionLeaderboardUpdate(key, delayMs);
+    }, delayMs);
+}
+
+async function runScheduledElectionLeaderboardUpdate(key, delayMs) {
+    const task = electionLeaderboardRefreshes.get(key);
+
+    if (!task) {
+        return;
+    }
+
+    task.timer = null;
+
+    if (task.running) {
+        task.rerun = true;
+        return;
+    }
+
+    task.running = true;
+
+    try {
+        await updateElectionLeaderboard(task.guild, task.db, task.options);
+    } catch (error) {
+        console.error(`Scheduled election leaderboard refresh failed for ${task.guild?.name || key}:`);
+        console.error(error);
+    } finally {
+        task.running = false;
+
+        if (task.rerun) {
+            task.rerun = false;
+            task.timer = setTimeout(() => {
+                runScheduledElectionLeaderboardUpdate(key, delayMs);
+            }, delayMs);
+        } else {
+            electionLeaderboardRefreshes.delete(key);
+        }
+    }
+}
+
 async function postElectionStartingSoon(guild, electionId, db = sql) {
     const channel = await getChannelById(guild, ELECTION_LEADERBOARD_CHANNEL_ID, 'leaderboard');
 
@@ -476,6 +548,13 @@ async function postVoteEvent(guild, content, userIds = []) {
     return true;
 }
 
+function postVoteEventInBackground(guild, content, userIds = []) {
+    postVoteEvent(guild, content, userIds).catch(error => {
+        console.error('Could not post election vote event:');
+        console.error(error);
+    });
+}
+
 async function postElectionStartedEvent(guild, election) {
     const endsAt = Math.floor(new Date(election.ends_at).getTime() / 1000);
 
@@ -649,7 +728,7 @@ async function castElectionVote(guild, voterUser, targetUser, db = sql, options 
     const targetMention = playerMention(targetUser.id);
 
     if (!oldVote) {
-        await postVoteEvent(
+        postVoteEventInBackground(
             guild,
             `🗳️🐧 **Anonymous Vote Cast!**\n\n` +
             `A secret penguin sent vote power to ${targetMention}.\n\n` +
@@ -657,7 +736,7 @@ async function castElectionVote(guild, voterUser, targetUser, db = sql, options 
             [targetUser.id]
         );
     } else if (oldVote.target_discord_id !== targetUser.id) {
-        await postVoteEvent(
+        postVoteEventInBackground(
             guild,
             `🔁🐧 **Anonymous Vote Changed!**\n\n` +
             `A secret penguin moved their vote power to ${targetMention}.\n\n` +
@@ -665,7 +744,7 @@ async function castElectionVote(guild, voterUser, targetUser, db = sql, options 
             [targetUser.id]
         );
     } else if (options.forceTransferMessage) {
-        await postVoteEvent(
+        postVoteEventInBackground(
             guild,
             `🐧🗳️ **Anonymous Vote Re-Confirmed!**\n\n` +
             `A secret penguin kept their vote power on ${targetMention}.`,
@@ -673,7 +752,7 @@ async function castElectionVote(guild, voterUser, targetUser, db = sql, options 
         );
     }
 
-    await updateElectionLeaderboard(guild, db, { election });
+    scheduleElectionLeaderboardUpdate(guild, db, { election });
 
     return {
         election,
@@ -763,7 +842,7 @@ async function transferReceivedElectionVotes(guild, sourceUser, targetUser, db =
     }, 0);
     const voterCount = transferredVotes.length;
 
-    await postVoteEvent(
+    postVoteEventInBackground(
         guild,
         `🔁🐧 **Received Votes Transferred!**\n\n` +
         `${playerMention(sourceUser.id)} transferred **${totalWeight}** vote${totalWeight === 1 ? '' : 's'} they received to ${playerMention(targetUser.id)}.\n\n` +
@@ -771,7 +850,7 @@ async function transferReceivedElectionVotes(guild, sourceUser, targetUser, db =
         [sourceUser.id, targetUser.id]
     );
 
-    await updateElectionLeaderboard(guild, db, { election });
+    scheduleElectionLeaderboardUpdate(guild, db, { election });
 
     return {
         election,
@@ -950,6 +1029,7 @@ module.exports = {
     rejoinActiveElection,
     removePlayerFromActiveElection,
     resetExpiredElectionResultBoardForGuild,
+    scheduleElectionLeaderboardUpdate,
     startElection,
     transferReceivedElectionVotes,
     updateElectionLeaderboard

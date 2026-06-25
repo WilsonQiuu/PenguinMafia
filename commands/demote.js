@@ -11,7 +11,7 @@ const {
     postBranchMilestoneEvents
 } = require('../utils/events.js');
 const {
-    updateElectionLeaderboard
+    scheduleElectionLeaderboardUpdate
 } = require('../utils/elections.js');
 const {
     getRankIndex,
@@ -184,10 +184,7 @@ module.exports = {
                 });
             }
 
-            await updateElectionLeaderboard(interaction.guild, sql).catch(error => {
-                console.error('Election leaderboard refresh failed after /demote:');
-                console.error(error);
-            });
+            scheduleElectionLeaderboardUpdate(interaction.guild, sql);
         } catch (error) {
             logCommandError(interaction, '/demote', error);
 

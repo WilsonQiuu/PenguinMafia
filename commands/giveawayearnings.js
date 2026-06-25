@@ -45,7 +45,7 @@ module.exports = {
         .addUserOption(option =>
             option
                 .setName('player')
-                .setDescription('The player to check. Don only for other players.')
+                .setDescription('The player to check.')
                 .setRequired(false)
         ),
 
@@ -54,18 +54,7 @@ module.exports = {
             flags: MessageFlags.Ephemeral
         });
 
-        const donDiscordId = process.env.DON_DISCORD_ID;
         const requestedUser = interaction.options.getUser('player') || interaction.user;
-
-        if (
-            requestedUser.id !== interaction.user.id &&
-            (!donDiscordId || interaction.user.id !== donDiscordId)
-        ) {
-            await interaction.editReply(
-                '❌ Only the Don can check another player’s giveaway earnings.'
-            );
-            return;
-        }
 
         try {
             const playerRows = await sql`

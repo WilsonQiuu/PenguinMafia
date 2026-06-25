@@ -8,7 +8,7 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
-    updateWeeklyRecruitsLeaderboardForGuild
+    scheduleLeaderboardsRefreshForGuild
 } = require('../utils/leaderboards.js');
 const {
     postBranchMilestoneEvents,
@@ -177,10 +177,7 @@ module.exports = {
                 `${childUser} is now a recruit of ${parentUser}.`
             );
 
-            await updateWeeklyRecruitsLeaderboardForGuild(interaction.guild, sql).catch(error => {
-                console.error('Weekly recruits leaderboard refresh failed after /join:');
-                console.error(error);
-            });
+            scheduleLeaderboardsRefreshForGuild(interaction.guild, sql);
 
             await postFirstRecruitEvent(interaction.guild, sql, {
                 recruiterId: parentUser.id,

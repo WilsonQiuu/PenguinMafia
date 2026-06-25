@@ -25,9 +25,12 @@ const {
     payPlayerAfterBusyWait,
     payoutMinecraftTarget
 } = require('./commissionPayments.js');
+const {
+    formatEasternHourRange
+} = require('./time.js');
 
-const DEFAULT_HOURLY_RECRUIT_REWARD_AMOUNT = '1m';
-const DEFAULT_HOURLY_RECRUIT_BALANCE_RESERVE = '24m';
+const DEFAULT_HOURLY_RECRUIT_REWARD_AMOUNT = '2m';
+const DEFAULT_HOURLY_RECRUIT_BALANCE_RESERVE = '48m';
 const TERMINAL_HOURLY_REWARD_PAYOUT_STATUSES = [
     'paid',
     'credited',
@@ -288,7 +291,6 @@ async function postHourlyRewardAnnouncement(guild, reward, winner, payoutResult)
     }
 
     const prizeAmount = BigInt(reward.prize_amount);
-    const rewardHour = Math.floor(new Date(reward.reward_hour).getTime() / 1000);
     const payoutLines = (payoutResult.payouts || [])
         .map((payout, index) => formatPayoutLine(payout, index, {
             includeDiscordMention: true
@@ -296,7 +298,7 @@ async function postHourlyRewardAnnouncement(guild, reward, winner, payoutResult)
     let content =
         `🏆🐧 **Hourly Top Recruiter Reward** 🐧🏆\n\n` +
         `<@${winner.discord_id}> is the **top recruiter this hour** with **${winner.recruit_count}** direct recruit${winner.recruit_count === 1 ? '' : 's'}.\n` +
-        `Hour: <t:${rewardHour}:t>\n` +
+        `EDT Hour: **${formatEasternHourRange(reward.reward_hour)}**\n` +
         `Prize Pool: **${formatDonationAmount(prizeAmount)}**\n\n` +
         `This pays out like \`/pay\`: the top recruiter receives their rank commission, and the rest follows their recruiter chain.\n\n` +
         `**Payouts**\n${payoutLines.join('\n')}`;
