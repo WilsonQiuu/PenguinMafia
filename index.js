@@ -73,6 +73,11 @@ const {
     processPendingGiveawayPayoutsForGuild
 } = require('./utils/commissionPayments.js');
 const {
+    checkHourlyRecruitRewardBalanceForGuild,
+    ensureHourlyRecruitRewardForGuild,
+    processPendingHourlyRecruitRewardPayoutsForGuild
+} = require('./utils/hourlyRecruitRewards.js');
+const {
     ensureReactionRolesMessage,
     handleReactionRole
 } = require('./utils/reactionRoles.js');
@@ -213,6 +218,9 @@ minecraftEvents.on('log', event => {
                                 'Minecraft IGN': result.request.host_minecraft_ign,
                                 'Required amount': formatDonationAmount(result.request.amount),
                                 'Paid amount': formatDonationAmount(result.paidAmount),
+                                'Extra donation': result.overpaidAmount > 0n
+                                    ? formatDonationAmount(result.overpaidAmount)
+                                    : 'None',
                                 Giveaway: result.message?.url || 'Board message unavailable'
                             }
                         );
@@ -226,6 +234,28 @@ minecraftEvents.on('log', event => {
                                 'Minecraft IGN': result.request.host_minecraft_ign,
                                 'Required amount': formatDonationAmount(result.request.amount),
                                 'Paid amount': formatDonationAmount(result.paidAmount)
+                            }
+                        );
+                    } else if (result.status === 'donation_recorded') {
+                        emitMinecraftEvent(
+                            'Minecraft Donation Recorded',
+                            `${result.player.minecraft_ign || payment.player} made a donation through the Minecraft bot.`,
+                            'success',
+                            {
+                                Player: `<@${result.player.discord_id}>`,
+                                'Minecraft IGN': result.player.minecraft_ign || payment.player,
+                                Amount: formatDonationAmount(result.donation.amount),
+                                'New donation total': formatDonationAmount(result.donation.newTotal)
+                            }
+                        );
+                    } else if (result.status === 'donation_unmatched') {
+                        emitMinecraftEvent(
+                            'Unmatched Minecraft Donation',
+                            'A Minecraft payment was received, but no linked Discord player or pending giveaway request matched it.',
+                            'warning',
+                            {
+                                'Minecraft IGN': result.minecraftName || payment.player || 'Unknown',
+                                Amount: formatDonationAmount(result.paidAmount)
                             }
                         );
                     }
@@ -1847,6 +1877,9 @@ client.once(Events.ClientReady, async () => {
             await resetExpiredElectionResultBoardForGuild(guild, sql);
             await finishExpiredGiveawaysForGuild(guild, sql);
             await processPendingGiveawayPayoutsForGuild(guild, sql);
+            await ensureHourlyRecruitRewardForGuild(guild, sql);
+            await processPendingHourlyRecruitRewardPayoutsForGuild(guild, sql);
+            await checkHourlyRecruitRewardBalanceForGuild(guild, sql);
             await processPendingCommissionPayoutsForGuild(guild, sql, {
                 guild,
                 source: 'Startup commission payout recovery'
@@ -1947,8 +1980,11 @@ client.once(Events.ClientReady, async () => {
         for (const [, guild] of client.guilds.cache) {
             try {
                 await updateHourlyRecruitsLeaderboardForGuild(guild, sql);
+                await ensureHourlyRecruitRewardForGuild(guild, sql);
+                await processPendingHourlyRecruitRewardPayoutsForGuild(guild, sql);
+                await checkHourlyRecruitRewardBalanceForGuild(guild, sql);
             } catch (error) {
-                console.error(`Hourly recruits leaderboard refresh failed for ${guild.name}:`);
+                console.error(`Hourly recruits leaderboard/reward refresh failed for ${guild.name}:`);
                 console.error(error);
             }
         }
@@ -1989,6 +2025,7 @@ client.once(Events.ClientReady, async () => {
         for (const [, guild] of client.guilds.cache) {
             try {
                 await processPendingGiveawayPayoutsForGuild(guild, sql);
+                await processPendingHourlyRecruitRewardPayoutsForGuild(guild, sql);
                 await processPendingCommissionPayoutsForGuild(guild, sql, {
                     guild,
                     source: 'Scheduled commission payout recovery'

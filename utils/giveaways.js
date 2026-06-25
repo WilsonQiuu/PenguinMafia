@@ -23,6 +23,7 @@ const {
     processPendingGiveawayPayoutsForGuild
 } = require('./commissionPayments.js');
 const {
+    postDonationEvent,
     postGiveawayDonationEvent
 } = require('./events.js');
 const {
@@ -529,6 +530,91 @@ async function recordGiveawayDonation(guild, giveaway, db = sql) {
     return donationRow.donations;
 }
 
+async function findPlayerByMinecraftPaymentName(minecraftName, db = sql) {
+    const normalizedName = normalizeMinecraftUsername(minecraftName);
+    const nameWithoutLeadingDot = normalizedName.startsWith('.')
+        ? normalizedName.slice(1)
+        : normalizedName;
+
+    if (!normalizedName) {
+        return null;
+    }
+
+    const rows = await db`
+        select
+            discord_id,
+            discord_username,
+            discord_display_name,
+            minecraft_ign,
+            minecraft_edition,
+            donations
+        from players
+        where minecraft_ign is not null
+            and (
+                lower(minecraft_ign) = ${normalizedName}
+                or lower(minecraft_ign) = ${nameWithoutLeadingDot}
+                or (
+                    minecraft_edition = 'bedrock'
+                    and lower(concat('.', minecraft_ign)) = ${normalizedName}
+                )
+            )
+        order by
+            case
+                when lower(minecraft_ign) = ${normalizedName} then 0
+                when minecraft_edition = 'bedrock' and lower(concat('.', minecraft_ign)) = ${normalizedName} then 1
+                else 2
+            end,
+            updated_at desc
+        limit 1
+    `;
+
+    return rows[0] || null;
+}
+
+async function recordDirectDonation(guild, playerId, amount, db = sql, options = {}) {
+    const donationAmount = BigInt(amount);
+
+    if (donationAmount <= 0n) {
+        return null;
+    }
+
+    const rows = await db`
+        update players
+        set
+            donations = donations + ${donationAmount.toString()}::bigint,
+            updated_at = now()
+        where discord_id = ${playerId}
+        returning donations
+    `;
+    const donationRow = rows[0];
+
+    if (!donationRow) {
+        throw new Error(`Player ${playerId} was not found while recording donation credit.`);
+    }
+
+    await postDonationEvent(guild, {
+        playerId,
+        amount: donationAmount,
+        newTotal: donationRow.donations
+    }).catch(error => {
+        console.error(`Could not post donation event for ${options.source || 'Minecraft payment'}:`);
+        console.error(error);
+        return false;
+    });
+
+    await updateDonationLeaderboardForGuild(guild, db).catch(error => {
+        console.error(`Could not refresh donation leaderboard after ${options.source || 'Minecraft payment'}:`);
+        console.error(error);
+        return false;
+    });
+
+    return {
+        playerId,
+        amount: donationAmount,
+        newTotal: donationRow.donations
+    };
+}
+
 async function sendWeeklyGiveawayPingReminderForGuild(guild, db = sql) {
     const totalAmount = await activeGiveawayTotalAmount(guild.id, db);
 
@@ -618,6 +704,9 @@ async function startFundedGiveaway(guild, options, db = sql) {
 
 async function processIncomingGiveawayPayment(guild, payment, db = sql) {
     const paymentPlayer = normalizeMinecraftUsername(payment.player);
+    const paymentPlayerWithoutLeadingDot = paymentPlayer.startsWith('.')
+        ? paymentPlayer.slice(1)
+        : paymentPlayer;
     let paidAmount;
 
     if (!paymentPlayer) {
@@ -639,7 +728,11 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
         from giveaway_payment_requests
         where guild_id = ${guild.id}
             and status = 'pending'
-            and lower(host_minecraft_ign) = ${paymentPlayer}
+            and (
+                lower(host_minecraft_ign) = ${paymentPlayer}
+                or lower(host_minecraft_ign) = ${paymentPlayerWithoutLeadingDot}
+                or lower(concat('.', host_minecraft_ign)) = ${paymentPlayer}
+            )
             and amount <= ${paidAmount.toString()}::bigint
         order by created_at asc
         limit 1
@@ -652,7 +745,11 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
             from giveaway_payment_requests
             where guild_id = ${guild.id}
                 and status = 'pending'
-                and lower(host_minecraft_ign) = ${paymentPlayer}
+                and (
+                    lower(host_minecraft_ign) = ${paymentPlayer}
+                    or lower(host_minecraft_ign) = ${paymentPlayerWithoutLeadingDot}
+                    or lower(concat('.', host_minecraft_ign)) = ${paymentPlayer}
+                )
             order by created_at asc
             limit 1
         `;
@@ -665,8 +762,31 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
             };
         }
 
+        const donationPlayer = await findPlayerByMinecraftPaymentName(paymentPlayer, db);
+
+        if (!donationPlayer) {
+            return {
+                status: 'donation_unmatched',
+                minecraftName: payment.player,
+                paidAmount
+            };
+        }
+
+        const donation = await recordDirectDonation(
+            guild,
+            donationPlayer.discord_id,
+            paidAmount,
+            db,
+            {
+                source: `unmatched Minecraft payment from ${payment.player || paymentPlayer}`
+            }
+        );
+
         return {
-            status: 'none'
+            status: 'donation_recorded',
+            player: donationPlayer,
+            donation,
+            paidAmount
         };
     }
 
@@ -711,12 +831,27 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
             where id = ${claimedRequest.id}
         `;
 
+        const overpaidAmount = paidAmount - BigInt(claimedRequest.amount);
+        const overpaidDonation = overpaidAmount > 0n
+            ? await recordDirectDonation(
+                guild,
+                claimedRequest.host_discord_id,
+                overpaidAmount,
+                db,
+                {
+                    source: `giveaway overpayment for request ${claimedRequest.id}`
+                }
+            )
+            : null;
+
         return {
             status: 'hosted',
             request: claimedRequest,
             giveaway,
             message: boardMessage,
-            paidAmount
+            paidAmount,
+            overpaidAmount,
+            overpaidDonation
         };
     } catch (error) {
         await db`
@@ -1443,7 +1578,7 @@ async function finishGiveaway(guild, giveawayId, db = sql) {
         update giveaways
         set
             cleanup_due_at = now() + interval '12 hours',
-            cleanup_message_ids = ${JSON.stringify([...new Set(cleanupMessageIds)])}::jsonb
+            cleanup_message_ids = ${sql.json([...new Set(cleanupMessageIds)])}
         where id = ${giveaway.id}
     `;
 

@@ -118,11 +118,25 @@ async function payPlayerAfterBusyWait(player, amount, context = {}) {
 }
 
 function jsonb(value) {
-    return JSON.stringify(value, (_, nestedValue) => {
+    const normalized = JSON.parse(JSON.stringify(value, (_, nestedValue) => {
         return typeof nestedValue === 'bigint'
             ? nestedValue.toString()
             : nestedValue;
-    });
+    }));
+
+    return sql.json(normalized);
+}
+
+function parseStoredJson(value, fallback = {}) {
+    if (typeof value !== 'string') {
+        return value || fallback;
+    }
+
+    try {
+        return JSON.parse(value);
+    } catch {
+        return fallback;
+    }
 }
 
 function serializePayout(payout) {
@@ -143,17 +157,23 @@ function serializePayoutResult(payoutResult) {
 }
 
 function hydratePayoutPayload(payload = {}) {
+    const parsedPayload = parseStoredJson(payload);
+
     return {
-        ...payload,
-        amountCents: BigInt(payload.amountCents || 0),
-        rateBasisPoints: BigInt(payload.rateBasisPoints || 0),
-        player: payload.player || {}
+        ...parsedPayload,
+        amountCents: BigInt(parsedPayload.amountCents || 0),
+        rateBasisPoints: BigInt(parsedPayload.rateBasisPoints || 0),
+        player: parsedPayload.player || {}
     };
 }
 
 function jobToResult(job) {
     const status = job.status;
     const payout = hydratePayoutPayload(job.payout_payload || {});
+    payout.player = {
+        ...payout.player,
+        discord_id: payout.player?.discord_id || job.recipient_discord_id
+    };
 
     return {
         status,
@@ -168,11 +188,14 @@ function jobToResult(job) {
 }
 
 function batchPayoutResult(batch, jobs) {
-    const payoutResult = batch?.payout_result || {};
+    const payoutResult = parseStoredJson(batch?.payout_result);
 
     return {
         ...payoutResult,
-        player: payoutResult.player || {},
+        player: {
+            ...(payoutResult.player || {}),
+            discord_id: payoutResult.player?.discord_id || batch?.winner_discord_id || null
+        },
         payouts: jobs.map(job => hydratePayoutPayload(job.payout_payload || {})),
         totalAmountCents: BigInt(payoutResult.totalAmountCents || 0),
         totalPaidCents: BigInt(payoutResult.totalPaidCents || 0),
@@ -571,7 +594,7 @@ async function enqueueGiveawayPayouts(guild, giveaway, payoutResult, db = sql) {
                 ${giveaway.id},
                 ${guild.id},
                 ${payoutResult.player.discord_id},
-                ${jsonb(serializePayoutResult(payoutResult))}::jsonb,
+                ${jsonb(serializePayoutResult(payoutResult))},
                 'pending',
                 now()
             )
@@ -609,7 +632,7 @@ async function enqueueGiveawayPayouts(guild, giveaway, payoutResult, db = sql) {
                     ${player.discord_id},
                     ${payoutMinecraftTarget(player)},
                     ${BigInt(payout.amountCents).toString()}::bigint,
-                    ${jsonb(serializePayout(payout))}::jsonb,
+                    ${jsonb(serializePayout(payout))},
                     ${player.discord_id === payoutResult.player.discord_id},
                     'pending',
                     now()
@@ -1780,6 +1803,7 @@ module.exports = {
     enqueueGiveawayPayouts,
     ensureMinecraftBotConnected,
     formatMinecraftPaymentAmountFromCents,
+    payPlayerAfterBusyWait,
     payOutstandingCommissions,
     paymentSpacingMs,
     processPendingCommissionPayoutsForGuild,

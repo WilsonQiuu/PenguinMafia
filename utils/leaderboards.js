@@ -6,12 +6,14 @@ const {
     WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME
 } = require('./bootstrap.js');
 const {
-    formatDonationAmount
+    formatDonationAmount,
+    parseDonationAmount
 } = require('./donations.js');
 
 const PREVIOUS_WEEKLY_RECRUITS_STATE_KEY = 'previous_weekly_recruits_top_three';
 const WEEKLY_RECRUITS_LAST_RESET_STATE_KEY = 'weekly_recruits_last_reset_at';
 const WEEKLY_RECRUITS_TIME_ZONE = 'America/Toronto';
+const DEFAULT_HOURLY_RECRUIT_REWARD_AMOUNT = '1m';
 
 function leaderboardName(player) {
     return player.minecraft_ign ||
@@ -25,6 +27,10 @@ function leaderboardLine(index, player, value, suffix) {
     const marker = medals[index] || `**${index + 1}.**`;
 
     return `${marker} **${leaderboardName(player)}** - **${value}** ${suffix}`;
+}
+
+function hourlyRecruitRewardAmount() {
+    return parseDonationAmount(process.env.HOURLY_RECRUIT_REWARD_AMOUNT || DEFAULT_HOURLY_RECRUIT_REWARD_AMOUNT);
 }
 
 async function updateLeaderboardChannel(guild, channelId, channelName, marker, content) {
@@ -490,6 +496,8 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
         'hourly-recruits',
         'Penguin Mafia Hourly Recruit Leaderboard',
         `🏆🐧 **Penguin Mafia Hourly Recruit Leaderboard** 🐧🏆\n\n` +
+        `Reward: the top recruiter every hour earns a **${formatDonationAmount(hourlyRecruitRewardAmount())} prize pool** paid like \`/pay\`; ` +
+        `they receive the prize multiplied by their commission rate, and recruiter overrides receive the rest.\n` +
         `Tie-breaker: if players have the same recruit count, whoever reached that count first ranks higher.\n\n` +
         `## This Hour’s Top Recruiters\n${currentHourLines}\n\n` +
         `## Last Hour’s Result\n${winnerLine}\n\n`

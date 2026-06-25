@@ -602,6 +602,119 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        create table if not exists hourly_recruit_rewards (
+            id bigserial primary key,
+            guild_id text not null,
+            reward_hour timestamptz not null,
+            winner_discord_id text references players(discord_id) on delete set null,
+            recruit_count int not null default 0 check (recruit_count >= 0),
+            prize_amount bigint not null check (prize_amount > 0),
+            payout_result jsonb not null default '{}'::jsonb,
+            status text not null default 'pending' check (status in ('pending', 'processing', 'finished')),
+            channel_id text,
+            message_id text,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            finished_at timestamptz,
+            log_sent_at timestamptz,
+            unique (guild_id, reward_hour)
+        )
+    `;
+
+    await sql`
+        create table if not exists hourly_recruit_reward_payout_jobs (
+            id bigserial primary key,
+            reward_id bigint not null references hourly_recruit_rewards(id) on delete cascade,
+            guild_id text not null,
+            recipient_discord_id text not null references players(discord_id) on delete cascade,
+            minecraft_name text,
+            amount_cents bigint not null check (amount_cents > 0),
+            payout_payload jsonb not null default '{}'::jsonb,
+            is_winner boolean not null default false,
+            status text not null default 'pending' check (
+                status in ('pending', 'processing', 'paid', 'credited', 'credit_failed', 'failed', 'skipped', 'manual_review')
+            ),
+            attempts int not null default 0 check (attempts >= 0),
+            reason text,
+            response text,
+            error text,
+            balance_before text,
+            balance_after text,
+            command_sent_at timestamptz,
+            processing_started_at timestamptz,
+            paid_at timestamptz,
+            credited_at timestamptz,
+            notification_sent_at timestamptz,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            unique (reward_id, recipient_discord_id)
+        )
+    `;
+
+    await sql`
+        alter table hourly_recruit_rewards
+        drop constraint if exists hourly_recruit_rewards_status_check
+    `;
+
+    await sql`
+        alter table hourly_recruit_rewards
+        add constraint hourly_recruit_rewards_status_check check (
+            status in ('pending', 'processing', 'finished')
+        )
+    `;
+
+    await sql`
+        alter table hourly_recruit_reward_payout_jobs
+        drop constraint if exists hourly_recruit_reward_payout_jobs_status_check
+    `;
+
+    await sql`
+        alter table hourly_recruit_reward_payout_jobs
+        add constraint hourly_recruit_reward_payout_jobs_status_check check (
+            status in ('pending', 'processing', 'paid', 'credited', 'credit_failed', 'failed', 'skipped', 'manual_review')
+        )
+    `;
+
+    await sql`
+        create index if not exists idx_hourly_recruit_rewards_pending
+        on hourly_recruit_rewards(guild_id, status, reward_hour)
+        where status in ('pending', 'processing')
+    `;
+
+    await sql`
+        create index if not exists idx_hourly_recruit_reward_jobs_pending
+        on hourly_recruit_reward_payout_jobs(guild_id, status, created_at, id)
+        where status in ('pending', 'processing')
+    `;
+
+    await sql`
+        create index if not exists idx_hourly_recruit_reward_jobs_reward
+        on hourly_recruit_reward_payout_jobs(reward_id, status)
+    `;
+
+    await sql`
+        update giveaway_payout_batches
+        set
+            payout_result = (payout_result #>> '{}')::jsonb,
+            updated_at = now()
+        where jsonb_typeof(payout_result) = 'string'
+    `;
+
+    await sql`
+        update giveaway_payout_jobs
+        set
+            payout_payload = (payout_payload #>> '{}')::jsonb,
+            updated_at = now()
+        where jsonb_typeof(payout_payload) = 'string'
+    `;
+
+    await sql`
+        update giveaways
+        set cleanup_message_ids = (cleanup_message_ids #>> '{}')::jsonb
+        where jsonb_typeof(cleanup_message_ids) = 'string'
+    `;
+
+    await sql`
         alter table players
         add column if not exists welcome_completed boolean not null default true
     `;
