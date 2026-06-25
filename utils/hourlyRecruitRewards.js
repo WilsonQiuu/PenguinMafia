@@ -11,7 +11,7 @@ const {
 } = require('./donations.js');
 const {
     activeGiveawayTotalAmount,
-    GIVEAWAY_CHANNEL_ID
+    GIVEAWAY_WINNER_CHANNEL_ID
 } = require('./giveaways.js');
 const {
     calculatePayout,
@@ -269,9 +269,9 @@ async function fetchPreviousHourTopRecruiter(db = sql) {
     return rows[0] || null;
 }
 
-async function fetchGiveawayChannel(guild) {
-    const channel = guild.channels.cache.get(GIVEAWAY_CHANNEL_ID) ||
-        (await guild.channels.fetch(GIVEAWAY_CHANNEL_ID).catch(() => null));
+async function fetchGiveawayWinnerChannel(guild) {
+    const channel = guild.channels.cache.get(GIVEAWAY_WINNER_CHANNEL_ID) ||
+        (await guild.channels.fetch(GIVEAWAY_WINNER_CHANNEL_ID).catch(() => null));
 
     if (!channel?.isTextBased?.()) {
         return null;
@@ -281,7 +281,7 @@ async function fetchGiveawayChannel(guild) {
 }
 
 async function postHourlyRewardAnnouncement(guild, reward, winner, payoutResult) {
-    const channel = await fetchGiveawayChannel(guild);
+    const channel = await fetchGiveawayWinnerChannel(guild);
 
     if (!channel) {
         return null;
@@ -447,7 +447,7 @@ async function ensureHourlyRecruitRewardForGuild(guild, db = sql) {
             Winner: `<@${winner.discord_id}>`,
             Recruits: String(winner.recruit_count),
             'Prize pool': formatDonationAmount(prizeAmount),
-            Channel: message?.url || `<#${GIVEAWAY_CHANNEL_ID}>`
+            Channel: message?.url || `<#${GIVEAWAY_WINNER_CHANNEL_ID}>`
         }
     );
 
