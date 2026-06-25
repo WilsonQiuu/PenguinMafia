@@ -983,6 +983,23 @@ function formatPaymentBalanceDetails(beforeBalance, afterBalance, decrease) {
     return details;
 }
 
+async function notifyPaymentStage(context, stage, details = {}, options = {}) {
+    if (typeof context?.onPaymentStage !== 'function') {
+        return;
+    }
+
+    try {
+        await context.onPaymentStage(stage, details);
+    } catch (error) {
+        if (options.required) {
+            throw error;
+        }
+
+        console.error(`Payment stage callback failed for ${stage}:`);
+        console.error(error);
+    }
+}
+
 function payPlayerDirect(player, amount, context = {}) {
     if (pendingPayment) {
         throw new Error(`A payment to ${pendingPayment.player} is still waiting for confirmation.`);
@@ -1011,7 +1028,17 @@ function payPlayerDirect(player, amount, context = {}) {
 
         try {
             sendChat(command)
-                .then(() => {
+                .then(async () => {
+                    if (pendingPayment !== payment) {
+                        return;
+                    }
+
+                    await notifyPaymentStage(context, 'command_sent', {
+                        player,
+                        amount,
+                        command
+                    });
+
                     if (pendingPayment !== payment) {
                         return;
                     }
@@ -1102,6 +1129,19 @@ async function payPlayerWithBalanceChecks(player, amount, context = {}) {
         throw error;
     }
 
+    try {
+        await notifyPaymentStage(context, 'balance_before', {
+            player,
+            amount,
+            balance: beforeBalance
+        }, {
+            required: true
+        });
+    } catch (error) {
+        error.paymentAttempted = false;
+        throw error;
+    }
+
     const directPaymentContext = {
         ...context,
         deferPaymentLogUntilBalanceCheck: true
@@ -1123,6 +1163,13 @@ async function payPlayerWithBalanceChecks(player, amount, context = {}) {
     } catch (error) {
         afterBalanceError = error;
     }
+
+    await notifyPaymentStage(context, 'balance_after', {
+        player,
+        amount,
+        balance: afterBalance,
+        error: afterBalanceError
+    });
 
     const {
         confirmed,

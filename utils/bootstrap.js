@@ -467,6 +467,63 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        create table if not exists giveaway_payout_batches (
+            giveaway_id bigint primary key references giveaways(id) on delete cascade,
+            guild_id text not null,
+            winner_discord_id text references players(discord_id) on delete set null,
+            payout_result jsonb not null default '{}'::jsonb,
+            status text not null default 'pending' check (status in ('pending', 'processing', 'finished')),
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            finished_at timestamptz,
+            log_sent_at timestamptz
+        )
+    `;
+
+    await sql`
+        create table if not exists giveaway_payout_jobs (
+            id bigserial primary key,
+            giveaway_id bigint not null references giveaways(id) on delete cascade,
+            guild_id text not null,
+            recipient_discord_id text not null references players(discord_id) on delete cascade,
+            minecraft_name text,
+            amount_cents bigint not null check (amount_cents > 0),
+            payout_payload jsonb not null default '{}'::jsonb,
+            is_winner boolean not null default false,
+            status text not null default 'pending' check (
+                status in ('pending', 'processing', 'paid', 'credited', 'credit_failed', 'failed', 'skipped', 'manual_review')
+            ),
+            attempts int not null default 0 check (attempts >= 0),
+            reason text,
+            response text,
+            error text,
+            balance_before text,
+            balance_after text,
+            command_sent_at timestamptz,
+            processing_started_at timestamptz,
+            paid_at timestamptz,
+            credited_at timestamptz,
+            earnings_recorded_at timestamptz,
+            notification_sent_at timestamptz,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            unique (giveaway_id, recipient_discord_id)
+        )
+    `;
+
+    await sql`
+        alter table giveaway_payout_jobs
+        drop constraint if exists giveaway_payout_jobs_status_check
+    `;
+
+    await sql`
+        alter table giveaway_payout_jobs
+        add constraint giveaway_payout_jobs_status_check check (
+            status in ('pending', 'processing', 'paid', 'credited', 'credit_failed', 'failed', 'skipped', 'manual_review')
+        )
+    `;
+
+    await sql`
         create index if not exists idx_giveaways_active_end
         on giveaways(guild_id, status, ends_at)
     `;
@@ -481,6 +538,67 @@ async function ensureDatabaseSchema(sql) {
         create index if not exists idx_giveaways_cleanup_due
         on giveaways(guild_id, cleanup_due_at)
         where cleaned_at is null
+    `;
+
+    await sql`
+        create index if not exists idx_giveaway_payout_jobs_pending
+        on giveaway_payout_jobs(guild_id, status, created_at, id)
+        where status in ('pending', 'processing')
+    `;
+
+    await sql`
+        create index if not exists idx_giveaway_payout_jobs_giveaway
+        on giveaway_payout_jobs(giveaway_id, status)
+    `;
+
+    await sql`
+        create table if not exists commission_payout_jobs (
+            id bigserial primary key,
+            guild_id text not null,
+            recipient_discord_id text not null references players(discord_id) on delete cascade,
+            minecraft_name text,
+            amount_cents bigint not null check (amount_cents > 0),
+            status text not null default 'pending' check (
+                status in ('pending', 'processing', 'paid', 'failed', 'skipped', 'manual_review')
+            ),
+            attempts int not null default 0 check (attempts >= 0),
+            reason text,
+            response text,
+            error text,
+            balance_before text,
+            balance_after text,
+            command_sent_at timestamptz,
+            processing_started_at timestamptz,
+            paid_at timestamptz,
+            deducted_at timestamptz,
+            notification_sent_at timestamptz,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        )
+    `;
+
+    await sql`
+        alter table commission_payout_jobs
+        drop constraint if exists commission_payout_jobs_status_check
+    `;
+
+    await sql`
+        alter table commission_payout_jobs
+        add constraint commission_payout_jobs_status_check check (
+            status in ('pending', 'processing', 'paid', 'failed', 'skipped', 'manual_review')
+        )
+    `;
+
+    await sql`
+        create index if not exists idx_commission_payout_jobs_pending
+        on commission_payout_jobs(guild_id, status, created_at, id)
+        where status in ('pending', 'processing')
+    `;
+
+    await sql`
+        create unique index if not exists idx_commission_payout_jobs_open_recipient
+        on commission_payout_jobs(guild_id, recipient_discord_id)
+        where status in ('pending', 'processing', 'manual_review')
     `;
 
     await sql`

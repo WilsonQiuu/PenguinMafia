@@ -88,15 +88,25 @@ module.exports = {
             const paid = summary.results.filter(result => result.status === 'paid');
             const skipped = summary.results.filter(result => result.status === 'skipped');
             const failed = summary.results.filter(result => result.status === 'failed');
+            const pending = summary.results.filter(result => ['pending', 'processing'].includes(result.status));
+            const needsReview = summary.results.filter(result => result.status === 'manual_review');
             const paidTotal = totalCents(summary.results, 'paid');
-            const failedTotal = totalCents(summary.results, 'failed') + totalCents(summary.results, 'skipped');
+            const stillUnpaid = [
+                ...failed,
+                ...skipped,
+                ...pending,
+                ...needsReview
+            ];
+            const stillUnpaidTotal = stillUnpaid.reduce((total, result) => total + result.amountCents, 0n);
 
             let message =
                 `**Pay All Commissions Complete**\n\n` +
                 `Paid: **${paid.length}** player${paid.length === 1 ? '' : 's'} (**${formatCents(paidTotal)}**)\n` +
-                `Still unpaid: **${failed.length + skipped.length}** player${failed.length + skipped.length === 1 ? '' : 's'} (**${formatCents(failedTotal)}**)\n\n` +
+                `Still unpaid: **${stillUnpaid.length}** player${stillUnpaid.length === 1 ? '' : 's'} (**${formatCents(stillUnpaidTotal)}**)\n\n` +
                 `**Paid**\n${previewResults(paid)}\n\n` +
+                `**Pending retry**\n${previewResults(pending)}\n\n` +
                 `**Needs /penguinlink**\n${previewResults(skipped)}\n\n` +
+                `**Needs manual review**\n${previewResults(needsReview)}\n\n` +
                 `**Failed**\n${previewResults(failed)}`;
 
             if (message.length > 1900) {

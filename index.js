@@ -69,6 +69,10 @@ const {
     formatDonationAmount
 } = require('./utils/donations.js');
 const {
+    processPendingCommissionPayoutsForGuild,
+    processPendingGiveawayPayoutsForGuild
+} = require('./utils/commissionPayments.js');
+const {
     ensureReactionRolesMessage,
     handleReactionRole
 } = require('./utils/reactionRoles.js');
@@ -1842,6 +1846,11 @@ client.once(Events.ClientReady, async () => {
             await finishExpiredElectionsForGuild(guild, sql);
             await resetExpiredElectionResultBoardForGuild(guild, sql);
             await finishExpiredGiveawaysForGuild(guild, sql);
+            await processPendingGiveawayPayoutsForGuild(guild, sql);
+            await processPendingCommissionPayoutsForGuild(guild, sql, {
+                guild,
+                source: 'Startup commission payout recovery'
+            });
             await cleanupEndedGiveawaysForGuild(guild, sql);
             await upsertActiveGiveawaysBoard(guild, sql);
             const refreshed = await updateElectionLeaderboard(guild, sql);
@@ -1960,6 +1969,7 @@ client.once(Events.ClientReady, async () => {
 
                     if (finished.length > 0) {
                         console.log(`Ended ${finished.length} expired giveaway(s) for ${guild.name}.`);
+                        await processPendingGiveawayPayoutsForGuild(guild, sql);
                     }
                 } catch (error) {
                     console.error(`Giveaway timer check failed for ${guild.name}:`);
@@ -1974,6 +1984,21 @@ client.once(Events.ClientReady, async () => {
     setInterval(() => {
         runGiveawayTimerCheck();
     }, 1_000);
+
+    setInterval(async () => {
+        for (const [, guild] of client.guilds.cache) {
+            try {
+                await processPendingGiveawayPayoutsForGuild(guild, sql);
+                await processPendingCommissionPayoutsForGuild(guild, sql, {
+                    guild,
+                    source: 'Scheduled commission payout recovery'
+                });
+            } catch (error) {
+                console.error(`Payout queue failed for ${guild.name}:`);
+                console.error(error);
+            }
+        }
+    }, 15_000);
 
     setInterval(async () => {
         for (const [, guild] of client.guilds.cache) {

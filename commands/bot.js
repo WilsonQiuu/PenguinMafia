@@ -93,6 +93,20 @@ async function resolvePaymentTarget(interaction, db = sql) {
     throw new Error('Choose a linked Discord user or enter a Minecraft username.');
 }
 
+function paymentFailureReply(error, target = null) {
+    const reason = error?.message || String(error);
+    const targetLine = target?.minecraftName
+        ? `Minecraft command target: **${target.minecraftName}**\n`
+        : '';
+
+    return (
+        `❌ Payment failed.\n\n` +
+        targetLine +
+        `Server response: **${reason}**\n\n` +
+        'Double check the Minecraft account name. If the linked account is wrong, use `/penguinlink` to update it.'
+    );
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('bot')
@@ -185,6 +199,7 @@ module.exports = {
             actorTag: interaction.user.tag || interaction.user.username,
             source: 'Discord'
         };
+        let paymentTarget = null;
 
         try {
             if (subcommand === 'start') {
@@ -259,11 +274,11 @@ module.exports = {
             }
 
             const amount = interaction.options.getString('amount', true);
-            const target = await resolvePaymentTarget(interaction);
-            const result = await payPlayer(target.minecraftName, amount, actionContext);
+            paymentTarget = await resolvePaymentTarget(interaction);
+            const result = await payPlayer(paymentTarget.minecraftName, amount, actionContext);
             await interaction.editReply(
-                `✅ Payment confirmed for ${target.label}.\n\n` +
-                `Minecraft command target: **${target.minecraftName}**\n` +
+                `✅ Payment confirmed for ${paymentTarget.label}.\n\n` +
+                `Minecraft command target: **${paymentTarget.minecraftName}**\n` +
                 `**Server response:** ${result.message}`
             );
         } catch (error) {
@@ -277,6 +292,12 @@ module.exports = {
                     'Discord ID': actionContext.actorId
                 }
             );
+
+            if (subcommand === 'pay') {
+                await interaction.editReply(paymentFailureReply(error, paymentTarget));
+                return;
+            }
+
             throw error;
         }
     }

@@ -19,7 +19,8 @@ const {
     formatPayoutLine
 } = require('./payouts.js');
 const {
-    settleGiveawayPayouts
+    enqueueGiveawayPayouts,
+    processPendingGiveawayPayoutsForGuild
 } = require('./commissionPayments.js');
 const {
     postGiveawayDonationEvent
@@ -1328,60 +1329,85 @@ async function handleGiveawayButton(interaction, db = sql) {
 }
 
 async function finishGiveaway(guild, giveawayId, db = sql) {
-    const giveawayRows = await db`
-        update giveaways
-        set
-            status = 'ended',
-            ended_at = now()
-        where id = ${giveawayId}
-            and status = 'active'
-        returning *
-    `;
-    const giveaway = giveawayRows[0];
+    const prepared = await db.begin(async tx => {
+        const giveawayRows = await tx`
+            select *
+            from giveaways
+            where id = ${giveawayId}
+                and status = 'active'
+            for update
+        `;
+        const activeGiveaway = giveawayRows[0];
 
-    if (!giveaway) {
+        if (!activeGiveaway) {
+            return null;
+        }
+
+        const countRows = await tx`
+            select count(*)::int as count
+            from giveaway_entries
+            where giveaway_id = ${activeGiveaway.id}
+        `;
+        const winnerRows = await tx`
+            select player_discord_id
+            from giveaway_entries
+            where giveaway_id = ${activeGiveaway.id}
+            order by random()
+            limit 1
+        `;
+        const entrantCount = countRows[0].count;
+        const winnerId = winnerRows[0]?.player_discord_id || null;
+        const payoutResult = winnerId
+            ? await calculatePayout(
+                winnerId,
+                BigInt(activeGiveaway.amount),
+                process.env.DON_DISCORD_ID,
+                tx
+            )
+            : null;
+
+        if (winnerId && !payoutResult) {
+            throw new Error(`Giveaway winner ${winnerId} is no longer in the player database.`);
+        }
+
+        const endedRows = await tx`
+            update giveaways
+            set
+                status = 'ended',
+                ended_at = now(),
+                winner_discord_id = ${winnerId}
+            where id = ${activeGiveaway.id}
+                and status = 'active'
+            returning *
+        `;
+
+        return {
+            giveaway: endedRows[0],
+            entrantCount,
+            winnerId,
+            payoutResult
+        };
+    });
+
+    if (!prepared) {
         return null;
     }
 
-    const countRows = await db`
-        select count(*)::int as count
-        from giveaway_entries
-        where giveaway_id = ${giveaway.id}
-    `;
-    const winnerRows = await db`
-        select player_discord_id
-        from giveaway_entries
-        where giveaway_id = ${giveaway.id}
-        order by random()
-        limit 1
-    `;
-    const entrantCount = countRows[0].count;
-    const winnerId = winnerRows[0]?.player_discord_id || null;
-    const payoutResult = winnerId
-        ? await calculatePayout(
-            winnerId,
-            BigInt(giveaway.amount),
-            process.env.DON_DISCORD_ID,
-            db
-        )
-        : null;
-
-    if (winnerId && !payoutResult) {
-        throw new Error(`Giveaway winner ${winnerId} is no longer in the player database.`);
-    }
-
-    if (winnerId) {
-        await db`
-            update giveaways
-            set winner_discord_id = ${winnerId}
-            where id = ${giveaway.id}
-        `;
-    }
+    const {
+        giveaway,
+        entrantCount,
+        payoutResult,
+        winnerId
+    } = prepared;
 
     const channel = await fetchGiveawayWinnerChannel(guild);
     const cleanupMessageIds = [];
 
     await refreshActiveGiveawaysBoard(guild, db);
+
+    if (winnerId) {
+        await enqueueGiveawayPayouts(guild, giveaway, payoutResult, db);
+    }
 
     if (channel && winnerId) {
         const payoutMessageIds = await sendPayoutAnnouncement(
@@ -1392,7 +1418,12 @@ async function finishGiveaway(guild, giveawayId, db = sql) {
         );
         cleanupMessageIds.push(...payoutMessageIds);
 
-        settleGiveawayPayouts(guild, giveaway, payoutResult, db).catch(error => {
+        processPendingGiveawayPayoutsForGuild(guild, db).catch(error => {
+            console.error(`Could not settle giveaway payout ${giveaway.id}:`);
+            console.error(error);
+        });
+    } else if (winnerId) {
+        processPendingGiveawayPayoutsForGuild(guild, db).catch(error => {
             console.error(`Could not settle giveaway payout ${giveaway.id}:`);
             console.error(error);
         });
