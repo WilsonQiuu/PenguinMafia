@@ -18,8 +18,24 @@ function easternTimeZoneName(date) {
         .find(part => part.type === 'timeZoneName')?.value || 'ET';
 }
 
-function formatEasternHourRange(start) {
-    const startDate = new Date(start);
+function validDateOrFallback(value, fallback = new Date()) {
+    const date = new Date(value);
+
+    if (!Number.isNaN(date.getTime())) {
+        return date;
+    }
+
+    const fallbackDate = new Date(fallback);
+
+    if (!Number.isNaN(fallbackDate.getTime())) {
+        return fallbackDate;
+    }
+
+    return new Date();
+}
+
+function formatEasternHourRange(start, fallback = new Date()) {
+    const startDate = validDateOrFallback(start, fallback);
     const endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
 
     return `${easternHourFormatter.format(startDate)}–${easternHourFormatter.format(endDate)} ${easternTimeZoneName(startDate)}`;

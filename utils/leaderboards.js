@@ -460,7 +460,8 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
             recruiter_totals.discord_username,
             recruiter_totals.discord_display_name,
             recruiter_totals.minecraft_ign,
-            recruiter_totals.recruit_count
+            recruiter_totals.recruit_count,
+            hour_window.started_at as reward_hour
         from recruiter_totals
         cross join hour_window
         left join lateral (
