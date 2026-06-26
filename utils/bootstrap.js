@@ -913,6 +913,42 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        create or replace function current_weekly_recruit_started_at()
+        returns timestamptz as $$
+        declare
+            local_now timestamp;
+            friday_noon timestamp;
+            scheduled_start timestamptz;
+            manual_reset timestamptz;
+        begin
+            local_now := now() at time zone 'America/Toronto';
+            friday_noon := date_trunc('week', local_now) + interval '4 days 12 hours';
+            scheduled_start := (
+                case
+                    when local_now >= friday_noon then friday_noon
+                    else friday_noon - interval '7 days'
+                end
+            ) at time zone 'America/Toronto';
+
+            begin
+                select value::timestamptz
+                into manual_reset
+                from bot_state
+                where key = 'weekly_recruits_last_reset_at'
+                limit 1;
+            exception when others then
+                manual_reset := null;
+            end;
+
+            return greatest(
+                coalesce(manual_reset, '-infinity'::timestamptz),
+                scheduled_start
+            );
+        end;
+        $$ language plpgsql stable
+    `;
+
+    await sql`
         create or replace function prevent_player_cycle()
         returns trigger as $$
         declare
@@ -1004,10 +1040,28 @@ async function ensureDatabaseSchema(sql) {
                     update players
                     set
                         direct_recruits_count = greatest(direct_recruits_count - 1, 0),
-                        weekly_direct_recruits_count = greatest(weekly_direct_recruits_count - 1, 0),
+                        weekly_direct_recruits_count = greatest(
+                            weekly_direct_recruits_count - case
+                                when exists (
+                                    select 1
+                                    from recruit_history history
+                                    where history.recruit_discord_id = old.discord_id
+                                        and history.recruiter_discord_id = old.parent_discord_id
+                                        and history.counts_for_hourly = true
+                                        and history.recruited_at >= current_weekly_recruit_started_at()
+                                ) then 1
+                                else 0
+                            end,
+                            0
+                        ),
                         updated_at = now()
                     where discord_id = old.parent_discord_id;
                 end if;
+
+                update recruit_history
+                set counts_for_hourly = false
+                where recruit_discord_id = old.discord_id
+                    and counts_for_hourly = true;
 
                 return old;
             end if;

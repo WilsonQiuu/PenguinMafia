@@ -34,6 +34,9 @@ const {
     REACTION_ROLES_CHANNEL_ID
 } = require('./reactionRoles.js');
 const {
+    ELECTION_LEADERBOARD_CHANNEL_ID
+} = require('./elections.js');
+const {
     setMemberNicknameToIgn
 } = require('./nicknames.js');
 
@@ -792,53 +795,40 @@ async function recordDirectDonation(guild, playerId, amount, db = sql, options =
     };
 }
 
-async function sendWeeklyGiveawayPingReminderForGuild(guild, db = sql) {
+function weeklyElectionAndGiveawayReminderMessage(totalAmount) {
+    const giveawayLine = totalAmount > 0n
+        ? `There is currently **${formatDonationAmount(totalAmount)}** in active giveaway prize pools in <#${GIVEAWAY_CHANNEL_ID}>.`
+        : `There are no active giveaway prize pools right now, but new giveaways are posted in <#${GIVEAWAY_CHANNEL_ID}>.`;
+
+    return (
+        `🗳️🐧 **Penguin Mafia DON Election Started!** 🐧🗳️\n\n` +
+        `The weekly election is open. Vote for the next **DON** with:\n` +
+        `\`/vote player:@Player\`\n\n` +
+        `Every player gets **1 vote**. You can vote for yourself, and you can change your vote any time before the election ends.\n` +
+        `Vote and watch the leaderboard in <#${ELECTION_LEADERBOARD_CHANNEL_ID}>.\n\n` +
+        `If Discord says you are not registered yet, finish the welcome onboarding first.\n\n` +
+        `🎉 **Giveaway Reminder**\n` +
+        `${giveawayLine}\n\n` +
+        `Want giveaway pings? Use the **Notify Me** button in the giveaway channel or react in <#${REACTION_ROLES_CHANNEL_ID}>.`
+    );
+}
+
+async function sendWeeklyElectionAndGiveawayReminderForGuild(guild, db = sql) {
     const totalAmount = await activeGiveawayTotalAmount(guild.id, db);
-
-    if (totalAmount <= 0n) {
-        return {
-            sent: 0,
-            failed: 0,
-            skipped: true,
-            totalAmount
-        };
-    }
-
-    const role = guild.roles.cache.get(GIVEAWAY_PING_ROLE_ID) ||
-        (await guild.roles.fetch(GIVEAWAY_PING_ROLE_ID).catch(() => null));
-
-    if (!role) {
-        console.warn(`Giveaway ping role ${GIVEAWAY_PING_ROLE_ID} was not found.`);
-        return {
-            sent: 0,
-            failed: 0,
-            skipped: true,
-            totalAmount
-        };
-    }
-
-    const rows = await db`
-        select discord_id
-        from players
-        where status = 'active'
-            and welcome_completed = true
-        order by discord_display_name asc, discord_username asc
-    `;
+    const members = await guild.members.fetch();
+    const message = weeklyElectionAndGiveawayReminderMessage(totalAmount);
     let sent = 0;
     let failed = 0;
+    let skippedMembers = 0;
 
-    for (const player of rows) {
-        const member = guild.members.cache.get(player.discord_id) ||
-            (await guild.members.fetch(player.discord_id).catch(() => null));
-
-        if (!member || member.user.bot || member.roles.cache.has(role.id)) {
+    for (const [, member] of members) {
+        if (!member || member.user.bot) {
+            skippedMembers += 1;
             continue;
         }
 
         await member.send({
-            content:
-                `🎉 Penguin Mafia has **${formatDonationAmount(totalAmount)}** in active giveaways right now in <#${GIVEAWAY_CHANNEL_ID}>.\n\n` +
-                `You do not currently have the giveaway ping role. Use the **Notify Me** button in the giveaway channel or react in <#${REACTION_ROLES_CHANNEL_ID}> if you want new giveaway pings.`,
+            content: message,
             allowedMentions: {
                 parse: []
             }
@@ -846,16 +836,22 @@ async function sendWeeklyGiveawayPingReminderForGuild(guild, db = sql) {
             sent += 1;
         }).catch(error => {
             failed += 1;
-            console.log(`Could not DM weekly giveaway reminder to ${player.discord_id}: ${error.message}`);
+            console.log(`Could not DM weekly election/giveaway reminder to ${member.user.id}: ${error.message}`);
         });
     }
 
     return {
         sent,
         failed,
+        skippedMembers,
+        checked: members.size,
         skipped: false,
         totalAmount
     };
+}
+
+async function sendWeeklyGiveawayPingReminderForGuild(guild, db = sql) {
+    return sendWeeklyElectionAndGiveawayReminderForGuild(guild, db);
 }
 
 async function startFundedGiveaway(guild, options, db = sql) {
@@ -1997,6 +1993,7 @@ module.exports = {
     processIncomingGiveawayPayment,
     renderGiveaway,
     renderGiveawayHostControls,
+    sendWeeklyElectionAndGiveawayReminderForGuild,
     sendWeeklyGiveawayPingReminderForGuild,
     startFundedGiveaway,
     upsertActiveGiveawaysBoard,

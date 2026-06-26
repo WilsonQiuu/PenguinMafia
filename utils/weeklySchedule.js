@@ -8,7 +8,7 @@ const {
     updateWeeklyRecruitsLeaderboardForGuild
 } = require('./leaderboards.js');
 const {
-    sendWeeklyGiveawayPingReminderForGuild
+    sendWeeklyElectionAndGiveawayReminderForGuild
 } = require('./giveaways.js');
 
 const EASTERN_TIME_ZONE = 'America/Toronto';
@@ -161,8 +161,8 @@ async function runFridayNoonScheduleForGuild(guild, db = sql, now = new Date()) 
             await writeScheduleState(db, stateKey, state);
         }
 
-        if (eastern.hour >= 13 && !state.giveawayPingReminderSent) {
-            giveawayPingReminderResult = await sendWeeklyGiveawayPingReminderForGuild(guild, db);
+        if (electionStarted && !state.giveawayPingReminderSent) {
+            giveawayPingReminderResult = await sendWeeklyElectionAndGiveawayReminderForGuild(guild, db);
             giveawayPingReminderSent = true;
             state = {
                 ...state,

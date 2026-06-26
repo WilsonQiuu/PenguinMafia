@@ -480,6 +480,124 @@ async function removeMissingSoldiers(guild, members) {
     return removedRows;
 }
 
+async function deactivateMissingRecruitCredits(guild, members) {
+    const memberIds = [...members.keys()];
+
+    if (memberIds.length === 0) {
+        return [];
+    }
+
+    const rows = await sql`
+        with active_week as (
+            select current_weekly_recruit_started_at() as started_at
+        ),
+        deactivated_history as (
+            update recruit_history
+            set counts_for_hourly = false
+            where counts_for_hourly = true
+                and recruit_discord_id not in ${sql(memberIds)}
+            returning
+                recruit_discord_id,
+                recruiter_discord_id,
+                recruited_at
+        ),
+        weekly_decrements as (
+            select
+                history.recruiter_discord_id,
+                count(*)::int as decrement_count
+            from deactivated_history history
+            cross join active_week
+            where history.recruited_at >= active_week.started_at
+            group by history.recruiter_discord_id
+        ),
+        updated_recruiters as (
+            update players recruiter
+            set
+                weekly_direct_recruits_count = greatest(
+                    recruiter.weekly_direct_recruits_count - weekly_decrements.decrement_count,
+                    0
+                ),
+                updated_at = now()
+            from weekly_decrements
+            where recruiter.discord_id = weekly_decrements.recruiter_discord_id
+            returning recruiter.discord_id
+        )
+        select
+            history.recruit_discord_id,
+            history.recruiter_discord_id,
+            history.recruited_at,
+            (history.recruited_at >= (select started_at from active_week)) as counted_for_weekly
+        from deactivated_history history
+    `;
+
+    if (rows.length > 0) {
+        const weeklyRows = rows.filter(row => row.counted_for_weekly);
+
+        console.log(
+            `Removed recruit leaderboard credit for ${rows.length} missing member${rows.length === 1 ? '' : 's'} ` +
+            `in ${guild.name}: hourly=${rows.length}, weekly=${weeklyRows.length}.`
+        );
+    }
+
+    return rows;
+}
+
+async function deactivateRecruitCreditForLeavingMember(guild, member) {
+    const rows = await sql`
+        with active_week as (
+            select current_weekly_recruit_started_at() as started_at
+        ),
+        deactivated_history as (
+            update recruit_history
+            set counts_for_hourly = false
+            where recruit_discord_id = ${member.user.id}
+                and counts_for_hourly = true
+            returning
+                recruiter_discord_id,
+                recruited_at
+        ),
+        weekly_decrements as (
+            select
+                history.recruiter_discord_id,
+                count(*)::int as decrement_count
+            from deactivated_history history
+            cross join active_week
+            where history.recruited_at >= active_week.started_at
+            group by history.recruiter_discord_id
+        ),
+        updated_recruiters as (
+            update players recruiter
+            set
+                weekly_direct_recruits_count = greatest(
+                    recruiter.weekly_direct_recruits_count - weekly_decrements.decrement_count,
+                    0
+                ),
+                updated_at = now()
+            from weekly_decrements
+            where recruiter.discord_id = weekly_decrements.recruiter_discord_id
+            returning recruiter.discord_id
+        )
+        select
+            history.recruiter_discord_id,
+            history.recruited_at,
+            (history.recruited_at >= (select started_at from active_week)) as counted_for_weekly
+        from deactivated_history history
+    `;
+
+    if (rows.length === 0) {
+        return false;
+    }
+
+    const weeklyRows = rows.filter(row => row.counted_for_weekly);
+
+    console.log(
+        `Removed recruit leaderboard credit for leaving member ${member.user.tag} in ${guild.name}: ` +
+        `hourly=${rows.length}, weekly=${weeklyRows.length}.`
+    );
+
+    return true;
+}
+
 async function syncGuildMembersOnStartup(startupContext) {
     const {
         guild,
@@ -704,10 +822,13 @@ async function syncGuildMembersOnStartup(startupContext) {
     }
     logStartupStep(`member sync loop complete (${members.size} fetched)`);
 
+    const deactivatedMissingRecruitCredits = await deactivateMissingRecruitCredits(guild, members);
+    logStartupStep(`missing recruit credit cleanup complete (${deactivatedMissingRecruitCredits.length} deactivated)`);
+
     const removedMissingSoldiers = await removeMissingSoldiers(guild, members);
     logStartupStep(`missing soldier cleanup complete (${removedMissingSoldiers.length} removed)`);
 
-    if (removedMissingSoldiers.length > 0) {
+    if (deactivatedMissingRecruitCredits.length > 0 || removedMissingSoldiers.length > 0) {
         await updateLeaderboardsForGuild(guild, sql).catch(error => {
             console.error('Leaderboard refresh failed after missing soldier cleanup:');
             console.error(error);
@@ -1866,7 +1987,7 @@ client.once(Events.ClientReady, async () => {
                     `Friday noon schedule ran for ${guild.name}: ` +
                     `weekly reset=${scheduleResult.weeklyReset}, ` +
                     `election started=${scheduleResult.electionStarted}, ` +
-                    `giveaway reminder=${scheduleResult.giveawayPingReminderSent}.`
+                    `weekly election/giveaway DM=${scheduleResult.giveawayPingReminderSent}.`
                 );
             }
 
@@ -2085,7 +2206,7 @@ client.once(Events.ClientReady, async () => {
                         `Friday noon schedule ran for ${guild.name}: ` +
                         `weekly reset=${scheduleResult.weeklyReset}, ` +
                         `election started=${scheduleResult.electionStarted}, ` +
-                        `giveaway reminder=${scheduleResult.giveawayPingReminderSent}.`
+                        `weekly election/giveaway DM=${scheduleResult.giveawayPingReminderSent}.`
                     );
                 }
             } catch (error) {
@@ -2421,6 +2542,17 @@ client.on(Events.ChannelDelete, async channel => {
 
 client.on(Events.GuildMemberRemove, async member => {
     if (!member.user.bot) {
+        try {
+            const recruitCreditRemoved = await deactivateRecruitCreditForLeavingMember(member.guild, member);
+
+            if (recruitCreditRemoved) {
+                scheduleLeaderboardsRefreshForGuild(member.guild, sql);
+            }
+        } catch (error) {
+            console.error(`Could not remove recruit leaderboard credit for leaving member ${member.user.tag}:`);
+            console.error(error);
+        }
+
         try {
             await removePlayerFromActiveElection(member.guild, member.user.id, member.user.id, sql, {
                 removeCastVotes: true

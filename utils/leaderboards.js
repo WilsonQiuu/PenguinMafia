@@ -146,6 +146,7 @@ async function updateWeeklyRecruitsLeaderboardForGuild(guild, sql) {
                 from recruit_history history
                 where history.recruiter_discord_id = weekly_players.discord_id
                     and history.recruited_at >= active_week.started_at
+                    and history.counts_for_hourly = true
             ) ranked
             where ranked.recruit_number = weekly_players.weekly_direct_recruits_count
             limit 1
@@ -269,6 +270,7 @@ async function resetWeeklyRecruitsAndSaveTopThree(sql, options = {}) {
                     from recruit_history history
                     where history.recruiter_discord_id = weekly_players.discord_id
                         and history.recruited_at >= active_week.started_at
+                        and history.counts_for_hourly = true
                 ) ranked
                 where ranked.recruit_number = weekly_players.recruit_count
                 limit 1

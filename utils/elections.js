@@ -6,11 +6,12 @@ const ELECTION_COMMANDS_CHANNEL_ID = process.env.ELECTION_COMMANDS_CHANNEL_ID ||
 const ELECTION_LEADERBOARD_REFRESH_DELAY_MS = 1_500;
 const electionLeaderboardRefreshes = new Map();
 
+const VOTE_WEIGHT = 1;
 const VOTE_WEIGHTS = new Map([
-    ['Penguin Soldier', 1],
-    ['Penguin Captain', 3],
-    ['Penguin General', 5],
-    ['Emperor Penguin', 10]
+    ['Penguin Soldier', VOTE_WEIGHT],
+    ['Penguin Captain', VOTE_WEIGHT],
+    ['Penguin General', VOTE_WEIGHT],
+    ['Emperor Penguin', VOTE_WEIGHT]
 ]);
 
 function playerName(player, fallback = 'Unknown Penguin') {
@@ -24,19 +25,12 @@ function playerMention(id) {
     return `<@${id}>`;
 }
 
-function rankVoteWeight(rankName) {
-    return VOTE_WEIGHTS.get(rankName) || 0;
+function rankVoteWeight() {
+    return VOTE_WEIGHT;
 }
 
-function rankVoteLine(rankName) {
-    const icons = {
-        'Penguin Soldier': '🧊',
-        'Penguin Captain': '🎩',
-        'Penguin General': '⭐',
-        'Emperor Penguin': '👑'
-    };
-
-    return `${icons[rankName] || '🐧'} **${rankName}:** ${rankVoteWeight(rankName)} vote${rankVoteWeight(rankName) === 1 ? '' : 's'}`;
+function voteRuleLine() {
+    return `🐧 **Every player:** ${VOTE_WEIGHT} vote`;
 }
 
 function medal(index) {
@@ -78,13 +72,7 @@ async function getElectionScores(electionId, db = sql) {
             target.discord_username,
             target.discord_display_name,
             target.minecraft_ign,
-            coalesce(sum(case voter.rank_name
-                when 'Penguin Soldier' then 1
-                when 'Penguin Captain' then 3
-                when 'Penguin General' then 5
-                when 'Emperor Penguin' then 10
-                else 0
-            end), 0)::int as votes
+            count(vote.voter_discord_id)::int as votes
         from election_votes vote
         join players voter
             on voter.discord_id = vote.voter_discord_id
@@ -100,13 +88,7 @@ async function getElectionScores(electionId, db = sql) {
             target.discord_username,
             target.discord_display_name,
             target.minecraft_ign
-        having coalesce(sum(case voter.rank_name
-            when 'Penguin Soldier' then 1
-            when 'Penguin Captain' then 3
-            when 'Penguin General' then 5
-            when 'Emperor Penguin' then 10
-            else 0
-        end), 0) > 0
+        having count(vote.voter_discord_id) > 0
         order by votes desc, target.discord_display_name asc nulls last, target.discord_username asc nulls last
     `;
 }
@@ -120,15 +102,12 @@ function renderPreStartAnnouncement() {
             `## 📅 Weekly Schedule\n` +
             `Elections begin every **Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time).\n` +
             `The weekly recruit leaderboard resets at the same time.\n\n` +
-            `When the election opens, use \`/vote player:@Player\` to send **all** of your vote power to one penguin.\n\n` +
-            `## 🧊 Vote Power\n` +
-            `${rankVoteLine('Penguin Soldier')}\n` +
-            `${rankVoteLine('Penguin Captain')}\n` +
-            `${rankVoteLine('Penguin General')}\n` +
-            `${rankVoteLine('Emperor Penguin')}\n\n` +
+            `When the election opens, use \`/vote player:@Player\` to send your **1 vote** to one penguin.\n\n` +
+            `## 🧊 Voting Rule\n` +
+            `${voteRuleLine()}\n\n` +
             `You can vote for anyone, including yourself.\n` +
             `You can change your vote any time before the election ends.\n` +
-            `If your rank changes during the election, your vote power changes with it.\n\n` +
+            `Ranks do not change vote weight; every voter counts equally.\n\n` +
             `Warm up your flippers. Campaign season is here. 🐧✨`,
         allowedMentions: {
             parse: ['everyone']
@@ -144,7 +123,7 @@ function renderElectionCommandsMessage() {
             `Elections automatically begin every **Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time) when weekly recruits reset.\n\n` +
             `## 🗳️ Player Commands\n` +
             `\`/vote player:@Player\`\n` +
-            `Cast all of your vote power for one penguin. Voters stay anonymous.\n\n` +
+            `Cast your 1 vote for one penguin. Voters stay anonymous.\n\n` +
             `\`/transfervotes player:@Player\`\n` +
             `Transfer the votes cast **for you** to another candidate.\n\n` +
             `\`/election\`\n` +
@@ -159,12 +138,9 @@ function renderElectionCommandsMessage() {
             `\`/electioncancel\` - Cancel the election with no winner.\n` +
             `\`/electionclear\` - Clear a finished board back to the starting-soon message.\n` +
             `\`/electionvotes player:@Player\` - Check anonymous vote totals for a player.\n\n` +
-            `## 🧊 Vote Power\n` +
-            `${rankVoteLine('Penguin Soldier')}\n` +
-            `${rankVoteLine('Penguin Captain')}\n` +
-            `${rankVoteLine('Penguin General')}\n` +
-            `${rankVoteLine('Emperor Penguin')}\n\n` +
-            `All of your votes go to **one** player. You can vote for yourself. You can change your vote before the election ends. Voter names are not shown. 🐧✨`
+            `## 🧊 Voting Rule\n` +
+            `${voteRuleLine()}\n\n` +
+            `Your vote goes to **one** player. You can vote for yourself. You can change your vote before the election ends. Voter names are not shown. 🐧✨`
     };
 }
 
@@ -184,12 +160,9 @@ function renderActiveLeaderboard(election, scores) {
             `Voting ends <t:${endsAt}:R>.\n\n` +
             `Use \`/vote player:@Player\` to vote.\n` +
             `Use \`/transfervotes player:@Player\` to transfer votes cast **for you** to another candidate.\n` +
-            `All of your own vote power goes to **one** player, and you can change your own vote with \`/vote\` before the ice clock melts.\n\n` +
-            `## 🧊 Vote Power\n` +
-            `${rankVoteLine('Penguin Soldier')}\n` +
-            `${rankVoteLine('Penguin Captain')}\n` +
-            `${rankVoteLine('Penguin General')}\n` +
-            `${rankVoteLine('Emperor Penguin')}\n\n` +
+            `Your vote goes to **one** player, and you can change it with \`/vote\` before the ice clock melts.\n\n` +
+            `## 🧊 Voting Rule\n` +
+            `${voteRuleLine()}\n\n` +
             `## 🏆 Live Leaderboard\n` +
             `${leaderboardLines}`,
         allowedMentions: {
@@ -731,7 +704,7 @@ async function castElectionVote(guild, voterUser, targetUser, db = sql, options 
         postVoteEventInBackground(
             guild,
             `🗳️🐧 **Anonymous Vote Cast!**\n\n` +
-            `A secret penguin sent vote power to ${targetMention}.\n\n` +
+            `A secret penguin voted for ${targetMention}.\n\n` +
             `The ballot is private. The ice has counted it. 🧊🗳️`,
             [targetUser.id]
         );
@@ -739,7 +712,7 @@ async function castElectionVote(guild, voterUser, targetUser, db = sql, options 
         postVoteEventInBackground(
             guild,
             `🔁🐧 **Anonymous Vote Changed!**\n\n` +
-            `A secret penguin moved their vote power to ${targetMention}.\n\n` +
+            `A secret penguin moved their vote to ${targetMention}.\n\n` +
             `The old ballot is private. The new ballot is counted. 🧊`,
             [targetUser.id]
         );
@@ -747,7 +720,7 @@ async function castElectionVote(guild, voterUser, targetUser, db = sql, options 
         postVoteEventInBackground(
             guild,
             `🐧🗳️ **Anonymous Vote Re-Confirmed!**\n\n` +
-            `A secret penguin kept their vote power on ${targetMention}.`,
+            `A secret penguin kept their vote on ${targetMention}.`,
             [targetUser.id]
         );
     }
@@ -821,13 +794,7 @@ async function transferReceivedElectionVotes(guild, sourceUser, targetUser, db =
         select
             voter.discord_id,
             voter.rank_name,
-            case voter.rank_name
-                when 'Penguin Soldier' then 1
-                when 'Penguin Captain' then 3
-                when 'Penguin General' then 5
-                when 'Emperor Penguin' then 10
-                else 0
-            end as votes
+            1::int as votes
         from moved_votes moved
         join players voter
             on voter.discord_id = moved.voter_discord_id
@@ -981,13 +948,7 @@ async function getVotesForPlayer(playerId, db = sql) {
     const rows = await db`
         select
             count(*)::int as voter_count,
-            coalesce(sum(case voter.rank_name
-                when 'Penguin Soldier' then 1
-                when 'Penguin Captain' then 3
-                when 'Penguin General' then 5
-                when 'Emperor Penguin' then 10
-                else 0
-            end), 0)::int as total
+            count(*)::int as total
         from election_votes vote
         join players voter
             on voter.discord_id = vote.voter_discord_id

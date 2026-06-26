@@ -18,7 +18,7 @@ module.exports = {
         .addUserOption(option =>
             option
                 .setName('player')
-                .setDescription('The penguin receiving all of your votes')
+                .setDescription('The penguin receiving your vote')
                 .setRequired(true)
         ),
 
@@ -39,7 +39,7 @@ module.exports = {
 
             await interaction.editReply(
                 `✅ **Vote locked in!**\n\n` +
-                `You sent **${result.weight}** vote${result.weight === 1 ? '' : 's'} to ${targetUser} because you are **${result.rankName}**.\n\n` +
+                `You sent your **1 vote** to ${targetUser}.\n\n` +
                 `You can change your own vote any time with \`/vote\`.`
             );
         } catch (error) {
