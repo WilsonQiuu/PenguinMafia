@@ -13,6 +13,9 @@ const DEFAULT_BALANCE_COMMAND_TIMEOUT_MS = 8_000;
 const DEFAULT_ALERT_COOLDOWN_MS = 15 * 60 * 1_000;
 const MIN_CHAT_COMMAND_DELAY_MS = 2_000;
 const MAX_PENDING_PAYMENT_RESPONSES = 5;
+const DEFAULT_COBBLE_DIG_DISTANCE = 5;
+const DEFAULT_COBBLE_IDLE_MS = 250;
+const DEFAULT_COBBLE_ERROR_MS = 1_000;
 const DEFAULT_BALANCE_COMMANDS = ['/balance', '/money', '/bal'];
 const DEFAULT_PAYMENT_SUCCESS_PATTERN =
     String.raw`\b(?:paid|sent|transferred)\b|\bpayment\b.*\b(?:complete|completed|successful|sent)\b`;
@@ -38,6 +41,7 @@ let lastIncomingPayment = null;
 let chatCommandQueue = Promise.resolve();
 let lastChatCommandAt = 0;
 let minecraftOperationQueue = Promise.resolve();
+let cobbleMode = null;
 const minecraftEvents = new EventEmitter();
 
 function sleep(ms) {
@@ -1336,6 +1340,205 @@ async function goHome(context = {}) {
     );
 }
 
+function cobbleTargetLabel(block) {
+    if (!block) {
+        return 'No block in crosshair';
+    }
+
+    return `${block.name} at ${block.position.x}, ${block.position.y}, ${block.position.z}`;
+}
+
+function cobbleModeStatus() {
+    if (!cobbleMode) {
+        return {
+            active: false
+        };
+    }
+
+    return {
+        active: true,
+        startedAt: cobbleMode.startedAt.toISOString(),
+        lastTarget: cobbleMode.lastTarget || null,
+        lastError: cobbleMode.lastError || null,
+        digsCompleted: cobbleMode.digsCompleted
+    };
+}
+
+function activateCobbleUseItem(state) {
+    if (!state.bot.usingHeldItem) {
+        state.bot.activateItem();
+    }
+}
+
+function restoreCobbleControls(state) {
+    try {
+        state.bot.stopDigging?.();
+    } catch (error) {
+        state.lastError = error.message;
+    }
+
+    try {
+        if (state.bot.usingHeldItem) {
+            state.bot.deactivateItem();
+        }
+    } catch (error) {
+        state.lastError = error.message;
+    }
+
+    try {
+        state.bot.setControlState('sneak', state.previousSneak);
+    } catch (error) {
+        state.lastError = error.message;
+    }
+}
+
+async function runCobbleModeLoop(state) {
+    while (cobbleMode === state && state.active) {
+        if (!isConnected() || bot !== state.bot) {
+            state.lastError = 'Minecraft bot disconnected.';
+            break;
+        }
+
+        try {
+            state.bot.setControlState('sneak', true);
+            activateCobbleUseItem(state);
+
+            const block = state.bot.blockAtCursor(DEFAULT_COBBLE_DIG_DISTANCE);
+            state.lastTarget = cobbleTargetLabel(block);
+
+            if (!block) {
+                state.bot.swingArm('right');
+                await sleep(DEFAULT_COBBLE_IDLE_MS);
+                continue;
+            }
+
+            if (!state.bot.canDigBlock(block)) {
+                state.lastError = `Cannot dig ${state.lastTarget}.`;
+                state.bot.swingArm('right');
+                await sleep(DEFAULT_COBBLE_ERROR_MS);
+                continue;
+            }
+
+            await state.bot.dig(block, 'ignore');
+            state.digsCompleted += 1;
+            state.lastError = null;
+            await sleep(DEFAULT_COBBLE_IDLE_MS);
+        } catch (error) {
+            if (!state.active || cobbleMode !== state) {
+                break;
+            }
+
+            state.lastError = error.message;
+
+            try {
+                state.bot.swingArm('right');
+            } catch {
+                // Ignore secondary animation failures while retrying cobble mode.
+            }
+
+            await sleep(DEFAULT_COBBLE_ERROR_MS);
+        }
+    }
+
+    if (cobbleMode === state && state.active) {
+        const reason = state.lastError || 'Cobble mode stopped unexpectedly.';
+        stopCobbleMode(
+            {
+                actorTag: 'Minecraft bot',
+                source: 'Cobble loop'
+            },
+            reason,
+            'warning'
+        );
+    }
+}
+
+function startCobbleMode(context = {}) {
+    if (!isConnected()) {
+        throw new Error('The Minecraft bot is not connected yet.');
+    }
+
+    if (cobbleMode) {
+        return {
+            started: false,
+            status: cobbleModeStatus()
+        };
+    }
+
+    cobbleMode = {
+        bot,
+        active: true,
+        startedAt: new Date(),
+        lastTarget: null,
+        lastError: null,
+        digsCompleted: 0,
+        previousSneak: bot.getControlState('sneak')
+    };
+
+    bot.setControlState('sneak', true);
+
+    try {
+        activateCobbleUseItem(cobbleMode);
+    } catch (error) {
+        cobbleMode.lastError = error.message;
+    }
+
+    emitMinecraftEvent(
+        'Cobble Mode Started',
+        'The Minecraft bot started cobble mode: sneak held, use item held, and repeated digging at the crosshair.',
+        'success',
+        {
+            'Dig distance': `${DEFAULT_COBBLE_DIG_DISTANCE} blocks`,
+            ...actionDetails(context)
+        }
+    );
+
+    void runCobbleModeLoop(cobbleMode);
+
+    return {
+        started: true,
+        status: cobbleModeStatus()
+    };
+}
+
+function stopCobbleMode(context = {}, reason = 'Cobble mode was stopped.', level = 'info') {
+    if (!cobbleMode) {
+        return {
+            stopped: false,
+            status: {
+                active: false
+            }
+        };
+    }
+
+    const state = cobbleMode;
+    cobbleMode = null;
+    state.active = false;
+    restoreCobbleControls(state);
+
+    emitMinecraftEvent(
+        'Cobble Mode Stopped',
+        reason,
+        level,
+        {
+            'Digs completed': String(state.digsCompleted),
+            'Last target': state.lastTarget || 'None',
+            ...(state.lastError ? { 'Last error': state.lastError } : {}),
+            ...actionDetails(context)
+        }
+    );
+
+    return {
+        stopped: true,
+        status: {
+            active: false,
+            digsCompleted: state.digsCompleted,
+            lastTarget: state.lastTarget || null,
+            lastError: state.lastError || null
+        }
+    };
+}
+
 function randomReconnectDelayMinutes(random = Math.random) {
     return Math.floor(random() * (
         MAX_RECONNECT_DELAY_MINUTES - MIN_RECONNECT_DELAY_MINUTES + 1
@@ -1437,6 +1640,19 @@ function connect(context = {}) {
         );
     });
 
+    currentBot.once('death', () => {
+        if (cobbleMode?.bot === currentBot) {
+            stopCobbleMode(
+                {
+                    actorTag: 'Minecraft bot',
+                    source: 'Death event'
+                },
+                'Cobble mode stopped because the Minecraft bot died.',
+                'warning'
+            );
+        }
+    });
+
     currentBot.on('whisper', (username, message) => {
         logPrivateMessage(username, message);
     });
@@ -1492,6 +1708,16 @@ function connect(context = {}) {
         console.log(`Minecraft connection ended: ${reason || 'unknown reason'}`);
 
         if (bot === currentBot) {
+            if (cobbleMode?.bot === currentBot) {
+                stopCobbleMode(
+                    {
+                        actorTag: 'Minecraft bot',
+                        source: 'Disconnect'
+                    },
+                    'Cobble mode stopped because the Minecraft bot disconnected.',
+                    'warning'
+                );
+            }
             cancelPendingPayment('Minecraft disconnected before the payment was confirmed.');
             cancelPendingBalance('Minecraft disconnected before the balance check was confirmed.');
             bot = null;
@@ -1530,6 +1756,15 @@ function disconnect() {
     }
 
     if (bot) {
+        if (cobbleMode?.bot === bot) {
+            stopCobbleMode(
+                {
+                    actorTag: 'Minecraft bot',
+                    source: 'Disconnect'
+                },
+                'Cobble mode stopped because the Minecraft bot is disconnecting.'
+            );
+        }
         cancelPendingPayment('Minecraft disconnected before the payment was confirmed.');
         cancelPendingBalance('Minecraft disconnected before the balance check was confirmed.');
         bot.quit('Minecraft payment bot disconnecting');
@@ -1603,6 +1838,7 @@ function printHelp() {
             '  msg <player> <message>       Send /msg [PLAYER] [message]',
             '  pay <player> <amount>        Send /pay [PLAYER] [AMOUNT]',
             '  bal                          Send /bal and wait for the balance response',
+            '  cobble [start|stop|status]   Hold sneak/use and repeatedly dig the block in view',
             '  reconnect                    Reconnect to the Minecraft server',
             '  quit                         Disconnect and stop this process',
             ''
@@ -1653,6 +1889,26 @@ async function handleTerminalCommand(input) {
             }
 
             await messagePlayer(args[0], args.slice(1).join(' '));
+        } else if (command === 'cobble') {
+            const action = (args[0] || 'start').toLowerCase();
+
+            if (action === 'start') {
+                const result = startCobbleMode({
+                    actorTag: 'Terminal',
+                    source: 'Terminal command'
+                });
+                console.log(result.started ? 'Cobble mode started.' : 'Cobble mode is already running.');
+            } else if (action === 'stop') {
+                const result = stopCobbleMode({
+                    actorTag: 'Terminal',
+                    source: 'Terminal command'
+                }, 'Cobble mode was stopped from the terminal.');
+                console.log(result.stopped ? 'Cobble mode stopped.' : 'Cobble mode is not running.');
+            } else if (action === 'status') {
+                console.log(JSON.stringify(cobbleModeStatus(), null, 2));
+            } else {
+                throw new Error('Usage: cobble [start|stop|status]');
+            }
         } else if (command === 'reconnect') {
             disconnect();
             connect();
@@ -1714,6 +1970,7 @@ module.exports = {
     classifyBalanceResponse,
     classifyPaymentResponse,
     cleanMinecraftMessage,
+    cobbleModeStatus,
     minecraftOptions,
     handleTerminalCommand,
     goHome,
@@ -1733,7 +1990,9 @@ module.exports = {
     sendUnexpectedDisconnectAlert,
     sendTwilioSms,
     smsAlertConfiguration,
+    startCobbleMode,
     startMinecraftBot,
+    stopCobbleMode,
     stopMinecraftBot,
     validatePaymentAmount,
     validatePlayer

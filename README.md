@@ -111,6 +111,7 @@ say <message>
 msg <player> <message>
 pay <player> <amount>
 bal
+cobble [start|stop|status]
 reconnect
 quit
 ```
@@ -121,7 +122,7 @@ Example payment:
 pay PenguinPlayer 100m
 ```
 
-This sends `/pay PenguinPlayer 100m` to Minecraft chat. The Don can also control the same client from Discord with `/bot start`, `/bot bal`, `/bot pay`, `/bot msg`, `/bot home`, and `/bot quit`. Discord `/bot pay` accepts either a linked Discord user or a typed Minecraft username; linked Bedrock accounts are paid with the leading `.` automatically. `/bot bal` tries the configured balance command aliases, defaults to `/balance`, `/money`, then `/bal`, and waits for the server balance response. `/bot home` sends `/home 1` in Minecraft. Run the Discord bot with `npm run start`; do not run the standalone `npm run minecraft` process at the same time.
+This sends `/pay PenguinPlayer 100m` to Minecraft chat. The Don can also control the same client from Discord with `/bot start`, `/bot bal`, `/bot pay`, `/bot msg`, `/bot home`, `/bot cobble`, and `/bot quit`. Discord `/bot pay` accepts either a linked Discord user or a typed Minecraft username; linked Bedrock accounts are paid with the leading `.` automatically. `/bot bal` tries the configured balance command aliases, defaults to `/balance`, `/money`, then `/bal`, and waits for the server balance response. `/bot home` sends `/home 1` in Minecraft. `/bot cobble` starts cobble mode, which holds sneak, holds use item, and repeatedly mines the block in the bot's crosshair until `/bot cobble action:stop`, `/bot quit`, death, or disconnect. Run the Discord bot with `npm run start`; do not run the standalone `npm run minecraft` process at the same time.
 
 After sending a payment, the bot waits up to 30 seconds for the server's chat response. It checks the bot balance before and after the payment, reports known failure responses quickly, and treats the payment as sent if the balance dropped even when chat confirmation failed. Payment and balance commands share one queue, so later payouts wait for the active payment confirmation instead of being failed immediately. Server messages are logged with timestamps and their raw packet contents for troubleshooting.
 

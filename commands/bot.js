@@ -16,12 +16,15 @@ const {
 } = require('../utils/payouts.js');
 const {
     checkBalance,
+    cobbleModeStatus,
     emitMinecraftEvent,
     goHome,
     messagePlayer,
     minecraftBotStatus,
     payPlayer,
+    startCobbleMode,
     startMinecraftBot,
+    stopCobbleMode,
     stopMinecraftBot
 } = require('../minecraft-bot.js');
 
@@ -107,6 +110,19 @@ function paymentFailureReply(error, target = null) {
     );
 }
 
+function cobbleStatusLine(status) {
+    if (!status.active) {
+        return 'Cobble mode is not running.';
+    }
+
+    return (
+        `Cobble mode is running.\n` +
+        `Digs completed: **${status.digsCompleted || 0}**\n` +
+        `Last target: **${status.lastTarget || 'None yet'}**` +
+        `${status.lastError ? `\nLast error: **${status.lastError}**` : ''}`
+    );
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('bot')
@@ -166,6 +182,31 @@ module.exports = {
             subcommand
                 .setName('home')
                 .setDescription('Send the Minecraft bot to home 1.')
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('cobble')
+                .setDescription('Hold sneak/use and repeatedly mine the block in the bot crosshair.')
+                .addStringOption(option =>
+                    option
+                        .setName('action')
+                        .setDescription('Start, stop, or check cobble mode.')
+                        .setRequired(false)
+                        .addChoices(
+                            {
+                                name: 'start',
+                                value: 'start'
+                            },
+                            {
+                                name: 'stop',
+                                value: 'stop'
+                            },
+                            {
+                                name: 'status',
+                                value: 'status'
+                            }
+                        )
+                )
         )
         .addSubcommand(subcommand =>
             subcommand
@@ -240,6 +281,36 @@ module.exports = {
                     stopped
                         ? '✅ Minecraft bot disconnected and automatic reconnecting stopped.'
                         : 'ℹ️ The Minecraft bot is already stopped.'
+                );
+                return;
+            }
+
+            if (subcommand === 'cobble') {
+                const action = interaction.options.getString('action') || 'start';
+
+                if (action === 'status') {
+                    await interaction.editReply(`ℹ️ ${cobbleStatusLine(cobbleModeStatus())}`);
+                    return;
+                }
+
+                if (action === 'stop') {
+                    const result = stopCobbleMode(
+                        actionContext,
+                        'Cobble mode was stopped from Discord.'
+                    );
+                    await interaction.editReply(
+                        result.stopped
+                            ? '✅ Cobble mode stopped. Sneak/use/digging were released.'
+                            : 'ℹ️ Cobble mode was not running.'
+                    );
+                    return;
+                }
+
+                const result = startCobbleMode(actionContext);
+                await interaction.editReply(
+                    result.started
+                        ? '✅ Cobble mode started. The bot is holding sneak, holding use item, and repeatedly mining the block in its crosshair. Use `/bot cobble action:stop` to stop it.'
+                        : `ℹ️ ${cobbleStatusLine(result.status)}`
                 );
                 return;
             }
