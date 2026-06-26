@@ -573,6 +573,68 @@ async function markHourlyRewardPayoutJobCredited(job, reason, db = sql) {
     });
 }
 
+async function recordHourlyRewardPayoutJobEarnings(job, db = sql) {
+    if (!['paid', 'credited'].includes(job?.status)) {
+        return;
+    }
+
+    const amountCents = BigInt(job.amount_cents || 0);
+
+    if (!job.recipient_discord_id || amountCents <= 0n) {
+        return;
+    }
+
+    await db.begin(async tx => {
+        const lockedRows = await tx`
+            select *
+            from hourly_recruit_reward_payout_jobs
+            where id = ${job.id}
+            for update
+        `;
+        const lockedJob = lockedRows[0];
+
+        if (
+            !lockedJob ||
+            lockedJob.earnings_recorded_at ||
+            !['paid', 'credited'].includes(lockedJob.status)
+        ) {
+            return;
+        }
+
+        const lockedAmountCents = BigInt(lockedJob.amount_cents || 0);
+
+        if (!lockedJob.recipient_discord_id || lockedAmountCents <= 0n) {
+            return;
+        }
+
+        if (lockedJob.is_winner) {
+            await tx`
+                update players
+                set
+                    personal_production = personal_production + ${lockedAmountCents.toString()}::bigint,
+                    updated_at = now()
+                where discord_id = ${lockedJob.recipient_discord_id}
+            `;
+        } else {
+            await tx`
+                update players
+                set
+                    team_overrides = team_overrides + ${lockedAmountCents.toString()}::bigint,
+                    updated_at = now()
+                where discord_id = ${lockedJob.recipient_discord_id}
+            `;
+        }
+
+        await tx`
+            update hourly_recruit_reward_payout_jobs
+            set
+                earnings_recorded_at = now(),
+                updated_at = now()
+            where id = ${lockedJob.id}
+        `;
+    });
+}
+
 async function updateHourlyRewardPayoutJobStage(jobId, stage, details, db = sql) {
     if (stage === 'balance_before') {
         await db`
@@ -692,6 +754,7 @@ async function processHourlyRewardPayoutJob(guild, job, db = sql) {
             'Missing linked Minecraft account or edition.',
             db
         );
+        await recordHourlyRewardPayoutJobEarnings(creditedJob, db);
         await sendHourlyRewardPayoutNotification(guild, creditedJob, db);
         return {
             retryLater: false
@@ -722,6 +785,7 @@ async function processHourlyRewardPayoutJob(guild, job, db = sql) {
             balanceAfter: payment.balanceAfter?.amount?.toString?.() || null
         });
 
+        await recordHourlyRewardPayoutJobEarnings(paidJob, db);
         await sendHourlyRewardPayoutNotification(guild, paidJob, db);
         return {
             retryLater: false
@@ -735,6 +799,7 @@ async function processHourlyRewardPayoutJob(guild, job, db = sql) {
         }
 
         const creditedJob = await markHourlyRewardPayoutJobCredited(job, error.message, db);
+        await recordHourlyRewardPayoutJobEarnings(creditedJob, db);
         await sendHourlyRewardPayoutNotification(guild, creditedJob, db);
         return {
             retryLater: false

@@ -41,7 +41,7 @@ function countLine(count, singular, plural = `${singular}s`) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('giveawayearnings')
-        .setDescription('Check total money earned from giveaway wins and giveaway commissions.')
+        .setDescription('Check total money earned from giveaways and hourly recruiter rewards.')
         .addUserOption(option =>
             option
                 .setName('player')
@@ -78,31 +78,65 @@ module.exports = {
 
             const player = playerRows[0];
             const rows = await sql`
+                with earnings as (
+                    select
+                        'giveaway' as source,
+                        amount_cents,
+                        is_winner
+                    from giveaway_payout_jobs
+                    where guild_id = ${interaction.guild.id}
+                        and recipient_discord_id = ${requestedUser.id}
+                        and status in ('paid', 'credited')
+
+                    union all
+
+                    select
+                        'hourly' as source,
+                        amount_cents,
+                        is_winner
+                    from hourly_recruit_reward_payout_jobs
+                    where guild_id = ${interaction.guild.id}
+                        and recipient_discord_id = ${requestedUser.id}
+                        and status in ('paid', 'credited')
+                )
                 select
                     coalesce(sum(amount_cents) filter (where is_winner = true), 0)::text as direct_cents,
                     coalesce(sum(amount_cents) filter (where is_winner = false), 0)::text as commission_cents,
+                    coalesce(sum(amount_cents) filter (where source = 'giveaway' and is_winner = true), 0)::text as giveaway_direct_cents,
+                    coalesce(sum(amount_cents) filter (where source = 'hourly' and is_winner = true), 0)::text as hourly_direct_cents,
+                    coalesce(sum(amount_cents) filter (where source = 'giveaway' and is_winner = false), 0)::text as giveaway_commission_cents,
+                    coalesce(sum(amount_cents) filter (where source = 'hourly' and is_winner = false), 0)::text as hourly_commission_cents,
                     coalesce(sum(amount_cents), 0)::text as total_cents,
                     count(*) filter (where is_winner = true)::int as direct_payouts,
                     count(*) filter (where is_winner = false)::int as commission_payouts,
+                    count(*) filter (where source = 'giveaway' and is_winner = true)::int as giveaway_direct_payouts,
+                    count(*) filter (where source = 'hourly' and is_winner = true)::int as hourly_direct_payouts,
+                    count(*) filter (where source = 'giveaway' and is_winner = false)::int as giveaway_commission_payouts,
+                    count(*) filter (where source = 'hourly' and is_winner = false)::int as hourly_commission_payouts,
                     count(*)::int as total_payouts
-                from giveaway_payout_jobs
-                where guild_id = ${interaction.guild.id}
-                    and recipient_discord_id = ${requestedUser.id}
-                    and status in ('paid', 'credited')
+                from earnings
             `;
             const earnings = rows[0] || {};
 
             await interaction.editReply(
-                `🎁 **Giveaway Earnings**\n\n` +
+                `🎁 **Giveaway + Hourly Reward Earnings**\n\n` +
                 `Player: **${playerName(player, requestedUser.username)}**\n` +
                 `${minecraftAccountLine(player)}\n\n` +
-                `Direct giveaway wins: **${formatCents(earnings.direct_cents || 0)}** ` +
+                `Direct earnings: **${formatCents(earnings.direct_cents || 0)}** ` +
                 `(${countLine(earnings.direct_payouts || 0, 'payout')})\n` +
-                `Giveaway commissions: **${formatCents(earnings.commission_cents || 0)}** ` +
+                `- Giveaway wins: **${formatCents(earnings.giveaway_direct_cents || 0)}** ` +
+                `(${countLine(earnings.giveaway_direct_payouts || 0, 'payout')})\n` +
+                `- Hourly recruiter wins: **${formatCents(earnings.hourly_direct_cents || 0)}** ` +
+                `(${countLine(earnings.hourly_direct_payouts || 0, 'payout')})\n` +
+                `Commission earnings: **${formatCents(earnings.commission_cents || 0)}** ` +
                 `(${countLine(earnings.commission_payouts || 0, 'payout')})\n` +
-                `Total giveaway earnings: **${formatCents(earnings.total_cents || 0)}** ` +
+                `- Giveaway commissions: **${formatCents(earnings.giveaway_commission_cents || 0)}** ` +
+                `(${countLine(earnings.giveaway_commission_payouts || 0, 'payout')})\n` +
+                `- Hourly reward commissions: **${formatCents(earnings.hourly_commission_cents || 0)}** ` +
+                `(${countLine(earnings.hourly_commission_payouts || 0, 'payout')})\n` +
+                `Total earnings: **${formatCents(earnings.total_cents || 0)}** ` +
                 `(${countLine(earnings.total_payouts || 0, 'payout')})\n\n` +
-                `Includes completed giveaway payouts that were either paid in Minecraft or credited to unpaid commissions.`
+                `Hourly top-recruiter winners count as direct earnings. Recruiter-chain payouts count as commissions.`
             );
         } catch (error) {
             logCommandError(interaction, '/giveawayearnings', error);

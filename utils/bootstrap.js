@@ -644,6 +644,7 @@ async function ensureDatabaseSchema(sql) {
             processing_started_at timestamptz,
             paid_at timestamptz,
             credited_at timestamptz,
+            earnings_recorded_at timestamptz,
             notification_sent_at timestamptz,
             created_at timestamptz not null default now(),
             updated_at timestamptz not null default now(),
@@ -666,6 +667,11 @@ async function ensureDatabaseSchema(sql) {
     await sql`
         alter table hourly_recruit_reward_payout_jobs
         drop constraint if exists hourly_recruit_reward_payout_jobs_status_check
+    `;
+
+    await sql`
+        alter table hourly_recruit_reward_payout_jobs
+        add column if not exists earnings_recorded_at timestamptz
     `;
 
     await sql`
@@ -706,6 +712,48 @@ async function ensureDatabaseSchema(sql) {
             payout_payload = (payout_payload #>> '{}')::jsonb,
             updated_at = now()
         where jsonb_typeof(payout_payload) = 'string'
+    `;
+
+    await sql`
+        with unrecorded_hourly_jobs as (
+            select
+                id,
+                recipient_discord_id,
+                amount_cents,
+                is_winner
+            from hourly_recruit_reward_payout_jobs
+            where status in ('paid', 'credited')
+                and earnings_recorded_at is null
+        ),
+        player_totals as (
+            select
+                recipient_discord_id,
+                coalesce(sum(amount_cents) filter (where is_winner = true), 0)::bigint as personal_amount,
+                coalesce(sum(amount_cents) filter (where is_winner = false), 0)::bigint as override_amount
+            from unrecorded_hourly_jobs
+            group by recipient_discord_id
+        ),
+        updated_players as (
+            update players player
+            set
+                personal_production = personal_production + player_totals.personal_amount,
+                team_overrides = team_overrides + player_totals.override_amount,
+                updated_at = now()
+            from player_totals
+            where player.discord_id = player_totals.recipient_discord_id
+            returning player.discord_id
+        )
+        update hourly_recruit_reward_payout_jobs job
+        set
+            earnings_recorded_at = now(),
+            updated_at = now()
+        from unrecorded_hourly_jobs
+        where job.id = unrecorded_hourly_jobs.id
+            and exists (
+                select 1
+                from updated_players
+                where updated_players.discord_id = unrecorded_hourly_jobs.recipient_discord_id
+            )
     `;
 
     await sql`
