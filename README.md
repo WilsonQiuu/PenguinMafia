@@ -153,7 +153,8 @@ On startup, the bot will:
 - create or update Penguin and Staff roles
 - ensure managed channels for leaderboards, promotion events, and mod logs
 - deploy slash commands
-- sync members and onboarding state
+- skip full member/onboarding sync unless `FULL_STARTUP_SYNC=true`
+- send incomplete-welcome reminders and clean stale welcome channels every Saturday at 12:00 PM Eastern Time
 
 ## Discord Bot Setup
 

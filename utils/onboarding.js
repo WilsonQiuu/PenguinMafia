@@ -450,10 +450,6 @@ async function startOnboardingForMember(member, context = {}) {
         return isWelcomeFlowMessage(message, member.id);
     });
 
-    if (!isTest) {
-        await sendWelcomeReminderIfDue(member, channel);
-    }
-
     if (alreadyStarted && !isTest) {
         return channel;
     }
@@ -540,6 +536,32 @@ async function cleanupWelcomeChannelsForMissingMembers(guild, members) {
     }
 
     return deletedChannels;
+}
+
+async function cleanupWelcomeChannelForMember(guild, userId) {
+    const channels = await guild.channels.fetch();
+    const welcomeChannel = channels.find(channel => {
+        return channel?.type === ChannelType.GuildText &&
+            String(channel.topic || '') === welcomeChannelTopic(userId);
+    });
+
+    if (!welcomeChannel) {
+        return null;
+    }
+
+    try {
+        if (!welcomeChannel.deletable) {
+            console.log(`Could not delete welcome channel ${welcomeChannel.name} (${welcomeChannel.id}) for ${userId}: channel is not deletable.`);
+            return null;
+        }
+
+        await welcomeChannel.delete('Penguin Mafia onboarding cleanup for member leave');
+        return welcomeChannel;
+    } catch (error) {
+        console.error(`Could not delete welcome channel ${welcomeChannel.name} (${welcomeChannel.id}) for ${userId}:`);
+        console.error(error);
+        return null;
+    }
 }
 
 async function completeOnboarding(member, linkedIgn = null, minecraftEdition = null) {
@@ -748,6 +770,7 @@ async function handleWelcomeModal(interaction) {
 
 module.exports = {
     accountLinkInfoMessage,
+    cleanupWelcomeChannelForMember,
     cleanupWelcomeChannelsForMissingMembers,
     recruitingMessage,
     remindIncompleteWelcomeMembers,

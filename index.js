@@ -38,13 +38,14 @@ const {
     updateElectionLeaderboard
 } = require('./utils/elections.js');
 const {
-    runFridayNoonScheduleForGuild
+    runFridayNoonScheduleForGuild,
+    runSaturdayNoonWelcomeMaintenanceForGuild
 } = require('./utils/weeklySchedule.js');
 const {
+    cleanupWelcomeChannelForMember,
     cleanupWelcomeChannelsForMissingMembers,
     handleWelcomeButton,
     handleWelcomeModal,
-    remindIncompleteWelcomeMembers,
     startOnboardingForMember
 } = require('./utils/onboarding.js');
 const {
@@ -609,16 +610,27 @@ async function syncGuildMembersOnStartup(startupContext) {
         staffRolesUpdated
     } = startupContext;
     const logStartupStep = createStartupTimer(`member-sync:${guild.name}`);
-    const shouldRunFullStartupSync = process.env.FULL_STARTUP_SYNC !== 'false';
+    const shouldRunFullStartupSync = process.env.FULL_STARTUP_SYNC === 'true';
+    const shouldRunMissingRankStartupOnboarding = process.env.STARTUP_MISSING_RANK_ONBOARDING === 'true';
 
     if (!shouldRunFullStartupSync) {
-        const missingRankScan = await startOnboardingForMembersMissingRankRole(guild, rankRoles);
-        logStartupStep('missing-rank onboarding scan complete');
+        if (shouldRunMissingRankStartupOnboarding) {
+            const missingRankScan = await startOnboardingForMembersMissingRankRole(guild, rankRoles);
+            logStartupStep('missing-rank onboarding scan complete');
 
+            console.log(
+                `Startup member scan complete for ${guild.name}: ` +
+                `members checked=${missingRankScan.checkedCount}, missing rank welcomes started=${missingRankScan.onboardingStarted}, bots skipped=${missingRankScan.skippedBots}. ` +
+                `Full member sync skipped because FULL_STARTUP_SYNC is not true.`
+            );
+            return;
+        }
+
+        logStartupStep('startup member sync skipped');
         console.log(
-            `Startup member scan complete for ${guild.name}: ` +
-            `members checked=${missingRankScan.checkedCount}, missing rank welcomes started=${missingRankScan.onboardingStarted}, bots skipped=${missingRankScan.skippedBots}. ` +
-            `Full member sync skipped because FULL_STARTUP_SYNC=false.`
+            `Startup member sync skipped for ${guild.name}. ` +
+            `Set FULL_STARTUP_SYNC=true to run a full sync, or STARTUP_MISSING_RANK_ONBOARDING=true to scan missing rank roles. ` +
+            `Welcome reminders and stale welcome cleanup run on Saturdays at 12:00 PM Eastern Time.`
         );
         return;
     }
@@ -2060,21 +2072,6 @@ client.once(Events.ClientReady, async () => {
         }
     }
 
-    async function sendDueWelcomeReminders() {
-        for (const [, guild] of client.guilds.cache) {
-            try {
-                const result = await remindIncompleteWelcomeMembers(guild);
-
-                if (result.sent > 0) {
-                    console.log(`Welcome reminders sent for ${guild.name}: ${result.sent}/${result.checked} due member(s).`);
-                }
-            } catch (error) {
-                console.error(`Welcome reminder scan failed for ${guild.name}:`);
-                console.error(error);
-            }
-        }
-    }
-
     async function sendDueAccountLinkReminders() {
         for (const [, guild] of client.guilds.cache) {
             try {
@@ -2089,8 +2086,6 @@ client.once(Events.ClientReady, async () => {
             }
         }
     }
-
-    await sendDueAccountLinkReminders();
 
     function createNonOverlappingRunner(label, runner) {
         let running = false;
@@ -2115,14 +2110,11 @@ client.once(Events.ClientReady, async () => {
         };
     }
 
-    const runReminderScans = createNonOverlappingRunner('Reminder scan', async () => {
-        await Promise.all([
-            sendDueWelcomeReminders(),
-            sendDueAccountLinkReminders()
-        ]);
+    const runAccountLinkReminderScan = createNonOverlappingRunner('Account-link reminder scan', async () => {
+        await sendDueAccountLinkReminders();
     });
 
-    setInterval(runReminderScans, 24 * 60 * 60 * 1000);
+    setInterval(runAccountLinkReminderScan, 24 * 60 * 60 * 1000);
 
     const runHourlyRecruitRefresh = createNonOverlappingRunner('Hourly recruit refresh', async () => {
         for (const [, guild] of client.guilds.cache) {
@@ -2211,6 +2203,27 @@ client.once(Events.ClientReady, async () => {
                 }
             } catch (error) {
                 console.error(`Friday noon schedule failed for ${guild.name}:`);
+                console.error(error);
+            }
+
+            try {
+                const welcomeMaintenance = await runSaturdayNoonWelcomeMaintenanceForGuild(guild, sql);
+
+                if (
+                    welcomeMaintenance.cleanupDone ||
+                    welcomeMaintenance.welcomeRemindersSent ||
+                    welcomeMaintenance.deletedWelcomeChannels > 0 ||
+                    welcomeMaintenance.sent > 0
+                ) {
+                    console.log(
+                        `Saturday welcome maintenance ran for ${guild.name}: ` +
+                        `cleanup=${welcomeMaintenance.cleanupDone}, ` +
+                        `deleted welcome channels=${welcomeMaintenance.deletedWelcomeChannels}, ` +
+                        `reminders=${welcomeMaintenance.sent}/${welcomeMaintenance.checked}.`
+                    );
+                }
+            } catch (error) {
+                console.error(`Saturday welcome maintenance failed for ${guild.name}:`);
                 console.error(error);
             }
 
@@ -2542,6 +2555,17 @@ client.on(Events.ChannelDelete, async channel => {
 
 client.on(Events.GuildMemberRemove, async member => {
     if (!member.user.bot) {
+        try {
+            const deletedWelcomeChannel = await cleanupWelcomeChannelForMember(member.guild, member.user.id);
+
+            if (deletedWelcomeChannel) {
+                console.log(`Deleted welcome channel ${deletedWelcomeChannel.name} for leaving member ${member.user.tag}.`);
+            }
+        } catch (error) {
+            console.error(`Could not clean up welcome channel for leaving member ${member.user.tag}:`);
+            console.error(error);
+        }
+
         try {
             const recruitCreditRemoved = await deactivateRecruitCreditForLeavingMember(member.guild, member);
 

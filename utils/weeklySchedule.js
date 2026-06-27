@@ -10,9 +10,14 @@ const {
 const {
     sendWeeklyElectionAndGiveawayReminderForGuild
 } = require('./giveaways.js');
+const {
+    cleanupWelcomeChannelsForMissingMembers,
+    remindIncompleteWelcomeMembers
+} = require('./onboarding.js');
 
 const EASTERN_TIME_ZONE = 'America/Toronto';
 const runningGuildSchedules = new Set();
+const runningWelcomeMaintenance = new Set();
 const easternFormatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: EASTERN_TIME_ZONE,
     weekday: 'short',
@@ -44,6 +49,10 @@ function easternDateParts(date = new Date()) {
 
 function fridayScheduleStateKey(guildId, dateKey) {
     return `friday_noon_cycle:${guildId}:${dateKey}`;
+}
+
+function saturdayWelcomeMaintenanceStateKey(guildId, dateKey) {
+    return `saturday_noon_welcome:${guildId}:${dateKey}`;
 }
 
 async function readScheduleState(db, key) {
@@ -93,6 +102,81 @@ async function writeScheduleState(db, key, state) {
             value = excluded.value,
             updated_at = now()
     `;
+}
+
+async function runSaturdayNoonWelcomeMaintenanceForGuild(guild, db = sql, now = new Date()) {
+    const eastern = easternDateParts(now);
+
+    if (eastern.weekday !== 'Sat' || eastern.hour < 12) {
+        return {
+            due: false,
+            cleanupDone: false,
+            welcomeRemindersSent: false,
+            deletedWelcomeChannels: 0,
+            checked: 0,
+            sent: 0
+        };
+    }
+
+    if (runningWelcomeMaintenance.has(guild.id)) {
+        return {
+            due: true,
+            cleanupDone: false,
+            welcomeRemindersSent: false,
+            deletedWelcomeChannels: 0,
+            checked: 0,
+            sent: 0
+        };
+    }
+
+    runningWelcomeMaintenance.add(guild.id);
+
+    try {
+        const stateKey = saturdayWelcomeMaintenanceStateKey(guild.id, eastern.dateKey);
+        let state = await readScheduleState(db, stateKey);
+        let cleanupDone = false;
+        let welcomeRemindersSent = false;
+        let deletedWelcomeChannels = 0;
+        let reminderResult = {
+            checked: 0,
+            sent: 0
+        };
+
+        if (!state.cleanupDone) {
+            const members = await guild.members.fetch();
+            const deletedChannels = await cleanupWelcomeChannelsForMissingMembers(guild, members);
+            deletedWelcomeChannels = deletedChannels.length;
+            cleanupDone = true;
+            state = {
+                ...state,
+                dateKey: eastern.dateKey,
+                cleanupDone: true
+            };
+            await writeScheduleState(db, stateKey, state);
+        }
+
+        if (!state.welcomeRemindersSent) {
+            reminderResult = await remindIncompleteWelcomeMembers(guild);
+            welcomeRemindersSent = true;
+            state = {
+                ...state,
+                dateKey: eastern.dateKey,
+                welcomeRemindersSent: true
+            };
+            await writeScheduleState(db, stateKey, state);
+        }
+
+        return {
+            due: true,
+            cleanupDone,
+            welcomeRemindersSent,
+            deletedWelcomeChannels,
+            checked: reminderResult.checked,
+            sent: reminderResult.sent
+        };
+    } finally {
+        runningWelcomeMaintenance.delete(guild.id);
+    }
 }
 
 async function runFridayNoonScheduleForGuild(guild, db = sql, now = new Date()) {
@@ -187,5 +271,7 @@ module.exports = {
     EASTERN_TIME_ZONE,
     easternDateParts,
     fridayScheduleStateKey,
-    runFridayNoonScheduleForGuild
+    runFridayNoonScheduleForGuild,
+    runSaturdayNoonWelcomeMaintenanceForGuild,
+    saturdayWelcomeMaintenanceStateKey
 };
