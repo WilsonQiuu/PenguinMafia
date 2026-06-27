@@ -16,7 +16,10 @@ const MAX_PENDING_PAYMENT_RESPONSES = 5;
 const DEFAULT_COBBLE_DIG_DISTANCE = 5;
 const DEFAULT_COBBLE_IDLE_MS = 250;
 const DEFAULT_COBBLE_ERROR_MS = 1_000;
+const DEFAULT_COBBLE_WIGGLE_TAP_MS = 250;
+const DEFAULT_COBBLE_WIGGLE_GAP_MS = 100;
 const COBBLE_LOOK_STRAIGHT_UP_PITCH = Math.PI / 2;
+const COBBLE_WIGGLE_CONTROLS = ['left', 'right', 'forward', 'back'];
 const DEFAULT_BALANCE_COMMANDS = ['/balance', '/money', '/bal'];
 const DEFAULT_PAYMENT_SUCCESS_PATTERN =
     String.raw`\b(?:paid|sent|transferred)\b|\bpayment\b.*\b(?:complete|completed|successful|sent)\b`;
@@ -1361,6 +1364,7 @@ function cobbleModeStatus() {
         startedAt: cobbleMode.startedAt.toISOString(),
         lastTarget: cobbleMode.lastTarget || null,
         lastError: cobbleMode.lastError || null,
+        wiggleCompleted: Boolean(cobbleMode.wiggleCompleted),
         digsCompleted: cobbleMode.digsCompleted
     };
 }
@@ -1379,6 +1383,39 @@ async function forceCobbleLookUp(state) {
     );
 }
 
+function releaseCobbleMovementControls(state) {
+    for (const control of COBBLE_WIGGLE_CONTROLS) {
+        state.bot.setControlState(control, false);
+    }
+}
+
+async function runCobbleStartupWiggle(state) {
+    if (state.wiggleStarted || state.wiggleCompleted) {
+        return;
+    }
+
+    state.wiggleStarted = true;
+
+    try {
+        releaseCobbleMovementControls(state);
+
+        for (const control of COBBLE_WIGGLE_CONTROLS) {
+            if (!state.active || cobbleMode !== state || !isConnected() || bot !== state.bot) {
+                break;
+            }
+
+            state.lastWiggleControl = control;
+            state.bot.setControlState(control, true);
+            await sleep(DEFAULT_COBBLE_WIGGLE_TAP_MS);
+            state.bot.setControlState(control, false);
+            await sleep(DEFAULT_COBBLE_WIGGLE_GAP_MS);
+        }
+    } finally {
+        releaseCobbleMovementControls(state);
+        state.wiggleCompleted = true;
+    }
+}
+
 function restoreCobbleControls(state) {
     try {
         state.bot.stopDigging?.();
@@ -1395,6 +1432,7 @@ function restoreCobbleControls(state) {
     }
 
     try {
+        releaseCobbleMovementControls(state);
         state.bot.setControlState('sneak', false);
     } catch (error) {
         state.lastError = error.message;
@@ -1409,6 +1447,8 @@ async function runCobbleModeLoop(state) {
         }
 
         try {
+            await forceCobbleLookUp(state);
+            await runCobbleStartupWiggle(state);
             state.bot.setControlState('sneak', true);
             await forceCobbleLookUp(state);
             activateCobbleUseItem(state);
@@ -1482,28 +1522,24 @@ function startCobbleMode(context = {}) {
         lastTarget: null,
         lastError: null,
         digsCompleted: 0,
-        previousSneak: bot.getControlState('sneak')
+        wiggleStarted: false,
+        wiggleCompleted: false,
+        lastWiggleControl: null
     };
 
-    bot.setControlState('sneak', true);
     void forceCobbleLookUp(cobbleMode).catch(error => {
         if (cobbleMode) {
             cobbleMode.lastError = error.message;
         }
     });
 
-    try {
-        activateCobbleUseItem(cobbleMode);
-    } catch (error) {
-        cobbleMode.lastError = error.message;
-    }
-
     emitMinecraftEvent(
         'Cobble Mode Started',
-        'The Minecraft bot started cobble mode: looking straight up, sneak held, use item held, and repeated digging at the crosshair.',
+        'The Minecraft bot started cobble mode: startup movement wiggle, looking straight up, sneak held, use item held, and repeated digging at the crosshair.',
         'success',
         {
             'Dig distance': `${DEFAULT_COBBLE_DIG_DISTANCE} blocks`,
+            'Startup wiggle': COBBLE_WIGGLE_CONTROLS.join(', '),
             ...actionDetails(context)
         }
     );

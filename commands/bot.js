@@ -323,7 +323,7 @@ module.exports = {
                 const result = startCobbleMode(actionContext);
                 await interaction.editReply(
                     result.started
-                        ? '✅ Cobble mode started. The bot is looking straight up, holding sneak, holding use item, and repeatedly mining the block in its crosshair. Use `/bot cobble action:stop` to stop it.'
+                        ? '✅ Cobble mode started. The bot will wiggle left/right/forward/back, then look straight up, hold sneak, hold use item, and repeatedly mine the block in its crosshair. Use `/bot cobble action:stop` to stop it.'
                         : `ℹ️ ${cobbleStatusLine(result.status)}`
                 );
                 return;
