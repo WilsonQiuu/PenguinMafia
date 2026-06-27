@@ -410,6 +410,38 @@ async function createGiveawayPaymentRequest(options, db = sql) {
     return rows[0];
 }
 
+async function createDonationPaymentRequest(options, db = sql) {
+    await db`
+        update donation_payment_requests
+        set
+            status = 'cancelled',
+            updated_at = now()
+        where guild_id = ${options.guildId}
+            and donor_discord_id = ${options.donorDiscordId}
+            and status = 'pending'
+    `;
+
+    const rows = await db`
+        insert into donation_payment_requests (
+            guild_id,
+            donor_discord_id,
+            donor_minecraft_ign,
+            payment_bot_user,
+            amount
+        )
+        values (
+            ${options.guildId},
+            ${options.donorDiscordId},
+            ${options.donorMinecraftIgn},
+            ${options.paymentBotUser},
+            ${options.amount.toString()}::bigint
+        )
+        returning *
+    `;
+
+    return rows[0];
+}
+
 async function fetchGiveawayChannel(guild, giveaway) {
     const channel = guild.channels.cache.get(giveaway.channel_id) ||
         (await guild.channels.fetch(giveaway.channel_id).catch(() => null));
@@ -935,9 +967,45 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
             };
         }
 
-        const donationPlayer = await findPlayerByMinecraftPaymentName(paymentPlayer, db);
+        const donationRows = await db`
+            select *
+            from donation_payment_requests
+            where guild_id = ${guild.id}
+                and status = 'pending'
+                and (
+                    lower(donor_minecraft_ign) = ${paymentPlayer}
+                    or lower(donor_minecraft_ign) = ${paymentPlayerWithoutLeadingDot}
+                    or lower(concat('.', donor_minecraft_ign)) = ${paymentPlayer}
+                )
+                and amount <= ${paidAmount.toString()}::bigint
+            order by created_at asc
+            limit 1
+        `;
+        const donationRequest = donationRows[0];
 
-        if (!donationPlayer) {
+        if (!donationRequest) {
+            const lowDonationRows = await db`
+                select *
+                from donation_payment_requests
+                where guild_id = ${guild.id}
+                    and status = 'pending'
+                    and (
+                        lower(donor_minecraft_ign) = ${paymentPlayer}
+                        or lower(donor_minecraft_ign) = ${paymentPlayerWithoutLeadingDot}
+                        or lower(concat('.', donor_minecraft_ign)) = ${paymentPlayer}
+                    )
+                order by created_at asc
+                limit 1
+            `;
+
+            if (lowDonationRows[0]) {
+                return {
+                    status: 'donation_too_low',
+                    request: lowDonationRows[0],
+                    paidAmount
+                };
+            }
+
             return {
                 status: 'donation_unmatched',
                 minecraftName: payment.player,
@@ -945,22 +1013,62 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
             };
         }
 
-        const donation = await recordDirectDonation(
-            guild,
-            donationPlayer.discord_id,
-            paidAmount,
-            db,
-            {
-                source: `unmatched Minecraft payment from ${payment.player || paymentPlayer}`
-            }
-        );
+        const claimedDonationRows = await db`
+            update donation_payment_requests
+            set
+                status = 'processing',
+                paid_amount = ${paidAmount.toString()}::bigint,
+                payment_message = ${payment.message || null},
+                paid_at = now(),
+                updated_at = now()
+            where id = ${donationRequest.id}
+                and status = 'pending'
+            returning *
+        `;
+        const claimedDonationRequest = claimedDonationRows[0];
 
-        return {
-            status: 'donation_recorded',
-            player: donationPlayer,
-            donation,
-            paidAmount
-        };
+        if (!claimedDonationRequest) {
+            return {
+                status: 'already_processing'
+            };
+        }
+
+        try {
+            const donation = await recordDirectDonation(
+                guild,
+                claimedDonationRequest.donor_discord_id,
+                paidAmount,
+                db,
+                {
+                    source: `donation request ${claimedDonationRequest.id}`
+                }
+            );
+
+            await db`
+                update donation_payment_requests
+                set
+                    status = 'recorded',
+                    updated_at = now()
+                where id = ${claimedDonationRequest.id}
+            `;
+
+            return {
+                status: 'donation_recorded',
+                request: claimedDonationRequest,
+                donation,
+                paidAmount
+            };
+        } catch (error) {
+            await db`
+                update donation_payment_requests
+                set
+                    status = 'failed',
+                    updated_at = now()
+                where id = ${claimedDonationRequest.id}
+            `;
+
+            throw error;
+        }
     }
 
     const claimedRows = await db`
@@ -1977,6 +2085,7 @@ module.exports = {
     activeGiveawayTotalAmount,
     cleanupEndedGiveawaysForGuild,
     closeGiveawayMessages,
+    createDonationPaymentRequest,
     createGiveaway,
     createGiveawayPaymentRequest,
     endGiveawayEarly,

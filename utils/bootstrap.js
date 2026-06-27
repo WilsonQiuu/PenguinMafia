@@ -254,6 +254,8 @@ async function ensureDatabaseSchema(sql) {
             discord_display_name text,
             minecraft_ign text,
             minecraft_edition text check (minecraft_edition in ('java', 'bedrock')),
+            joined_invite_code text,
+            joined_via_inviter_discord_id text,
             parent_discord_id text references players(discord_id) on delete set null,
             claims_available int not null default 0,
             donations bigint not null default 0 check (donations >= 0),
@@ -291,6 +293,16 @@ async function ensureDatabaseSchema(sql) {
     await sql`
         alter table players
         add column if not exists minecraft_edition text check (minecraft_edition in ('java', 'bedrock'))
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists joined_invite_code text
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists joined_via_inviter_discord_id text
     `;
 
     await sql`
@@ -458,6 +470,35 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        create table if not exists donation_payment_requests (
+            id bigserial primary key,
+            guild_id text not null,
+            donor_discord_id text not null references players(discord_id) on delete cascade,
+            donor_minecraft_ign text not null,
+            payment_bot_user text not null,
+            amount bigint not null check (amount > 0),
+            status text not null default 'pending' check (status in ('pending', 'processing', 'recorded', 'cancelled', 'failed')),
+            paid_amount bigint,
+            payment_message text,
+            created_at timestamptz not null default now(),
+            paid_at timestamptz,
+            updated_at timestamptz not null default now()
+        )
+    `;
+
+    await sql`
+        alter table donation_payment_requests
+        drop constraint if exists donation_payment_requests_status_check
+    `;
+
+    await sql`
+        alter table donation_payment_requests
+        add constraint donation_payment_requests_status_check check (
+            status in ('pending', 'processing', 'recorded', 'cancelled', 'failed')
+        )
+    `;
+
+    await sql`
         create table if not exists giveaway_boards (
             guild_id text primary key,
             channel_id text not null,
@@ -531,6 +572,12 @@ async function ensureDatabaseSchema(sql) {
     await sql`
         create index if not exists idx_giveaway_payment_requests_pending
         on giveaway_payment_requests(guild_id, lower(host_minecraft_ign), amount, created_at)
+        where status = 'pending'
+    `;
+
+    await sql`
+        create index if not exists idx_donation_payment_requests_pending
+        on donation_payment_requests(guild_id, lower(donor_minecraft_ign), amount, created_at)
         where status = 'pending'
     `;
 
@@ -1804,7 +1851,8 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null) {
         body:
             `💎🐧 **Penguin Mafia Top Donators** 🐧💎\n\n` +
             `The treasure vault is waiting. Top donation totals will appear here soon.\n\n` +
-            `This leaderboard tracks all-time donations.`
+            `This leaderboard tracks all-time donations.\n\n` +
+            `To get on this leaderboard, use \`/donate amount\` or fund a \`/giveaway\`. Direct Minecraft payments without one of those requests will not count.`
     };
 
     const managedRankInfo = {

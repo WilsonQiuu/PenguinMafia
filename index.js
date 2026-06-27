@@ -241,30 +241,45 @@ minecraftEvents.on('log', event => {
                     } else if (result.status === 'donation_recorded') {
                         emitMinecraftEvent(
                             'Minecraft Donation Recorded',
-                            `${result.player.minecraft_ign || payment.player} made a donation through the Minecraft bot.`,
+                            `${result.request.donor_minecraft_ign || payment.player} completed a donation request through the Minecraft bot.`,
                             'success',
                             {
-                                Player: `<@${result.player.discord_id}>`,
-                                'Minecraft IGN': result.player.minecraft_ign || payment.player,
+                                Player: `<@${result.request.donor_discord_id}>`,
+                                'Minecraft IGN': result.request.donor_minecraft_ign || payment.player,
+                                'Requested amount': formatDonationAmount(result.request.amount),
+                                'Paid amount': formatDonationAmount(result.paidAmount),
                                 Amount: formatDonationAmount(result.donation.amount),
                                 'New donation total': formatDonationAmount(result.donation.newTotal)
                             }
                         );
+                    } else if (result.status === 'donation_too_low') {
+                        emitMinecraftEvent(
+                            'Donation Payment Too Low',
+                            `${result.request.donor_minecraft_ign} paid less than their pending donation amount.`,
+                            'warning',
+                            {
+                                Player: `<@${result.request.donor_discord_id}>`,
+                                'Minecraft IGN': result.request.donor_minecraft_ign,
+                                'Required amount': formatDonationAmount(result.request.amount),
+                                'Paid amount': formatDonationAmount(result.paidAmount)
+                            }
+                        );
                     } else if (result.status === 'donation_unmatched') {
                         emitMinecraftEvent(
-                            'Unmatched Minecraft Donation',
-                            'A Minecraft payment was received, but no linked Discord player or pending giveaway request matched it.',
+                            'Unmatched Minecraft Payment',
+                            'A Minecraft payment was received, but it did not match a pending /donate or /giveaway request. It was not counted as a donation.',
                             'warning',
                             {
                                 'Minecraft IGN': result.minecraftName || payment.player || 'Unknown',
-                                Amount: formatDonationAmount(result.paidAmount)
+                                Amount: formatDonationAmount(result.paidAmount),
+                                Counted: 'No'
                             }
                         );
                     }
                 })
                 .catch(error => {
                     emitMinecraftEvent(
-                        'Paid Giveaway Hosting Failed',
+                        'Incoming Payment Processing Failed',
                         error.message,
                         'error',
                         {
@@ -988,7 +1003,7 @@ async function updateAllLeaderboards() {
     }
 }
 
-async function saveMemberWithParent(guild, member, inviter) {
+async function saveMemberWithParent(guild, member, inviter, invite = null) {
     let inviterMember = null;
 
     try {
@@ -1046,6 +1061,8 @@ async function saveMemberWithParent(guild, member, inviter) {
                 discord_username,
                 discord_display_name,
                 minecraft_ign,
+                joined_invite_code,
+                joined_via_inviter_discord_id,
                 parent_discord_id,
                 claims_available,
                 rank_name,
@@ -1057,6 +1074,8 @@ async function saveMemberWithParent(guild, member, inviter) {
                 ${member.user.username},
                 ${memberDisplayName},
                 null,
+                ${invite?.code || null},
+                ${inviter.id},
                 ${inviter.id},
                 0,
                 ${DEFAULT_RANK_NAME},
@@ -1067,6 +1086,8 @@ async function saveMemberWithParent(guild, member, inviter) {
             set
                 discord_username = excluded.discord_username,
                 discord_display_name = excluded.discord_display_name,
+                joined_invite_code = coalesce(players.joined_invite_code, excluded.joined_invite_code),
+                joined_via_inviter_discord_id = coalesce(players.joined_via_inviter_discord_id, excluded.joined_via_inviter_discord_id),
                 updated_at = now()
             returning welcome_completed
         `;
@@ -1226,7 +1247,7 @@ async function processJoinBatch(guild) {
                 inviterId,
                 inviterDisplayName,
                 welcomeCompleted
-            } = await saveMemberWithParent(guild, member, inviter);
+            } = await saveMemberWithParent(guild, member, inviter, inviteChanges[0].invite);
 
             if (welcomeCompleted) {
                 await syncMemberRoleFromDatabase(member);

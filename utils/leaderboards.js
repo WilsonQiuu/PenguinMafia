@@ -367,6 +367,7 @@ async function updateDonationLeaderboardForGuild(guild, sql) {
         'Penguin Mafia Top Donators',
         `💎🐧 **Penguin Mafia Top Donators** 🐧💎\n\n` +
         `Top 10 penguins by **all-time donations**.\n\n` +
+        `To get on this leaderboard, use \`/donate amount\` or fund a \`/giveaway\`. Direct Minecraft payments without one of those requests will not count.\n\n` +
         `${donationLines}\n\n` 
     );
 }

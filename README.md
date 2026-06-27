@@ -190,6 +190,7 @@ Money and donation commands:
 
 - `/pay`
 - `/bot bal`
+- `/donate`
 - `/giveaway`
 - `/commissions`
 - `/payoutnotifications`
@@ -205,6 +206,7 @@ Staff and moderation commands:
 - `/verify`
 - `/kick`
 - `/ban`
+- `/bantree`
 - `/unban`
 - `/remove`
 
