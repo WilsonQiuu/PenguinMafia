@@ -16,6 +16,7 @@ const MAX_PENDING_PAYMENT_RESPONSES = 5;
 const DEFAULT_COBBLE_DIG_DISTANCE = 5;
 const DEFAULT_COBBLE_IDLE_MS = 250;
 const DEFAULT_COBBLE_ERROR_MS = 1_000;
+const COBBLE_LOOK_STRAIGHT_UP_PITCH = Math.PI / 2;
 const DEFAULT_BALANCE_COMMANDS = ['/balance', '/money', '/bal'];
 const DEFAULT_PAYMENT_SUCCESS_PATTERN =
     String.raw`\b(?:paid|sent|transferred)\b|\bpayment\b.*\b(?:complete|completed|successful|sent)\b`;
@@ -1370,6 +1371,14 @@ function activateCobbleUseItem(state) {
     }
 }
 
+async function forceCobbleLookUp(state) {
+    await state.bot.look(
+        state.bot.entity.yaw,
+        COBBLE_LOOK_STRAIGHT_UP_PITCH,
+        true
+    );
+}
+
 function restoreCobbleControls(state) {
     try {
         state.bot.stopDigging?.();
@@ -1386,7 +1395,7 @@ function restoreCobbleControls(state) {
     }
 
     try {
-        state.bot.setControlState('sneak', state.previousSneak);
+        state.bot.setControlState('sneak', false);
     } catch (error) {
         state.lastError = error.message;
     }
@@ -1401,6 +1410,7 @@ async function runCobbleModeLoop(state) {
 
         try {
             state.bot.setControlState('sneak', true);
+            await forceCobbleLookUp(state);
             activateCobbleUseItem(state);
 
             const block = state.bot.blockAtCursor(DEFAULT_COBBLE_DIG_DISTANCE);
@@ -1476,6 +1486,11 @@ function startCobbleMode(context = {}) {
     };
 
     bot.setControlState('sneak', true);
+    void forceCobbleLookUp(cobbleMode).catch(error => {
+        if (cobbleMode) {
+            cobbleMode.lastError = error.message;
+        }
+    });
 
     try {
         activateCobbleUseItem(cobbleMode);
@@ -1485,7 +1500,7 @@ function startCobbleMode(context = {}) {
 
     emitMinecraftEvent(
         'Cobble Mode Started',
-        'The Minecraft bot started cobble mode: sneak held, use item held, and repeated digging at the crosshair.',
+        'The Minecraft bot started cobble mode: looking straight up, sneak held, use item held, and repeated digging at the crosshair.',
         'success',
         {
             'Dig distance': `${DEFAULT_COBBLE_DIG_DISTANCE} blocks`,
@@ -1537,6 +1552,100 @@ function stopCobbleMode(context = {}, reason = 'Cobble mode was stopped.', level
             lastError: state.lastError || null
         }
     };
+}
+
+function vectorSnapshot(vector) {
+    if (!vector) {
+        return null;
+    }
+
+    return {
+        x: Number(vector.x || 0),
+        y: Number(vector.y || 0),
+        z: Number(vector.z || 0)
+    };
+}
+
+function formatVectorSnapshot(vector) {
+    if (!vector) {
+        return 'unknown';
+    }
+
+    return `${vector.x.toFixed(3)}, ${vector.y.toFixed(3)}, ${vector.z.toFixed(3)}`;
+}
+
+function resetMinecraftBotControls(context = {}) {
+    if (!isConnected()) {
+        throw new Error('The Minecraft bot is not connected yet.');
+    }
+
+    const stoppedCobble = cobbleMode
+        ? stopCobbleMode(
+            context,
+            'Cobble mode was stopped by an unstuck/reset request.'
+        ).stopped
+        : false;
+
+    const errors = [];
+
+    try {
+        bot.stopDigging?.();
+    } catch (error) {
+        errors.push(`stopDigging: ${error.message}`);
+    }
+
+    try {
+        bot.deactivateItem();
+    } catch (error) {
+        errors.push(`deactivateItem: ${error.message}`);
+    }
+
+    try {
+        bot.clearControlStates();
+    } catch (error) {
+        errors.push(`clearControlStates: ${error.message}`);
+    }
+
+    bot.physicsEnabled = true;
+
+    const position = vectorSnapshot(bot.entity?.position);
+    const velocity = vectorSnapshot(bot.entity?.velocity);
+    const controlState = {
+        forward: bot.getControlState('forward'),
+        back: bot.getControlState('back'),
+        left: bot.getControlState('left'),
+        right: bot.getControlState('right'),
+        jump: bot.getControlState('jump'),
+        sprint: bot.getControlState('sprint'),
+        sneak: bot.getControlState('sneak')
+    };
+    const result = {
+        stoppedCobble,
+        physicsEnabled: bot.physicsEnabled,
+        position,
+        velocity,
+        controlState,
+        errors
+    };
+
+    emitMinecraftEvent(
+        'Minecraft Bot Controls Reset',
+        errors.length > 0
+            ? 'The Minecraft bot controls were reset with some warnings.'
+            : 'The Minecraft bot controls were reset.',
+        errors.length > 0 ? 'warning' : 'success',
+        {
+            'Stopped cobble mode': stoppedCobble ? 'yes' : 'no',
+            'Physics enabled': bot.physicsEnabled ? 'yes' : 'no',
+            Position: formatVectorSnapshot(position),
+            Velocity: formatVectorSnapshot(velocity),
+            Sneaking: controlState.sneak ? 'yes' : 'no',
+            ...(errors.length > 0 ? { Errors: errors.join('\n') } : {}),
+            ...actionDetails(context)
+        }
+    );
+
+    return result;
 }
 
 function randomReconnectDelayMinutes(random = Math.random) {
@@ -1839,6 +1948,7 @@ function printHelp() {
             '  pay <player> <amount>        Send /pay [PLAYER] [AMOUNT]',
             '  bal                          Send /bal and wait for the balance response',
             '  cobble [start|stop|status]   Hold sneak/use and repeatedly dig the block in view',
+            '  unstuck                      Release held controls and print position/velocity',
             '  reconnect                    Reconnect to the Minecraft server',
             '  quit                         Disconnect and stop this process',
             ''
@@ -1909,6 +2019,15 @@ async function handleTerminalCommand(input) {
             } else {
                 throw new Error('Usage: cobble [start|stop|status]');
             }
+        } else if (command === 'unstuck') {
+            const result = resetMinecraftBotControls({
+                actorTag: 'Terminal',
+                source: 'Terminal command'
+            });
+            console.log(
+                `Controls reset. Position=${formatVectorSnapshot(result.position)} ` +
+                `Velocity=${formatVectorSnapshot(result.velocity)}`
+            );
         } else if (command === 'reconnect') {
             disconnect();
             connect();
@@ -1980,6 +2099,7 @@ module.exports = {
     minecraftEvents,
     parseIncomingPayment,
     parsePrivateMessage,
+    resetMinecraftBotControls,
     microsoftLoginAlert,
     microsoftOneClickLoginUrl,
     minecraftBotStatus,

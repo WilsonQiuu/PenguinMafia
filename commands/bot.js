@@ -22,6 +22,7 @@ const {
     messagePlayer,
     minecraftBotStatus,
     payPlayer,
+    resetMinecraftBotControls,
     startCobbleMode,
     startMinecraftBot,
     stopCobbleMode,
@@ -123,6 +124,14 @@ function cobbleStatusLine(status) {
     );
 }
 
+function vectorLine(label, vector) {
+    if (!vector) {
+        return `${label}: **unknown**`;
+    }
+
+    return `${label}: **${vector.x.toFixed(3)}, ${vector.y.toFixed(3)}, ${vector.z.toFixed(3)}**`;
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('bot')
@@ -207,6 +216,11 @@ module.exports = {
                             }
                         )
                 )
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('unstuck')
+                .setDescription('Release all Minecraft bot controls and report position/velocity.')
         )
         .addSubcommand(subcommand =>
             subcommand
@@ -309,8 +323,21 @@ module.exports = {
                 const result = startCobbleMode(actionContext);
                 await interaction.editReply(
                     result.started
-                        ? '✅ Cobble mode started. The bot is holding sneak, holding use item, and repeatedly mining the block in its crosshair. Use `/bot cobble action:stop` to stop it.'
+                        ? '✅ Cobble mode started. The bot is looking straight up, holding sneak, holding use item, and repeatedly mining the block in its crosshair. Use `/bot cobble action:stop` to stop it.'
                         : `ℹ️ ${cobbleStatusLine(result.status)}`
+                );
+                return;
+            }
+
+            if (subcommand === 'unstuck') {
+                const result = resetMinecraftBotControls(actionContext);
+                await interaction.editReply(
+                    `✅ Minecraft bot controls reset.\n` +
+                    `Stopped cobble mode: **${result.stoppedCobble ? 'yes' : 'no'}**\n` +
+                    `Physics enabled: **${result.physicsEnabled ? 'yes' : 'no'}**\n` +
+                    `${vectorLine('Position', result.position)}\n` +
+                    `${vectorLine('Velocity', result.velocity)}` +
+                    `${result.errors.length > 0 ? `\nWarnings:\n\`\`\`\n${result.errors.join('\n')}\n\`\`\`` : ''}`
                 );
                 return;
             }
