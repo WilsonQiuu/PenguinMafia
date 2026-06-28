@@ -204,6 +204,10 @@ Staff and moderation commands:
 - `/staffpromote`
 - `/staffdemote`
 - `/verify`
+- `/vouche`
+- `/unvouche`
+- `/veto`
+- `/unveto`
 - `/kick`
 - `/ban`
 - `/bantree`
@@ -217,6 +221,7 @@ Utility commands:
 - `/penguinlink`
 - `/welcome`
 - `/recruit`
+- `/vouches`
 - `/ping`
 
 ## Hosting

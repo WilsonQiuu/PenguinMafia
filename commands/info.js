@@ -53,6 +53,10 @@ module.exports = {
                     child.donations,
                     child.personal_production,
                     child.team_overrides,
+                    child.vouches,
+                    child.admin_vouches,
+                    child.vetoes,
+                    child.admin_vetoes,
                     child.rank_name,
                     child.staff_rank_name,
                     child.ban_points_remaining,
@@ -193,6 +197,10 @@ module.exports = {
                 `Donations: \`${formatDonationAmount(player.donations)}\`\n` +
                 `Personal production: \`${formatCents(player.personal_production)}\`\n` +
                 `Team overrides: \`${formatCents(player.team_overrides)}\`\n` +
+                `Vouches: **${player.vouches}**\n` +
+                `Admin vouches: **${player.admin_vouches}**\n` +
+                `Vetoes: **${player.vetoes}**\n` +
+                `Admin vetoes: **${player.admin_vetoes}**\n` +
                 `Role: \`${player.rank_name}\`\n` +
                 `Staff role: \`${player.staff_rank_name || 'None'}\`\n` +
                 `Ban points: **${player.ban_points_remaining}**\n` +

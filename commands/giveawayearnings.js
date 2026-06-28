@@ -50,9 +50,7 @@ module.exports = {
         ),
 
     async execute(interaction) {
-        await interaction.deferReply({
-            flags: MessageFlags.Ephemeral
-        });
+        await interaction.deferReply();
 
         const requestedUser = interaction.options.getUser('player') || interaction.user;
 

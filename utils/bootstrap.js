@@ -262,6 +262,10 @@ async function ensureDatabaseSchema(sql) {
             unpaid_commissions bigint not null default 0 check (unpaid_commissions >= 0),
             personal_production bigint not null default 0 check (personal_production >= 0),
             team_overrides bigint not null default 0 check (team_overrides >= 0),
+            vouches int not null default 0 check (vouches >= 0),
+            admin_vouches int not null default 0 check (admin_vouches >= 0),
+            vetoes int not null default 0 check (vetoes >= 0),
+            admin_vetoes int not null default 0 check (admin_vetoes >= 0),
             payout_notifications_enabled boolean not null default true,
             rank_name text not null default 'Penguin Soldier' references ranks(name),
             staff_rank_name text references staff_ranks(name),
@@ -328,6 +332,26 @@ async function ensureDatabaseSchema(sql) {
     await sql`
         alter table players
         add column if not exists team_overrides bigint not null default 0 check (team_overrides >= 0)
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists vouches int not null default 0 check (vouches >= 0)
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists admin_vouches int not null default 0 check (admin_vouches >= 0)
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists vetoes int not null default 0 check (vetoes >= 0)
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists admin_vetoes int not null default 0 check (admin_vetoes >= 0)
     `;
 
     await sql`
@@ -487,6 +511,33 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        create table if not exists player_vouches (
+            target_discord_id text not null references players(discord_id) on delete cascade,
+            voucher_discord_id text not null references players(discord_id) on delete cascade,
+            created_at timestamptz not null default now(),
+            primary key (target_discord_id, voucher_discord_id)
+        )
+    `;
+
+    await sql`
+        create table if not exists player_admin_vouches (
+            target_discord_id text not null references players(discord_id) on delete cascade,
+            admin_discord_id text not null references players(discord_id) on delete cascade,
+            created_at timestamptz not null default now(),
+            primary key (target_discord_id, admin_discord_id)
+        )
+    `;
+
+    await sql`
+        create table if not exists player_admin_vetoes (
+            target_discord_id text not null references players(discord_id) on delete cascade,
+            admin_discord_id text not null references players(discord_id) on delete cascade,
+            created_at timestamptz not null default now(),
+            primary key (target_discord_id, admin_discord_id)
+        )
+    `;
+
+    await sql`
         alter table donation_payment_requests
         drop constraint if exists donation_payment_requests_status_check
     `;
@@ -579,6 +630,21 @@ async function ensureDatabaseSchema(sql) {
         create index if not exists idx_donation_payment_requests_pending
         on donation_payment_requests(guild_id, lower(donor_minecraft_ign), amount, created_at)
         where status = 'pending'
+    `;
+
+    await sql`
+        create index if not exists idx_player_vouches_voucher
+        on player_vouches(voucher_discord_id, created_at)
+    `;
+
+    await sql`
+        create index if not exists idx_player_admin_vouches_admin
+        on player_admin_vouches(admin_discord_id, created_at)
+    `;
+
+    await sql`
+        create index if not exists idx_player_admin_vetoes_admin
+        on player_admin_vetoes(admin_discord_id, created_at)
     `;
 
     await sql`

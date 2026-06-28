@@ -23,6 +23,10 @@ const {
 const {
     startTrialModOnboardingForMember
 } = require('../utils/trialModOnboarding.js');
+const {
+    promoteRegularVouchesToAdminVouches,
+    syncTrustedPenguinRole
+} = require('../utils/trust.js');
 
 const STAFF_RANK_NAMES = STAFF_RANKS.map(rank => rank.name);
 
@@ -252,6 +256,32 @@ module.exports = {
             const updatedPlayer = updatedRows[0];
             await syncMemberStaffRole(member, staffRoles, nextStaffRank);
 
+            let trustMigrationRows = [];
+            let trustRoleSyncFailures = 0;
+
+            if (player.staff_rank_name !== 'Admin' && nextStaffRank === 'Admin') {
+                trustMigrationRows = await promoteRegularVouchesToAdminVouches(sql, playerUser.id);
+
+                for (const trustProfile of trustMigrationRows) {
+                    await syncTrustedPenguinRole(
+                        interaction.guild,
+                        trustProfile,
+                        'Penguin Mafia regular vouch converted to Admin vouch'
+                    ).catch(error => {
+                        trustRoleSyncFailures += 1;
+                        console.error('Trusted Penguin role sync failed after Admin promotion vouch migration:');
+                        console.error(error);
+                    });
+                }
+            }
+
+            const convertedVouches = trustMigrationRows.reduce((total, row) => {
+                return total + Number(row.admin_inserted || 0);
+            }, 0);
+            const removedRegularVouches = trustMigrationRows.reduce((total, row) => {
+                return total + Number(row.regular_deleted || 0);
+            }, 0);
+
             let trialModOnboardingStarted = false;
 
             if (nextStaffRank === 'Trial Mod') {
@@ -265,6 +295,13 @@ module.exports = {
                 `Old Staff rank: \`${player.staff_rank_name || 'None'}\`\n` +
                 `New Staff rank: \`${updatedPlayer.staff_rank_name}\`\n` +
                 `Ban points: **${updatedPlayer.ban_points_remaining}**` +
+                (nextStaffRank === 'Admin'
+                    ? `\nRegular vouches converted to Admin vouches: **${convertedVouches}**` +
+                    `\nRegular vouch receipts cleared: **${removedRegularVouches}**` +
+                    (trustRoleSyncFailures > 0
+                        ? `\nTrusted Penguin role sync failures: **${trustRoleSyncFailures}**`
+                        : '')
+                    : '') +
                 (trialModOnboardingStarted ? `\nTrial Mod onboarding: **started**` : '')
             );
 

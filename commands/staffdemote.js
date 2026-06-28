@@ -17,6 +17,10 @@ const {
     isDon,
     syncInvokerStaffRank
 } = require('../utils/staff.js');
+const {
+    removeAdminVouchesByAdmin,
+    syncTrustedPenguinRole
+} = require('../utils/trust.js');
 
 const STAFF_RANK_NAMES = STAFF_RANKS.map(rank => rank.name);
 
@@ -225,12 +229,41 @@ module.exports = {
             const updatedPlayer = updatedRows[0];
             await syncMemberStaffRole(member, staffRoles, previousStaffRank);
 
+            let removedAdminVouchRows = [];
+            let trustRoleSyncFailures = 0;
+
+            if (player.staff_rank_name === 'Admin' && previousStaffRank !== 'Admin') {
+                removedAdminVouchRows = await removeAdminVouchesByAdmin(sql, playerUser.id);
+
+                for (const trustProfile of removedAdminVouchRows) {
+                    await syncTrustedPenguinRole(
+                        interaction.guild,
+                        trustProfile,
+                        'Penguin Mafia Admin demoted; Admin vouches removed'
+                    ).catch(error => {
+                        trustRoleSyncFailures += 1;
+                        console.error('Trusted Penguin role sync failed after Admin demotion vouch removal:');
+                        console.error(error);
+                    });
+                }
+            }
+
+            const removedAdminVouches = removedAdminVouchRows.reduce((total, row) => {
+                return total + Number(row.removed_count || 0);
+            }, 0);
+
             await interaction.editReply(
                 `✅ **Staff demotion complete.**\n\n` +
                 `Player: **${playerName(updatedPlayer, playerUser.username)}** ${playerUser}\n` +
                 `Old Staff rank: \`${player.staff_rank_name}\`\n` +
                 `New Staff rank: \`${updatedPlayer.staff_rank_name || 'None'}\`\n` +
-                `Ban points: **${updatedPlayer.ban_points_remaining}**`
+                `Ban points: **${updatedPlayer.ban_points_remaining}**` +
+                (player.staff_rank_name === 'Admin'
+                    ? `\nAdmin vouches removed: **${removedAdminVouches}**` +
+                    (trustRoleSyncFailures > 0
+                        ? `\nTrusted Penguin role sync failures: **${trustRoleSyncFailures}**`
+                        : '')
+                    : '')
             );
         } catch (error) {
             logCommandError(interaction, '/staffdemote', error);
