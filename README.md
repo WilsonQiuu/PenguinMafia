@@ -192,6 +192,7 @@ Money and donation commands:
 - `/bot bal`
 - `/donate`
 - `/giveaway`
+- `/aura`
 - `/commissions`
 - `/payoutnotifications`
 - `/payallcommissions`
