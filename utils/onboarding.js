@@ -171,8 +171,8 @@ function recruitingMessage(userId, isTest = false) {
         content:
             `# 📣 RECRUITING\n\n` +
             `## 🎮 Find a Minecraft player\n\n` +
-            `Rule #1: **Penguins only.** 🐧✅\n\n` +
-            `1. They put on **any penguin skin**\n` +
+            `Penguin skins are **encouraged**, but they are **not required**. 🐧✅\n\n` +
+            `1. If they want, they can put on **any penguin skin**\n` +
             `2. Send your invite link\n` +
             `3. Bot detects your recruit 🤖\n\n` +
             `If detection fails:\n` +

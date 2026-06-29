@@ -18,9 +18,9 @@ module.exports = {
                 content:
                     `📣🐧 **HOW TO RECRUIT MORE PENGUINS** 🐧📣\n\n` +
                     `Your mission: find a Minecraft player who has the heart of a penguin. Brave players. Funny players. Players ready to join the waddling empire. 🎮❄️\n\n` +
-                    `There is one sacred rule: **they must become a penguin first.** 🐧✅\n\n` +
-                    `Ask them to change their Minecraft skin to any penguin skin. Fancy penguin, tiny penguin, royal penguin, business penguin, sleepy penguin, all are accepted. The Mafia is for penguins only. 🐧🎩\n\n` +
-                    `Once they are officially penguin-shaped, invite them to the Discord using your invite link. Our bots will try to detect that they came from you and mark them as your recruit automatically. 🤖📨\n\n` +
+                    `Penguin skins are strongly encouraged because they make the Mafia look united, but they are **not required**. 🐧✅\n\n` +
+                    `If they want to join the theme, ask them to use any penguin skin. Fancy penguin, tiny penguin, royal penguin, business penguin, sleepy penguin, all are accepted. 🐧🎩\n\n` +
+                    `When they are ready, invite them to the Discord using your invite link. Our bots will try to detect that they came from you and mark them as your recruit automatically. 🤖📨\n\n` +
                     `If the bot cannot figure out who recruited them, they may become an orphaned penguin. Tragic. Dramatic. Fixable. Tell them to use:\n\n` +
                     `\`/join recruiter:@YourDiscord\`\n\n` +
                     `Recruiting matters for rank ups, so build your tree, help your penguins grow, and make the Don proud. 👑🐧`,

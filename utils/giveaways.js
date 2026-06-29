@@ -61,6 +61,7 @@ const WEEK_MS = 7 * DAY_MS;
 const MILLION_AMOUNT = 1_000_000n;
 const DAILY_GIVEAWAY_AMOUNT_STEP = 20_000_000n;
 const MAX_GIVEAWAY_DURATION_MS = WEEK_MS;
+const GIVEAWAY_PAYMENT_MATCH_TOLERANCE = 100_000n;
 const DEFAULT_PAYMENT_BOT_USER = 'Ash_L567';
 const ACTIVE_GIVEAWAYS_BOARD_REFRESH_DELAY_MS = 1_500;
 const DONATION_LEADERBOARD_REFRESH_DELAY_MS = 2_000;
@@ -928,6 +929,7 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
         };
     }
 
+    const acceptablePaidAmount = paidAmount + GIVEAWAY_PAYMENT_MATCH_TOLERANCE;
     const matchingRows = await db`
         select *
         from giveaway_payment_requests
@@ -938,7 +940,7 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
                 or lower(host_minecraft_ign) = ${paymentPlayerWithoutLeadingDot}
                 or lower(concat('.', host_minecraft_ign)) = ${paymentPlayer}
             )
-            and amount <= ${paidAmount.toString()}::bigint
+            and amount <= ${acceptablePaidAmount.toString()}::bigint
         order by created_at asc
         limit 1
     `;
@@ -1112,7 +1114,9 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
             where id = ${claimedRequest.id}
         `;
 
-        const overpaidAmount = paidAmount - BigInt(claimedRequest.amount);
+        const requestedAmount = BigInt(claimedRequest.amount);
+        const overpaidAmount = paidAmount - requestedAmount;
+        const acceptedShortfallAmount = overpaidAmount < 0n ? -overpaidAmount : 0n;
         const overpaidDonation = overpaidAmount > 0n
             ? await recordDirectDonation(
                 guild,
@@ -1132,6 +1136,7 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
             message: boardMessage,
             paidAmount,
             overpaidAmount,
+            acceptedShortfallAmount,
             overpaidDonation
         };
     } catch (error) {

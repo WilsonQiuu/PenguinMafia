@@ -84,6 +84,11 @@ const {
     handleReactionRole
 } = require('./utils/reactionRoles.js');
 const {
+    ensureTicketPanel,
+    handleTicketButton,
+    handleTicketModal
+} = require('./utils/tickets.js');
+const {
     editModLog,
     findModLogChannel,
     formatChannel,
@@ -220,6 +225,9 @@ minecraftEvents.on('log', event => {
                                 'Minecraft IGN': result.request.host_minecraft_ign,
                                 'Required amount': formatDonationAmount(result.request.amount),
                                 'Paid amount': formatDonationAmount(result.paidAmount),
+                                'Accepted shortfall': result.acceptedShortfallAmount > 0n
+                                    ? formatDonationAmount(result.acceptedShortfallAmount)
+                                    : 'None',
                                 'Extra donation': result.overpaidAmount > 0n
                                     ? formatDonationAmount(result.overpaidAmount)
                                     : 'None',
@@ -1884,6 +1892,81 @@ async function promptForTimeoutReason(member, executor, modLogMessage, title, fi
     }
 }
 
+async function promptForBanReason(ban, executor, modLogMessage, title, fields) {
+    const channel = modLogMessage.channel || await findModLogChannel(ban.guild);
+
+    if (!channel?.isTextBased?.()) {
+        return;
+    }
+
+    const prompt = await channel.send({
+        content:
+            `${executor}, please reply in this channel with the ban reason for <@${ban.user.id}>.\n` +
+            `You have 5 minutes. The reason will be added to the mod log.`,
+        allowedMentions: {
+            users: [executor.id],
+            parse: []
+        }
+    });
+
+    try {
+        const collected = await channel.awaitMessages({
+            filter: message => message.author.id === executor.id && message.content.trim().length > 0,
+            max: 1,
+            time: 5 * 60 * 1000,
+            errors: ['time']
+        });
+        const reasonMessage = collected.first();
+        const reason = truncateValue(reasonMessage.content.trim(), 700);
+        const updatedFields = fields.map(field => {
+            if (field.name !== 'Reason') {
+                return field;
+            }
+
+            return {
+                ...field,
+                value: reason
+            };
+        });
+
+        await editModLog(modLogMessage, ban.guild, title, [
+            ...updatedFields,
+            {
+                name: 'Reason Added By',
+                value: formatUser(reasonMessage.author)
+            }
+        ]);
+
+        await prompt.edit({
+            content: `✅ Ban reason added for <@${ban.user.id}>.`,
+            allowedMentions: {
+                parse: []
+            }
+        });
+    } catch {
+        await editModLog(modLogMessage, ban.guild, title, [
+            ...fields,
+            {
+                name: 'Reason Prompt',
+                value: 'Expired after 5 minutes.'
+            }
+        ]).catch(error => {
+            console.error('Could not mark ban reason prompt as expired:');
+            console.error(error);
+        });
+
+        await prompt.edit({
+            content: `⏰ Ban reason prompt expired for <@${ban.user.id}>.`,
+            allowedMentions: {
+                parse: []
+            }
+        }).catch(error => {
+            console.error('Could not edit expired ban reason prompt:');
+            console.error(error);
+        });
+    }
+}
+
 async function logVoiceMuteChange(oldState, newState) {
     if (!oldState.channelId || !newState.channelId) {
         return;
@@ -2027,6 +2110,12 @@ client.once(Events.ClientReady, async () => {
             await ensureGettingPromotedInfoBoard(guild);
             await ensureElectionCommandsBoard(guild);
             await ensureReactionRolesMessage(guild);
+            try {
+                await ensureTicketPanel(guild);
+            } catch (error) {
+                console.error(`Ticket panel refresh failed for ${guild.name}:`);
+                console.error(error);
+            }
             await finishExpiredElectionsForGuild(guild, sql);
             await resetExpiredElectionResultBoardForGuild(guild, sql);
             await finishExpiredGiveawaysForGuild(guild, sql);
@@ -2307,6 +2396,9 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
 client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isButton()) {
         try {
+            const ticketHandled = await handleTicketButton(interaction);
+            if (ticketHandled) return;
+
             const accountLinkHandled = await handleAccountLinkButton(interaction, sql);
             if (accountLinkHandled) return;
 
@@ -2322,11 +2414,11 @@ client.on(Events.InteractionCreate, async interaction => {
             const handled = await handleWelcomeButton(interaction);
             if (handled) return;
         } catch (error) {
-            logCommandError(interaction, 'onboarding button', error);
+            logCommandError(interaction, 'button interaction', error);
 
             await safeInteractionErrorReply(
                 interaction,
-                `❌ Onboarding step failed.\n\nError:\n\`\`\`\n${error.message}\n\`\`\``
+                `❌ Button action failed.\n\nError:\n\`\`\`\n${error.message}\n\`\`\``
             );
             return;
         }
@@ -2334,6 +2426,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
     if (interaction.isModalSubmit()) {
         try {
+            const ticketHandled = await handleTicketModal(interaction);
+            if (ticketHandled) return;
+
             const accountLinkHandled = await handleAccountLinkModal(interaction, sql);
             if (accountLinkHandled) return;
 
@@ -2343,11 +2438,11 @@ client.on(Events.InteractionCreate, async interaction => {
             const handled = await handleWelcomeModal(interaction);
             if (handled) return;
         } catch (error) {
-            logCommandError(interaction, 'account linking modal', error);
+            logCommandError(interaction, 'modal interaction', error);
 
             await safeInteractionErrorReply(
                 interaction,
-                `❌ Minecraft IGN linking failed.\n\nError:\n\`\`\`\n${error.message}\n\`\`\``
+                `❌ Form submission failed.\n\nError:\n\`\`\`\n${error.message}\n\`\`\``
             );
             return;
         }
@@ -2710,17 +2805,19 @@ client.on(Events.GuildBanAdd, async ban => {
     }
 
     try {
-        const executor = await findRecentHumanAuditExecutor(
+        const auditEntry = await findRecentHumanAuditEntry(
             ban.guild,
             AuditLogEvent.MemberBanAdd,
             ban.user.id
         );
+        const executor = auditEntry?.executor || null;
 
         if (!executor) {
             return;
         }
 
-        await postModLog(ban.guild, 'Ban Added', [
+        const reason = auditEntry?.reason || ban.reason || null;
+        const fields = [
             {
                 name: 'Player',
                 value: formatUser(ban.user)
@@ -2731,9 +2828,14 @@ client.on(Events.GuildBanAdd, async ban => {
             },
             {
                 name: 'Reason',
-                value: ban.reason || 'No reason provided'
+                value: reason || 'Waiting for moderator reason.'
             }
-        ]);
+        ];
+        const modLogMessage = await postModLog(ban.guild, 'Ban Added', fields);
+
+        if (!reason && modLogMessage) {
+            await promptForBanReason(ban, executor, modLogMessage, 'Ban Added', fields);
+        }
     } catch (error) {
         console.error('Could not log ban add:');
         console.error(error);

@@ -90,7 +90,7 @@ function graphTrainingMessage(userId) {
             `Then explain the first mission:\n\n` +
             `Help the new recruit focus on one mission:\n` +
             `🐧 Get their **first recruit**\n` +
-            `🎨 That recruit puts on **any penguin skin**\n` +
+            `🎨 Encourage them to use **any penguin skin** if they want, but it is not required\n` +
             `🔗 That recruit joins with their invite\n\n` +
             `If the bot misses it, have them use:\n` +
             `\`/join recruiter:@YourDiscord\``,

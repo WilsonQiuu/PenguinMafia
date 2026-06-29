@@ -3,6 +3,9 @@ const {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle,
     MessageFlags
 } = require('discord.js');
 
@@ -48,6 +51,102 @@ async function logBanCommand(interaction, title, fields) {
     }
 }
 
+async function requestBanReason(interaction, playerDisplayName, playerDiscordId) {
+    const reasonButtonId = `ban_reason:${interaction.id}`;
+    const cancelButtonId = `ban_reason_cancel:${interaction.id}`;
+    const modalId = `ban_reason_modal:${interaction.id}`;
+    const reasonButton = new ButtonBuilder()
+        .setCustomId(reasonButtonId)
+        .setLabel('Write Ban Reason')
+        .setStyle(ButtonStyle.Primary);
+    const cancelButton = new ButtonBuilder()
+        .setCustomId(cancelButtonId)
+        .setLabel('Cancel Ban')
+        .setStyle(ButtonStyle.Secondary);
+    const row = new ActionRowBuilder().addComponents(reasonButton, cancelButton);
+
+    await interaction.editReply({
+        content:
+            `⚠️ **Ban reason required**\n\n` +
+            `Player: **${playerDisplayName}** \`${playerDiscordId}\`\n\n` +
+            `Write the reason before confirming this ban.`,
+        components: [row]
+    });
+
+    let buttonInteraction;
+
+    try {
+        buttonInteraction = await interaction.channel.awaitMessageComponent({
+            filter: componentInteraction => {
+                return componentInteraction.user.id === interaction.user.id &&
+                    [reasonButtonId, cancelButtonId].includes(componentInteraction.customId);
+            },
+            time: 60_000
+        });
+    } catch {
+        await interaction.editReply({
+            content: '⏰ Ban reason prompt expired.',
+            components: []
+        });
+        return null;
+    }
+
+    if (buttonInteraction.customId === cancelButtonId) {
+        await buttonInteraction.update({
+            content: '❌ Discord ban cancelled.',
+            components: []
+        });
+        return null;
+    }
+
+    const modal = new ModalBuilder()
+        .setCustomId(modalId)
+        .setTitle('Ban Reason')
+        .addComponents(
+            new ActionRowBuilder().addComponents(
+                new TextInputBuilder()
+                    .setCustomId('reason')
+                    .setLabel('Why is this player being banned?')
+                    .setStyle(TextInputStyle.Paragraph)
+                    .setRequired(true)
+                    .setMaxLength(700)
+            )
+        );
+
+    await buttonInteraction.showModal(modal);
+
+    let modalSubmit;
+
+    try {
+        modalSubmit = await buttonInteraction.awaitModalSubmit({
+            filter: submitInteraction => {
+                return submitInteraction.user.id === interaction.user.id &&
+                    submitInteraction.customId === modalId;
+            },
+            time: 5 * 60 * 1000
+        });
+    } catch {
+        await interaction.editReply({
+            content: '⏰ Ban reason modal expired.',
+            components: []
+        });
+        return null;
+    }
+
+    const reason = modalSubmit.fields.getTextInputValue('reason').trim();
+    await modalSubmit.deferUpdate();
+
+    if (!reason) {
+        await interaction.editReply({
+            content: '❌ A ban reason is required.',
+            components: []
+        });
+        return null;
+    }
+
+    return reason;
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('ban')
@@ -62,7 +161,7 @@ module.exports = {
             option
                 .setName('reason')
                 .setDescription('Reason for the Discord ban')
-                .setRequired(true)
+                .setRequired(false)
         ),
 
     async execute(interaction) {
@@ -88,25 +187,7 @@ module.exports = {
 
         const playerInput = interaction.options.getString('player');
         const playerDiscordId = parseDiscordId(playerInput);
-        const reason = interaction.options.getString('reason', true).trim();
-
-        if (!reason) {
-            await logBanCommand(interaction, 'Ban Failed', [
-                {
-                    name: 'Target Input',
-                    value: playerInput
-                },
-                {
-                    name: 'Reason',
-                    value: 'A ban reason is required.'
-                }
-            ]);
-
-            await interaction.editReply(
-                '❌ Please provide a reason for the Discord ban.'
-            );
-            return;
-        }
+        let reason = interaction.options.getString('reason')?.trim() || '';
 
         if (!playerDiscordId) {
             await logBanCommand(interaction, 'Ban Failed', [
@@ -177,6 +258,24 @@ module.exports = {
             `;
             const player = playerRows[0] || null;
             const playerDisplayName = playerName(player, playerDiscordId);
+
+            if (!reason) {
+                reason = await requestBanReason(interaction, playerDisplayName, playerDiscordId);
+
+                if (!reason) {
+                    await logBanCommand(interaction, 'Ban Cancelled', [
+                        {
+                            name: 'Target',
+                            value: `${playerDisplayName} (${playerDiscordId})`
+                        },
+                        {
+                            name: 'Reason',
+                            value: 'No ban reason was provided.'
+                        }
+                    ]);
+                    return;
+                }
+            }
 
             const confirmButton = new ButtonBuilder()
                 .setCustomId(`ban_confirm:${interaction.id}`)
