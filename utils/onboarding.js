@@ -38,6 +38,8 @@ const JOIN_ALL_MODAL_PREFIX = 'welcome_join_all_ign';
 const WELCOME_REMINDER_INTERVAL_MS = 2 * 24 * 60 * 60 * 1000;
 const WELCOME_SELF_DESTRUCT_SECONDS = 30;
 
+const welcomeGraphCache = new Map();
+
 function buttonId(action, userId, isTest = false) {
     return `${BUTTON_PREFIX}:${action}:${userId}:${isTest ? 'test' : 'live'}`;
 }
@@ -172,11 +174,8 @@ function simulatedWelcomePlayer(id, name, rankName, parentId = null) {
     };
 }
 
-function welcomeRootName(member) {
-    return member?.displayName ||
-        member?.user?.globalName ||
-        member?.user?.username ||
-        'You';
+function welcomeRootName() {
+    return 'You';
 }
 
 function welcomeRoot(member, userId, rankName) {
@@ -286,25 +285,30 @@ function emperorSimulation(member, userId, generalCount) {
     };
 }
 
-async function welcomeGraphAttachment(member, stageName, simulation) {
-    const imageBuffer = await renderRecruitTreeImage(simulation.root, simulation.recruits);
+async function welcomeGraphAttachment(stageName, simulation) {
+    const cached = welcomeGraphCache.get(stageName);
+    if (cached) return cached;
 
-    return new AttachmentBuilder(imageBuffer, {
+    const imageBuffer = await renderRecruitTreeImage(simulation.root, simulation.recruits);
+    const attachment = new AttachmentBuilder(imageBuffer, {
         name: `welcome-${stageName}-graph.png`
     });
+
+    welcomeGraphCache.set(stageName, attachment);
+    return attachment;
 }
 
-async function withWelcomeGraph(member, stageName, simulation, message) {
+async function withWelcomeGraph(stageName, simulation, message) {
     return {
         ...message,
         files: [
-            await welcomeGraphAttachment(member, stageName, simulation)
+            await welcomeGraphAttachment(stageName, simulation)
         ]
     };
 }
 
 async function rankIntroMessage(member, userId, isTest = false) {
-    return withWelcomeGraph(member, 'soldier', directRecruitSimulation(member, userId, 0), {
+    return withWelcomeGraph('soldier', directRecruitSimulation(member, userId, 0), {
         content:
             `# 1️⃣ Your first rank\n\n` +
             `Your first rank is **${DEFAULT_RANK_NAME}**.\n\n` +
@@ -319,7 +323,7 @@ async function rankIntroMessage(member, userId, isTest = false) {
 async function directRecruitMessage(member, userId, recruitCount, isTest = false) {
     const isCaptain = recruitCount >= 3;
 
-    return withWelcomeGraph(member, `direct-${recruitCount}`, directRecruitSimulation(member, userId, recruitCount), {
+    return withWelcomeGraph(`direct-${recruitCount}`, directRecruitSimulation(member, userId, recruitCount), {
         content:
             `# 2️⃣ Let’s add recruits to your team\n\n` +
             (
@@ -340,7 +344,7 @@ async function directRecruitMessage(member, userId, recruitCount, isTest = false
 async function generalTrainingMessage(member, userId, captainCount, isTest = false) {
     const isGeneral = captainCount >= 3;
 
-    return withWelcomeGraph(member, `general-${captainCount}`, generalSimulation(member, userId, captainCount), {
+    return withWelcomeGraph(`general-${captainCount}`, generalSimulation(member, userId, captainCount), {
         content:
             `# 3️⃣ Help your recruits build their teams\n\n` +
             (
@@ -361,7 +365,7 @@ async function generalTrainingMessage(member, userId, captainCount, isTest = fal
 async function emperorTrainingMessage(member, userId, generalCount, isTest = false) {
     const isEmperor = generalCount >= 2;
 
-    return withWelcomeGraph(member, `emperor-${generalCount}`, emperorSimulation(member, userId, generalCount), {
+    return withWelcomeGraph(`emperor-${generalCount}`, emperorSimulation(member, userId, generalCount), {
         content:
             `# 4️⃣ The Emperor path\n\n` +
             (
