@@ -1,5 +1,6 @@
 const {
     ActionRowBuilder,
+    AttachmentBuilder,
     ButtonBuilder,
     ButtonStyle,
     ChannelType,
@@ -24,6 +25,9 @@ const {
 const {
     enterAllActiveGiveawaysForUser
 } = require('./giveaways.js');
+const {
+    renderRecruitTreeImage
+} = require('./treeImage.js');
 const {
     setMemberNicknameToIgn
 } = require('./nicknames.js');
@@ -61,8 +65,26 @@ function row(...components) {
     return new ActionRowBuilder().addComponents(...components);
 }
 
+function normalizeWelcomePayload(interaction, message) {
+    const payload = {
+        ...message
+    };
+
+    if (payload.files || interaction.message?.attachments?.size) {
+        payload.attachments = [];
+    }
+
+    return payload;
+}
+
 async function updateWithReadingDelay(interaction, message) {
-    await interaction.update(message);
+    await interaction.deferUpdate();
+
+    const resolvedMessage = typeof message === 'function'
+        ? await message()
+        : await message;
+
+    await interaction.editReply(normalizeWelcomePayload(interaction, resolvedMessage));
 }
 
 function sanitizeChannelName(name) {
@@ -112,23 +134,6 @@ function isWelcomeFlowMessage(message, userId) {
         message.content.includes(userId);
 }
 
-const ANSI = {
-    reset: '\u001b[0m',
-    cyan: '\u001b[36m',
-    green: '\u001b[32m',
-    yellow: '\u001b[33m',
-    purple: '\u001b[35m',
-    gray: '\u001b[90m'
-};
-
-function colorNode(label, color = 'gray') {
-    return `${ANSI[color] || ''}${label}${ANSI.reset}`;
-}
-
-function graphBlock(lines) {
-    return `\`\`\`ansi\n${lines.join('\n')}\n\`\`\``;
-}
-
 function introMessage(member, context = {}) {
     const helperMentions = [context.recruiterId, context.grandRecruiterId]
         .filter(Boolean);
@@ -156,45 +161,167 @@ function introMessage(member, context = {}) {
     };
 }
 
-function rankIntroMessage(userId, isTest = false) {
-    const graph = graphBlock([
-        colorNode('You — Penguin Soldier', 'cyan')
-    ]);
+function simulatedWelcomePlayer(id, name, rankName, parentId = null) {
+    return {
+        discord_id: id,
+        discord_username: name,
+        discord_display_name: name,
+        minecraft_ign: name,
+        rank_name: rankName,
+        parent_discord_id: parentId
+    };
+}
+
+function welcomeRootName(member) {
+    return member?.displayName ||
+        member?.user?.globalName ||
+        member?.user?.username ||
+        'You';
+}
+
+function welcomeRoot(member, userId, rankName) {
+    return simulatedWelcomePlayer(
+        userId || member?.id || member?.user?.id || 'welcome-root',
+        welcomeRootName(member),
+        rankName
+    );
+}
+
+function directRecruitSimulation(member, userId, recruitCount) {
+    const isCaptain = recruitCount >= 3;
+    const root = welcomeRoot(member, userId, isCaptain ? 'Penguin Captain' : DEFAULT_RANK_NAME);
+    const recruits = [];
+
+    for (let index = 1; index <= recruitCount; index++) {
+        recruits.push(simulatedWelcomePlayer(
+            `welcome-direct-${index}`,
+            `Recruit ${index}`,
+            DEFAULT_RANK_NAME,
+            root.discord_id
+        ));
+    }
 
     return {
+        root,
+        recruits
+    };
+}
+
+function generalSimulation(member, userId, captainCount) {
+    const isGeneral = captainCount >= 3;
+    const root = welcomeRoot(member, userId, isGeneral ? 'Penguin General' : 'Penguin Captain');
+    const recruits = [];
+
+    for (let index = 1; index <= 3; index++) {
+        const trained = index <= captainCount;
+        const directRecruitId = `welcome-general-direct-${index}`;
+
+        recruits.push(simulatedWelcomePlayer(
+            directRecruitId,
+            `Recruit ${index}`,
+            trained ? 'Penguin Captain' : DEFAULT_RANK_NAME,
+            root.discord_id
+        ));
+
+        if (trained) {
+            for (let childIndex = 1; childIndex <= 3; childIndex++) {
+                recruits.push(simulatedWelcomePlayer(
+                    `welcome-general-${index}-${childIndex}`,
+                    `Recruit ${index}.${childIndex}`,
+                    DEFAULT_RANK_NAME,
+                    directRecruitId
+                ));
+            }
+        }
+    }
+
+    return {
+        root,
+        recruits
+    };
+}
+
+function emperorSimulation(member, userId, generalCount) {
+    const isEmperor = generalCount >= 2;
+    const root = welcomeRoot(member, userId, isEmperor ? 'Emperor Penguin' : 'Penguin General');
+    const recruits = [];
+
+    for (let index = 1; index <= 3; index++) {
+        const isGeneral = index <= generalCount;
+        const directRecruitId = `welcome-emperor-direct-${index}`;
+
+        recruits.push(simulatedWelcomePlayer(
+            directRecruitId,
+            `Recruit ${index}`,
+            isGeneral ? 'Penguin General' : 'Penguin Captain',
+            root.discord_id
+        ));
+
+        for (let childIndex = 1; childIndex <= 3; childIndex++) {
+            const captainId = `welcome-emperor-${index}-${childIndex}`;
+
+            recruits.push(simulatedWelcomePlayer(
+                captainId,
+                `Recruit ${index}.${childIndex}`,
+                isGeneral ? 'Penguin Captain' : DEFAULT_RANK_NAME,
+                directRecruitId
+            ));
+
+            if (isGeneral) {
+                for (let recruitIndex = 1; recruitIndex <= 3; recruitIndex++) {
+                    recruits.push(simulatedWelcomePlayer(
+                        `welcome-emperor-${index}-${childIndex}-${recruitIndex}`,
+                        `Recruit ${index}.${childIndex}.${recruitIndex}`,
+                        DEFAULT_RANK_NAME,
+                        captainId
+                    ));
+                }
+            }
+        }
+    }
+
+    return {
+        root,
+        recruits
+    };
+}
+
+async function welcomeGraphAttachment(member, stageName, simulation) {
+    const imageBuffer = await renderRecruitTreeImage(simulation.root, simulation.recruits);
+
+    return new AttachmentBuilder(imageBuffer, {
+        name: `welcome-${stageName}-graph.png`
+    });
+}
+
+async function withWelcomeGraph(member, stageName, simulation, message) {
+    return {
+        ...message,
+        files: [
+            await welcomeGraphAttachment(member, stageName, simulation)
+        ]
+    };
+}
+
+async function rankIntroMessage(member, userId, isTest = false) {
+    return withWelcomeGraph(member, 'soldier', directRecruitSimulation(member, userId, 0), {
         content:
             `# 1️⃣ Your first rank\n\n` +
             `Your first rank is **${DEFAULT_RANK_NAME}**.\n\n` +
-            `${graph}\n` +
             `You start with a base commission rate of **40%**.\n\n` +
             `Your first upgrade is **Penguin Captain**, which starts when you build your team.`,
         components: [
             row(scopedButton('direct_recruit_1', userId, 'Add Recruit 1', ButtonStyle.Success, isTest))
         ]
-    };
+    });
 }
 
-function directRecruitGraph(recruitCount) {
-    const isCaptain = recruitCount >= 3;
-    const lines = [
-        colorNode(`You — ${isCaptain ? 'Penguin Captain' : DEFAULT_RANK_NAME}`, isCaptain ? 'green' : 'cyan')
-    ];
-
-    for (let index = 1; index <= recruitCount; index++) {
-        const prefix = index === recruitCount ? '└─' : '├─';
-        lines.push(`${prefix} ${colorNode(`Recruit ${index} — Penguin Soldier`, 'gray')}`);
-    }
-
-    return graphBlock(lines);
-}
-
-function directRecruitMessage(userId, recruitCount, isTest = false) {
+async function directRecruitMessage(member, userId, recruitCount, isTest = false) {
     const isCaptain = recruitCount >= 3;
 
-    return {
+    return withWelcomeGraph(member, `direct-${recruitCount}`, directRecruitSimulation(member, userId, recruitCount), {
         content:
             `# 2️⃣ Let’s add recruits to your team\n\n` +
-            `${directRecruitGraph(recruitCount)}\n` +
             (
                 isCaptain
                     ? `When you get **3 direct recruits**, you become a **Penguin Captain** and your commission rate becomes **60%**.`
@@ -207,39 +334,15 @@ function directRecruitMessage(userId, recruitCount, isTest = false) {
                     : scopedButton(`direct_recruit_${recruitCount + 1}`, userId, `Add Recruit ${recruitCount + 1}`, ButtonStyle.Success, isTest)
             )
         ]
-    };
+    });
 }
 
-function generalGraph(captainCount) {
-    const youColor = captainCount >= 3 ? 'yellow' : 'green';
-    const youRank = captainCount >= 3 ? 'Penguin General' : 'Penguin Captain';
-    const lines = [
-        colorNode(`You — ${youRank}`, youColor)
-    ];
-
-    for (let index = 1; index <= 3; index++) {
-        const directPrefix = index === 3 ? '└─' : '├─';
-        const trained = index <= captainCount;
-        lines.push(`${directPrefix} ${colorNode(`Recruit ${index} — ${trained ? 'Penguin Captain' : 'Penguin Soldier'}`, trained ? 'green' : 'gray')}`);
-
-        if (trained) {
-            for (let childIndex = 1; childIndex <= 3; childIndex++) {
-                const childPrefix = childIndex === 3 ? '   └─' : '   ├─';
-                lines.push(`${childPrefix} ${colorNode(`Recruit ${index}.${childIndex}`, 'gray')}`);
-            }
-        }
-    }
-
-    return graphBlock(lines);
-}
-
-function generalTrainingMessage(userId, captainCount, isTest = false) {
+async function generalTrainingMessage(member, userId, captainCount, isTest = false) {
     const isGeneral = captainCount >= 3;
 
-    return {
+    return withWelcomeGraph(member, `general-${captainCount}`, generalSimulation(member, userId, captainCount), {
         content:
             `# 3️⃣ Help your recruits build their teams\n\n` +
-            `${generalGraph(captainCount)}\n` +
             (
                 isGeneral
                     ? `Once you train **3 direct recruits** to reach **Captain**, you become a **Penguin General** with an **80%** commission rate.`
@@ -252,40 +355,15 @@ function generalTrainingMessage(userId, captainCount, isTest = false) {
                     : scopedButton(`general_train_${captainCount + 1}`, userId, `Help Recruit ${captainCount + 1} Reach Captain`, ButtonStyle.Success, isTest)
             )
         ]
-    };
+    });
 }
 
-function emperorGraph(generalCount) {
-    const youColor = generalCount >= 2 ? 'purple' : 'yellow';
-    const youRank = generalCount >= 2 ? 'Emperor Penguin' : 'Penguin General';
-    const lines = [
-        colorNode(`You — ${youRank}`, youColor)
-    ];
-
-    for (let index = 1; index <= 3; index++) {
-        const directPrefix = index === 3 ? '└─' : '├─';
-        const isGeneral = index <= generalCount;
-        lines.push(`${directPrefix} ${colorNode(`Recruit ${index} — ${isGeneral ? 'Penguin General' : 'Penguin Captain'}`, isGeneral ? 'yellow' : 'green')}`);
-
-        for (let childIndex = 1; childIndex <= 3; childIndex++) {
-            const childPrefix = childIndex === 3 ? '   └─' : '   ├─';
-            const childRank = isGeneral ? 'Penguin Captain' : 'Penguin Soldier';
-            const childColor = isGeneral ? 'green' : 'gray';
-            const suffix = isGeneral ? ' — trained 3 recruits' : '';
-            lines.push(`${childPrefix} ${colorNode(`Recruit ${index}.${childIndex} — ${childRank}${suffix}`, childColor)}`);
-        }
-    }
-
-    return graphBlock(lines);
-}
-
-function emperorTrainingMessage(userId, generalCount, isTest = false) {
+async function emperorTrainingMessage(member, userId, generalCount, isTest = false) {
     const isEmperor = generalCount >= 2;
 
-    return {
+    return withWelcomeGraph(member, `emperor-${generalCount}`, emperorSimulation(member, userId, generalCount), {
         content:
             `# 4️⃣ The Emperor path\n\n` +
-            `${emperorGraph(generalCount)}\n` +
             (
                 isEmperor
                     ? `If you manage to make it this far, you’ve done something right. **Emperor Penguin** is the highest rank. Once you train **2 direct recruits** to become **General**, you earn **Emperor Penguin**.`
@@ -298,7 +376,7 @@ function emperorTrainingMessage(userId, generalCount, isTest = false) {
                     : scopedButton(`emperor_train_${generalCount + 1}`, userId, 'Train One More General', ButtonStyle.Success, isTest)
             )
         ]
-    };
+    });
 }
 
 function whyTeamMessage(userId, isTest = false) {
@@ -768,12 +846,16 @@ function validMinecraftIgn(minecraftIgn) {
 
 async function respondWithWelcomeFinal(interaction, payload) {
     if (typeof interaction.update === 'function' && interaction.message) {
-        await interaction.update(payload);
+        if (!interaction.deferred && !interaction.replied) {
+            await interaction.deferUpdate();
+        }
+
+        await interaction.editReply(normalizeWelcomePayload(interaction, payload));
         return;
     }
 
     if (interaction.replied || interaction.deferred) {
-        await interaction.editReply(payload);
+        await interaction.editReply(normalizeWelcomePayload(interaction, payload));
         return;
     }
 
@@ -844,25 +926,25 @@ async function handleWelcomeButton(interaction) {
     }
 
     if (action === 'start' || action === 'rank_graph') {
-        await updateWithReadingDelay(interaction, rankIntroMessage(targetUserId, isTest));
+        await updateWithReadingDelay(interaction, () => rankIntroMessage(interaction.member, targetUserId, isTest));
         return true;
     }
 
     if (action.startsWith('direct_recruit_')) {
         const recruitCount = Number(action.replace('direct_recruit_', ''));
-        await updateWithReadingDelay(interaction, directRecruitMessage(targetUserId, recruitCount, isTest));
+        await updateWithReadingDelay(interaction, () => directRecruitMessage(interaction.member, targetUserId, recruitCount, isTest));
         return true;
     }
 
     if (action.startsWith('general_train_')) {
         const captainCount = Number(action.replace('general_train_', ''));
-        await updateWithReadingDelay(interaction, generalTrainingMessage(targetUserId, captainCount, isTest));
+        await updateWithReadingDelay(interaction, () => generalTrainingMessage(interaction.member, targetUserId, captainCount, isTest));
         return true;
     }
 
     if (action.startsWith('emperor_train_')) {
         const generalCount = Number(action.replace('emperor_train_', ''));
-        await updateWithReadingDelay(interaction, emperorTrainingMessage(targetUserId, generalCount, isTest));
+        await updateWithReadingDelay(interaction, () => emperorTrainingMessage(interaction.member, targetUserId, generalCount, isTest));
         return true;
     }
 
@@ -872,7 +954,7 @@ async function handleWelcomeButton(interaction) {
     }
 
     if (action === 'giveaway_prompt') {
-        await updateWithReadingDelay(interaction, await giveawayJoinPromptMessage(interaction.guild, targetUserId, isTest));
+        await updateWithReadingDelay(interaction, () => giveawayJoinPromptMessage(interaction.guild, targetUserId, isTest));
         return true;
     }
 
@@ -937,7 +1019,7 @@ async function handleWelcomeButton(interaction) {
             await completeOnboarding(member);
         }
 
-        await interaction.update({
+        await updateWithReadingDelay(interaction, {
             content:
                 `# 🐧 WELCOME TO THE PENGUIN MAFIA\n\n` +
                 `Training complete. Your **${DEFAULT_RANK_NAME}** role is active. Enter the iceberg. 🧊✨`,
@@ -948,7 +1030,7 @@ async function handleWelcomeButton(interaction) {
     }
 
     if (action === 'ranks') {
-        await updateWithReadingDelay(interaction, directRecruitMessage(targetUserId, 1, isTest));
+        await updateWithReadingDelay(interaction, () => directRecruitMessage(interaction.member, targetUserId, 1, isTest));
         return true;
     }
 
@@ -958,7 +1040,7 @@ async function handleWelcomeButton(interaction) {
     }
 
     if (action === 'account_link_info') {
-        await updateWithReadingDelay(interaction, await giveawayJoinPromptMessage(interaction.guild, targetUserId, isTest));
+        await updateWithReadingDelay(interaction, () => giveawayJoinPromptMessage(interaction.guild, targetUserId, isTest));
         return true;
     }
 
