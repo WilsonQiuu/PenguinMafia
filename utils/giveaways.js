@@ -1322,7 +1322,6 @@ async function enterAllActiveGiveaways(interaction, db = sql) {
         from players
         where discord_id = ${interaction.user.id}
             and status = 'active'
-            and welcome_completed = true
         limit 1
     `;
     const player = playerRows[0];
@@ -1454,7 +1453,6 @@ async function enterGiveaway(interaction, db = sql) {
         from players
         where discord_id = ${interaction.user.id}
             and status = 'active'
-            and welcome_completed = true
         limit 1
     `;
 
