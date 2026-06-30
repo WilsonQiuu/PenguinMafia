@@ -40,6 +40,37 @@ const WELCOME_SELF_DESTRUCT_SECONDS = 30;
 
 const welcomeGraphCache = new Map();
 
+pregenerateAllGraphs();
+
+async function pregenerateAllGraphs() {
+    const stages = [
+        ['soldier', directRecruitSimulation, [0]],
+        ['direct-1', directRecruitSimulation, [1]],
+        ['direct-2', directRecruitSimulation, [2]],
+        ['direct-3', directRecruitSimulation, [3]],
+        ['general-1', generalSimulation, [1]],
+        ['general-2', generalSimulation, [2]],
+        ['general-3', generalSimulation, [3]],
+        ['emperor-1', emperorSimulation, [1]],
+        ['emperor-2', emperorSimulation, [2]],
+    ];
+
+    const results = await Promise.allSettled(stages.map(async ([stageName, simFn, args]) => {
+        if (welcomeGraphCache.has(stageName)) return;
+        const sim = simFn(null, 'welcome-root', ...args);
+        const imageBuffer = await renderRecruitTreeImage(sim.root, sim.recruits);
+        welcomeGraphCache.set(stageName, new AttachmentBuilder(imageBuffer, {
+            name: `welcome-${stageName}-graph.png`
+        }));
+    }));
+
+    for (const result of results) {
+        if (result.status === 'rejected') {
+            console.error('Failed to pre-generate welcome graph:', result.reason);
+        }
+    }
+}
+
 function buttonId(action, userId, isTest = false) {
     return `${BUTTON_PREFIX}:${action}:${userId}:${isTest ? 'test' : 'live'}`;
 }
@@ -469,7 +500,7 @@ function finalMessage(userId, linkedIgn = null, edition = null, options = {}) {
             `You've completed the tutorial. **Welcome to the Penguin Mafia!**\n\n` +
             `${linkedLine}${giveawayLine}\n\n` +
             `🎖️ Rank ready: **${DEFAULT_RANK_NAME}**\n\n` +
-            `This welcome room will self destruct in **${WELCOME_SELF_DESTRUCT_SECONDS} seconds**.`,
+            `Use \`/graph\` to view your recruit tree at any time.`,
         components: []
     };
 }
@@ -481,13 +512,29 @@ async function scheduleWelcomeChannelDelete(interaction, seconds = WELCOME_SELF_
 
     try {
         countdownMessage = await interaction.followUp({
-            content: `💣🐧 This secret penguin training room will self destruct in **${seconds} seconds**...`,
+            content: `💣🐧 This secret penguin training room will self destruct in **${seconds}**...`,
             fetchReply: true
         });
     } catch (error) {
         console.error(`Failed to start welcome channel countdown in ${channel?.id || 'unknown'}:`);
         console.error(error);
     }
+
+    for (let remaining = seconds - 1; remaining >= 1; remaining--) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        if (!countdownMessage) continue;
+
+        try {
+            await countdownMessage.edit({
+                content: `💣🐧 This secret penguin training room will self destruct in **${remaining}**...`
+            });
+        } catch {
+            countdownMessage = null;
+        }
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     setTimeout(async () => {
         try {
@@ -498,7 +545,7 @@ async function scheduleWelcomeChannelDelete(interaction, seconds = WELCOME_SELF_
             console.error(`Failed to delete welcome channel ${channel?.id || 'unknown'}:`);
             console.error(error);
         }
-    }, seconds * 1000);
+    }, 1_000);
 }
 
 async function getOnboardingChannels(guild, context = {}) {
