@@ -1005,6 +1005,25 @@ async function handleWelcomeButton(interaction) {
     }
 
     if (action === 'giveaway_prompt') {
+        const rows = await sql`
+            select minecraft_ign, minecraft_edition
+            from players
+            where discord_id = ${targetUserId}
+            limit 1
+        `;
+        const player = rows[0];
+
+        if (player?.minecraft_ign && player?.minecraft_edition) {
+            await finishOnboardingInteraction(interaction, {
+                targetUserId,
+                isTest,
+                linkedIgn: player.minecraft_ign,
+                minecraftEdition: player.minecraft_edition,
+                enterAllGiveaways: true
+            });
+            return true;
+        }
+
         await updateWithReadingDelay(interaction, () => giveawayJoinPromptMessage(interaction.guild, targetUserId, isTest));
         return true;
     }

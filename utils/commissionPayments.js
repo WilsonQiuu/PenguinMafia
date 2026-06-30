@@ -20,7 +20,7 @@ const {
 const DEFAULT_PAYOUT_CONNECT_TIMEOUT_MS = 120_000;
 const DEFAULT_BUSY_PAYMENT_RETRY_TIMEOUT_MS = 120_000;
 const PAYOUT_CONNECT_POLL_MS = 1_000;
-const MIN_PAYMENT_SPACING_MS = 3_000;
+const MIN_PAYMENT_SPACING_MS = 250;
 const BUSY_PAYMENT_PATTERN = /\b(?:payment to .+ is still waiting for confirmation|balance check is still waiting for confirmation)\b/i;
 const TERMINAL_GIVEAWAY_PAYOUT_STATUSES = ['paid', 'credited', 'credit_failed', 'failed', 'skipped', 'manual_review'];
 const activeGiveawayPayoutProcessors = new Set();
