@@ -36,6 +36,7 @@ const STAFF_RANK_ORDER = [
     'Admin'
 ];
 const closingTicketChannels = new Set();
+const creatingTicketKeys = new Set();
 
 function staffRoleIdsAtOrAbove(minimumRankName) {
     const minimumRankIndex = STAFF_RANK_ORDER.indexOf(minimumRankName);
@@ -130,6 +131,65 @@ function sanitizeChannelName(value) {
         .replace(/[^a-z0-9_-]+/g, '-')
         .replace(/^-+|-+$/g, '')
         .slice(0, 30) || 'ticket';
+}
+
+function ticketTopic(type, userId) {
+    return `Penguin Mafia ticket:${type}:${userId}`;
+}
+
+function ticketKey(type, userId) {
+    return `${type}:${userId}`;
+}
+
+function ticketTypeLabel(type) {
+    if (type === 'report') {
+        return 'report ticket';
+    }
+
+    if (type === 'media') {
+        return 'media application';
+    }
+
+    if (type === 'staff') {
+        return 'staff application';
+    }
+
+    return 'ticket';
+}
+
+async function findOpenTicketChannel(guild, type, userId) {
+    const topic = ticketTopic(type, userId);
+    const cachedChannel = guild.channels.cache.find(channel => {
+        return channel?.type === ChannelType.GuildText &&
+            channel.parentId === TICKET_CATEGORY_ID &&
+            channel.topic === topic;
+    });
+
+    if (cachedChannel) {
+        return cachedChannel;
+    }
+
+    const fetchedChannels = await guild.channels.fetch().catch(() => null);
+
+    if (!fetchedChannels) {
+        return null;
+    }
+
+    return fetchedChannels.find(channel => {
+        return channel?.type === ChannelType.GuildText &&
+            channel.parentId === TICKET_CATEGORY_ID &&
+            channel.topic === topic;
+    }) || null;
+}
+
+function existingTicketMessage(type, channel = null) {
+    const label = ticketTypeLabel(type);
+
+    if (type === 'report' && channel) {
+        return `❌ You already have an open ${label}: ${channel}`;
+    }
+
+    return `❌ You already have an open ${label}. Please wait for staff to review it before opening another one.`;
 }
 
 async function fetchTicketCategory(guild) {
@@ -321,6 +381,16 @@ async function handleTicketButton(interaction) {
         return true;
     }
 
+    const existingTicket = await findOpenTicketChannel(interaction.guild, type, interaction.user.id);
+
+    if (existingTicket) {
+        await interaction.reply({
+            content: existingTicketMessage(type, existingTicket),
+            flags: MessageFlags.Ephemeral
+        });
+        return true;
+    }
+
     await interaction.showModal(modal);
     return true;
 }
@@ -340,25 +410,52 @@ async function handleTicketModal(interaction) {
         return true;
     }
 
-    if (type === 'report') {
-        await createReportTicket(interaction);
+    const key = ticketKey(type, interaction.user.id);
+
+    if (creatingTicketKeys.has(key)) {
+        await interaction.reply({
+            content: `⏳ Your ${ticketTypeLabel(type)} is already being created.`,
+            flags: MessageFlags.Ephemeral
+        });
         return true;
     }
 
-    if (type === 'media') {
-        await createMediaApplication(interaction);
+    const existingTicket = await findOpenTicketChannel(interaction.guild, type, interaction.user.id);
+
+    if (existingTicket) {
+        await interaction.reply({
+            content: existingTicketMessage(type, existingTicket),
+            flags: MessageFlags.Ephemeral
+        });
         return true;
     }
 
-    if (type === 'staff') {
-        await createStaffApplication(interaction);
-        return true;
+    creatingTicketKeys.add(key);
+
+    try {
+        if (type === 'report') {
+            await createReportTicket(interaction);
+            return true;
+        }
+
+        if (type === 'media') {
+            await createMediaApplication(interaction);
+            return true;
+        }
+
+        if (type === 'staff') {
+            await createStaffApplication(interaction);
+            return true;
+        }
+
+        await interaction.reply({
+            content: '❌ Unknown ticket form.',
+            flags: MessageFlags.Ephemeral
+        });
+    } finally {
+        creatingTicketKeys.delete(key);
     }
 
-    await interaction.reply({
-        content: '❌ Unknown ticket form.',
-        flags: MessageFlags.Ephemeral
-    });
     return true;
 }
 
@@ -366,7 +463,7 @@ async function createTicketChannel(interaction, type, minimumStaffRankName, incl
     const category = await fetchTicketCategory(interaction.guild);
     const safeUsername = sanitizeChannelName(interaction.user.username);
     const name = `${type}-${safeUsername}`;
-    const topic = `Penguin Mafia ticket:${type}:${interaction.user.id}`;
+    const topic = ticketTopic(type, interaction.user.id);
 
     return interaction.guild.channels.create({
         name,

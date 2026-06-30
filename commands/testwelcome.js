@@ -12,8 +12,8 @@ const {
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('welcome')
-        .setDescription('Open your private production welcome flow.'),
+        .setName('testwelcome')
+        .setDescription('Open a private welcome preview flow.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -22,17 +22,17 @@ module.exports = {
 
         try {
             const channel = await startOnboardingForMember(interaction.member, {
-                isTest: false
+                isTest: true
             });
 
             await interaction.editReply(
-                `✅ Welcome flow opened in ${channel}.`
+                `✅ Welcome preview opened in ${channel}.`
             );
         } catch (error) {
-            logCommandError(interaction, '/welcome', error);
+            logCommandError(interaction, '/testwelcome', error);
 
             await interaction.editReply(
-                `❌ **Welcome failed.**\n\n` +
+                `❌ **Welcome preview failed.**\n\n` +
                 `Error:\n\`\`\`\n${error.message}\n\`\`\``
             );
         }

@@ -1312,8 +1312,8 @@ async function processJoinBatch(guild) {
                 guild,
                 `🐧🎉 Welcome ${member} to the **Penguin Mafia**!\n\n` +
                 `You are member **#${guild.memberCount}** in the server.\n\n` +
-                `⚠️ I could not safely detect your recruiter, so you are an orphaned penguin for now.\n\n` +
-                `Use \`/join recruiter:@YourRecruiter\` so the Mafia knows who recruited you.`
+                `${member} joined the server.\n\n` +
+                `If you invited them, please tell them to join your team with \`/join recruiter:@YourDiscord\`.`
             );
 
             console.log(`${member.user.tag} saved as orphan. They can use /join recruiter:@Player.`);

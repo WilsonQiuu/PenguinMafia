@@ -101,15 +101,12 @@ function isWelcomeFlowMessage(message, userId) {
 }
 
 function introMessage(member, context = {}) {
-    const isTest = Boolean(context.isTest);
     const helperMentions = [context.recruiterId, context.grandRecruiterId]
         .filter(Boolean);
     const parentLine = context.inviterDisplayName
         ? `Our bots detected ${context.recruiterId ? `<@${context.recruiterId}>` : `**${context.inviterDisplayName}**`} as your recruiter. They${context.grandRecruiterId ? ` and <@${context.grandRecruiterId}>` : ''} can see this room and help if you get stuck.`
-        : `Our bots could not safely detect your recruiter, so you are an orphaned penguin for now. You can fix that later with \`/join recruiter:@YourRecruiter\`.`;
-    const testLine = isTest
-        ? `\n\n🧪 **Test mode:** finishing this will not change your DB welcome status, save your IGN, or give you the ${DEFAULT_RANK_NAME} role.`
-        : '';
+        : `No recruiter was detected for this join. If someone invited you, use \`/join recruiter:@TheirDiscord\` so you can join their team.`;
+    const isTest = Boolean(context.isTest);
 
     return {
         content:
@@ -119,8 +116,7 @@ function introMessage(member, context = {}) {
             `🧊 Loyal to the ice\n` +
             `🐧 Loyal to the colony\n\n` +
             `${parentLine}\n\n` +
-            `Tap below to start training.` +
-            testLine,
+            `Tap below to start training.`,
         allowedMentions: {
             users: [member.id, ...helperMentions]
         },
@@ -239,7 +235,6 @@ function finalMessage(userId, linkedIgn = null, edition = null, isTest = false, 
             `🧊 The ice gates open.\n` +
             `🐧 The colony awaits.\n\n` +
             `${linkedLine}\n\n` +
-            `${isTest ? `🧪 Test mode: no role, IGN, or DB changes.\n\n` : ''}` +
             `🎖️ Role ready: **${DEFAULT_RANK_NAME}**\n\n` +
             `Press **Done** to enter. The training room will self destruct. 💣`,
         components: [
