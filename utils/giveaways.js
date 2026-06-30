@@ -70,6 +70,14 @@ const activeGiveawaysBoardRefreshes = new Map();
 const donationLeaderboardRefreshes = new Map();
 const giveawayMessageRefreshes = new Map();
 
+function giveawayRegistrationHelpMessage() {
+    return (
+        `❌ You need to be a registered Penguin Mafia player with a linked Minecraft account to enter giveaways.\n\n` +
+        `Finish welcome first, then link your Minecraft account with:\n` +
+        `\`/penguinlink ign:<your ign> edition:<java or bedrock>\``
+    );
+}
+
 function giveawayPaymentBotUser() {
     return process.env.BOT_USER?.trim() || DEFAULT_PAYMENT_BOT_USER;
 }
@@ -1320,54 +1328,24 @@ async function enterAllActiveGiveaways(interaction, db = sql) {
     const player = playerRows[0];
 
     if (!player) {
-        await interaction.editReply('❌ You need to be a registered Penguin Mafia player to enter giveaways.');
+        await interaction.editReply(giveawayRegistrationHelpMessage());
         return true;
     }
 
     if (!player.minecraft_ign || !player.minecraft_edition) {
-        await interaction.editReply('❌ Link your Minecraft account first with `/penguinlink` before entering giveaways.');
+        await interaction.editReply(
+            `❌ Link your Minecraft account first with:\n` +
+            `\`/penguinlink ign:<your ign> edition:<java or bedrock>\`\n\n` +
+            `Then try entering the giveaway again.`
+        );
         return true;
     }
 
-    const resultRows = await db`
-        with active_giveaways as (
-            select id, host_discord_id
-            from giveaways
-            where guild_id = ${interaction.guild.id}
-                and status = 'active'
-                and ends_at > now()
-        ),
-        eligible_giveaways as (
-            select id
-            from active_giveaways
-            where host_discord_id <> ${interaction.user.id}
-        ),
-        inserted_entries as (
-            insert into giveaway_entries (
-                giveaway_id,
-                player_discord_id
-            )
-            select
-                id,
-                ${interaction.user.id}
-            from eligible_giveaways
-            on conflict (giveaway_id, player_discord_id) do nothing
-            returning giveaway_id
-        )
-        select
-            (select count(*) from eligible_giveaways)::int as eligible_count,
-            (select count(*) from active_giveaways where host_discord_id = ${interaction.user.id})::int as own_skipped,
-            (select count(*) from inserted_entries)::int as inserted_count
-    `;
-    const result = resultRows[0] || {
-        eligible_count: 0,
-        own_skipped: 0,
-        inserted_count: 0
-    };
-
-    if (result.inserted_count > 0) {
-        scheduleActiveGiveawaysBoardRefresh(interaction.guild, db);
-    }
+    const result = await enterAllActiveGiveawaysForUser(
+        interaction.guild,
+        interaction.user.id,
+        db
+    );
 
     if (result.eligible_count === 0) {
         await interaction.editReply(
@@ -1384,6 +1362,50 @@ async function enterAllActiveGiveaways(interaction, db = sql) {
         (result.own_skipped > 0 ? ` Skipped **${result.own_skipped}** of your own giveaway${result.own_skipped === 1 ? '' : 's'}.` : '')
     );
     return true;
+}
+
+async function enterAllActiveGiveawaysForUser(guild, userId, db = sql) {
+    const resultRows = await db`
+        with active_giveaways as (
+            select id, host_discord_id
+            from giveaways
+            where guild_id = ${guild.id}
+                and status = 'active'
+                and ends_at > now()
+        ),
+        eligible_giveaways as (
+            select id
+            from active_giveaways
+            where host_discord_id <> ${userId}
+        ),
+        inserted_entries as (
+            insert into giveaway_entries (
+                giveaway_id,
+                player_discord_id
+            )
+            select
+                id,
+                ${userId}
+            from eligible_giveaways
+            on conflict (giveaway_id, player_discord_id) do nothing
+            returning giveaway_id
+        )
+        select
+            (select count(*) from eligible_giveaways)::int as eligible_count,
+            (select count(*) from active_giveaways where host_discord_id = ${userId})::int as own_skipped,
+            (select count(*) from inserted_entries)::int as inserted_count
+    `;
+    const result = resultRows[0] || {
+        eligible_count: 0,
+        own_skipped: 0,
+        inserted_count: 0
+    };
+
+    if (result.inserted_count > 0) {
+        scheduleActiveGiveawaysBoardRefresh(guild, db);
+    }
+
+    return result;
 }
 
 async function leaveAllActiveGiveaways(interaction, db = sql) {
@@ -1438,7 +1460,7 @@ async function enterGiveaway(interaction, db = sql) {
 
     if (playerRows.length === 0) {
         await interaction.reply({
-            content: '❌ You need to be a registered Penguin Mafia player to enter.',
+            content: giveawayRegistrationHelpMessage(),
             ephemeral: true
         });
         return true;
@@ -1617,7 +1639,7 @@ async function handleGiveawayLinkModal(interaction, db = sql) {
     });
 
     if (!entryResult) {
-        await interaction.editReply('❌ You need to be a registered Penguin Mafia player to enter.');
+        await interaction.editReply(giveawayRegistrationHelpMessage());
         return true;
     }
 
@@ -2095,6 +2117,7 @@ module.exports = {
     createGiveawayPaymentRequest,
     endGiveawayEarly,
     enterGiveaway,
+    enterAllActiveGiveawaysForUser,
     finishExpiredGiveawaysForGuild,
     finishGiveaway,
     giveawayPaymentBotUser,
