@@ -2197,12 +2197,20 @@ client.once(Events.ClientReady, async () => {
         }
     }
 
-    function createNonOverlappingRunner(label, runner) {
+    function createNonOverlappingRunner(label, runner, options = {}) {
         let running = false;
+        let lastSkippedLogAt = 0;
+        const skipLogIntervalMs = options.skipLogIntervalMs ?? 0;
 
         return () => {
             if (running) {
-                console.log(`${label} skipped because the previous run is still active.`);
+                const now = Date.now();
+
+                if (!skipLogIntervalMs || now - lastSkippedLogAt >= skipLogIntervalMs) {
+                    console.log(`${label} skipped because the previous run is still active.`);
+                    lastSkippedLogAt = now;
+                }
+
                 return;
             }
 
@@ -2290,6 +2298,8 @@ client.once(Events.ClientReady, async () => {
                 console.error(error);
             }
         }
+    }, {
+        skipLogIntervalMs: 5 * 60 * 1000
     });
 
     setInterval(runPayoutQueue, 15_000);

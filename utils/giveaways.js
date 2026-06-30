@@ -72,10 +72,66 @@ const giveawayMessageRefreshes = new Map();
 
 function giveawayRegistrationHelpMessage() {
     return (
-        `❌ You need to be a registered Penguin Mafia player with a linked Minecraft account to enter giveaways.\n\n` +
-        `Finish welcome first, then link your Minecraft account with:\n` +
+        `❌ I could not find your Penguin Mafia player profile.\n\n` +
+        `If you already finished welcome, run this once to refresh your linked account:\n` +
         `\`/penguinlink ign:<your ign> edition:<java or bedrock>\``
     );
+}
+
+function giveawayLinkHelpMessage(player = null) {
+    const currentIgn = player?.minecraft_ign
+        ? `\nCurrent IGN on file: **${player.minecraft_ign}**`
+        : '';
+    const missingEdition = player?.minecraft_ign && !player?.minecraft_edition
+        ? `\nYour IGN is linked, but your Minecraft edition is missing.`
+        : '';
+
+    return (
+        `❌ Your Minecraft account link is incomplete.${currentIgn}${missingEdition}\n\n` +
+        `Please refresh it with:\n` +
+        `\`/penguinlink ign:<your ign> edition:<java or bedrock>\`\n\n` +
+        `Then try entering the giveaway again.`
+    );
+}
+
+async function fetchGiveawayPlayer(discordId, db = sql) {
+    const rows = await db`
+        select
+            discord_id,
+            minecraft_ign,
+            minecraft_edition,
+            status,
+            welcome_completed
+        from players
+        where discord_id = ${discordId}
+        limit 1
+    `;
+
+    return rows[0] || null;
+}
+
+async function restoreActiveGiveawayPlayer(player, db = sql) {
+    if (!player?.discord_id || player.status === 'active') {
+        return player;
+    }
+
+    const rows = await db`
+        update players
+        set
+            status = 'active',
+            updated_at = now()
+        where discord_id = ${player.discord_id}
+            and minecraft_ign is not null
+            and minecraft_edition is not null
+        returning
+            discord_id,
+            minecraft_ign,
+            minecraft_edition,
+            status,
+            welcome_completed
+    `;
+
+    return rows[0] || player;
 }
 
 function giveawayPaymentBotUser() {
@@ -1314,17 +1370,10 @@ async function enterAllActiveGiveaways(interaction, db = sql) {
 
     await interaction.deferReply({ ephemeral: true });
 
-    const playerRows = await db`
-        select
-            discord_id,
-            minecraft_ign,
-            minecraft_edition
-        from players
-        where discord_id = ${interaction.user.id}
-            and status = 'active'
-        limit 1
-    `;
-    const player = playerRows[0];
+    const player = await restoreActiveGiveawayPlayer(
+        await fetchGiveawayPlayer(interaction.user.id, db),
+        db
+    );
 
     if (!player) {
         await interaction.editReply(giveawayRegistrationHelpMessage());
@@ -1332,11 +1381,7 @@ async function enterAllActiveGiveaways(interaction, db = sql) {
     }
 
     if (!player.minecraft_ign || !player.minecraft_edition) {
-        await interaction.editReply(
-            `❌ Link your Minecraft account first with:\n` +
-            `\`/penguinlink ign:<your ign> edition:<java or bedrock>\`\n\n` +
-            `Then try entering the giveaway again.`
-        );
+        await interaction.editReply(giveawayLinkHelpMessage(player));
         return true;
     }
 
@@ -1445,18 +1490,12 @@ async function enterGiveaway(interaction, db = sql) {
 
     const giveawayId = interaction.customId.slice(GIVEAWAY_BUTTON_PREFIX.length);
 
-    const playerRows = await db`
-        select
-            discord_id,
-            minecraft_ign,
-            minecraft_edition
-        from players
-        where discord_id = ${interaction.user.id}
-            and status = 'active'
-        limit 1
-    `;
+    const player = await restoreActiveGiveawayPlayer(
+        await fetchGiveawayPlayer(interaction.user.id, db),
+        db
+    );
 
-    if (playerRows.length === 0) {
+    if (!player) {
         await interaction.reply({
             content: giveawayRegistrationHelpMessage(),
             ephemeral: true
@@ -1483,8 +1522,6 @@ async function enterGiveaway(interaction, db = sql) {
         });
         return true;
     }
-
-    const player = playerRows[0];
 
     if (interaction.user.id === giveaway.host_discord_id) {
         await interaction.reply({
@@ -1601,10 +1638,9 @@ async function handleGiveawayLinkModal(interaction, db = sql) {
                 discord_display_name = ${displayName},
                 minecraft_ign = ${minecraftIgn},
                 minecraft_edition = ${minecraftEdition},
+                status = 'active',
                 updated_at = now()
             where discord_id = ${interaction.user.id}
-                and status = 'active'
-                and welcome_completed = true
             returning discord_id
         `;
 
