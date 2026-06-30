@@ -25,6 +25,34 @@ function vouchKind(access) {
     return access.type === 'admin' ? 'Admin vouch' : 'Trusted Penguin vouch';
 }
 
+function publicVouchKind(access) {
+    return access.type === 'admin' ? 'Admin vouch' : 'regular vouch';
+}
+
+async function sendVouchNotification(interaction, targetUser, access, result, roleResult) {
+    if (!interaction.channel?.isTextBased?.()) {
+        return;
+    }
+
+    const trustedLine = roleResult?.status === 'added'
+        ? `\n🎖️ ${targetUser} also received <@&${TRUSTED_PENGUIN_ROLE_ID}>.`
+        : '';
+
+    await interaction.channel.send({
+        content:
+            `📣 ${targetUser}, ${interaction.user} gave you an **${publicVouchKind(access)}**.\n` +
+            `Admin vouches: **${result.player.admin_vouches}**\n` +
+            `Total vouches: **${result.player.vouches}**${trustedLine}`,
+        allowedMentions: {
+            users: [targetUser.id, interaction.user.id],
+            parse: []
+        }
+    }).catch(error => {
+        console.error(`Could not send public vouch notification for ${targetUser.id}:`);
+        console.error(error);
+    });
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('vouche')
@@ -265,6 +293,8 @@ module.exports = {
                     value: roleResult?.status || 'Not checked'
                 }
             ]);
+
+            await sendVouchNotification(interaction, targetUser, access, result, roleResult);
 
             await interaction.editReply(
                 `✅ **${vouchKind(access)} added.**\n\n` +
