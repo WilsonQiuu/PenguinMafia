@@ -435,7 +435,7 @@ async function updateTeamWeeklyRecruitsLeaderboardForGuild(guild, sql) {
     `;
 
     const teamLines = teamRows.length > 0
-        ? teamRows.map(teamLeaderboardLine).join('\n')
+        ? teamRows.map((row, i) => teamLeaderboardLine(i, row)).join('\n')
         : 'No team recruits yet this week.';
 
     return updateLeaderboardChannel(
