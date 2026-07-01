@@ -5,6 +5,7 @@ const {
 } = require('./elections.js');
 const {
     resetWeeklyRecruitsAndSaveTopThree,
+    updateTeamWeeklyRecruitsLeaderboardForGuild,
     updateWeeklyRecruitsLeaderboardForGuild
 } = require('./leaderboards.js');
 const {
@@ -223,6 +224,7 @@ async function runFridayNoonScheduleForGuild(guild, db = sql, now = new Date()) 
                 usePreviousWeeklyPeriod: true
             });
             await updateWeeklyRecruitsLeaderboardForGuild(guild, db);
+            await updateTeamWeeklyRecruitsLeaderboardForGuild(guild, db);
             weeklyReset = true;
         }
 

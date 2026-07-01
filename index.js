@@ -89,6 +89,12 @@ const {
     handleTicketModal
 } = require('./utils/tickets.js');
 const {
+    handleTeamApprovalButton,
+    postTeamRecruitWelcome,
+    syncPlayerTeamRole,
+    teamLineForRecruiter
+} = require('./utils/teams.js');
+const {
     editModLog,
     findModLogChannel,
     formatChannel,
@@ -1072,6 +1078,7 @@ async function saveMemberWithParent(guild, member, inviter, invite = null) {
                 joined_invite_code,
                 joined_via_inviter_discord_id,
                 parent_discord_id,
+                team_id,
                 claims_available,
                 rank_name,
                 status,
@@ -1085,6 +1092,7 @@ async function saveMemberWithParent(guild, member, inviter, invite = null) {
                 ${invite?.code || null},
                 ${inviter.id},
                 ${inviter.id},
+                (select team_id from players where discord_id = ${inviter.id}),
                 0,
                 ${DEFAULT_RANK_NAME},
                 'active',
@@ -1256,6 +1264,11 @@ async function processJoinBatch(guild) {
                 inviterDisplayName,
                 welcomeCompleted
             } = await saveMemberWithParent(guild, member, inviter, inviteChanges[0].invite);
+            const recruiterTeamLine = await teamLineForRecruiter(sql, inviter.id).catch(error => {
+                console.error('Could not fetch recruiter team for welcome message:');
+                console.error(error);
+                return '';
+            });
 
             if (welcomeCompleted) {
                 await syncMemberRoleFromDatabase(member);
@@ -1271,8 +1284,21 @@ async function processJoinBatch(guild) {
                 `🐧🎉 Welcome ${member} to the **Penguin Mafia**!\n\n` +
                 `You are member **#${guild.memberCount}** in the server.\n` +
                 `You were recruited by **${inviter}**.\n\n` +
-                `${member} is now a recruit of **${inviterDisplayName}**.`
+                `${member} is now a recruit of **${inviterDisplayName}**.\n` +
+                `${recruiterTeamLine}`
             );
+
+            await syncPlayerTeamRole(guild, member.user.id, sql).catch(error => {
+                console.error('Team role sync failed after invite join:');
+                console.error(error);
+                return false;
+            });
+
+            await postTeamRecruitWelcome(guild, inviter.id, member.user.id, sql).catch(error => {
+                console.error('Team recruit welcome failed after invite join:');
+                console.error(error);
+                return false;
+            });
 
             await postFirstRecruitEvent(guild, sql, {
                 recruiterId: inviter.id,
@@ -2408,6 +2434,9 @@ client.on(Events.InteractionCreate, async interaction => {
         try {
             const ticketHandled = await handleTicketButton(interaction);
             if (ticketHandled) return;
+
+            const teamHandled = await handleTeamApprovalButton(interaction, sql);
+            if (teamHandled) return;
 
             const accountLinkHandled = await handleAccountLinkButton(interaction, sql);
             if (accountLinkHandled) return;

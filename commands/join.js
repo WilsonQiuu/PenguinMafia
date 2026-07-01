@@ -17,6 +17,11 @@ const {
 const {
     canRecruiterTakeRecruit
 } = require('../utils/ranks.js');
+const {
+    postTeamRecruitWelcome,
+    syncPlayerTeamRole,
+    teamLineForRecruiter
+} = require('../utils/teams.js');
 
 const DEFAULT_RANK_NAME = 'Penguin Soldier';
 
@@ -166,16 +171,53 @@ module.exports = {
                     update players
                     set
                         parent_discord_id = ${parentUser.id},
+                        team_id = case
+                            when exists (
+                                select 1
+                                from teams owned_team
+                                where owned_team.owner_discord_id = ${childUser.id}
+                                    and owned_team.status = 'active'
+                                    and owned_team.id is distinct from (
+                                        select recruiter.team_id
+                                        from players recruiter
+                                        where recruiter.discord_id = ${parentUser.id}
+                                    )
+                            ) then players.team_id
+                            else (
+                                select recruiter.team_id
+                                from players recruiter
+                                where recruiter.discord_id = ${parentUser.id}
+                            )
+                        end,
                         status = 'active',
                         updated_at = now()
                     where discord_id = ${childUser.id}
                 `;
             });
 
+            const recruiterTeamLine = await teamLineForRecruiter(sql, parentUser.id).catch(error => {
+                console.error('Could not fetch recruiter team after /join:');
+                console.error(error);
+                return '';
+            });
+
             await interaction.editReply(
                 `✅ **Join successful!**\n\n` +
-                `${childUser} is now a recruit of ${parentUser}.`
+                `${childUser} is now a recruit of ${parentUser}.\n` +
+                `${recruiterTeamLine}`
             );
+
+            await syncPlayerTeamRole(interaction.guild, childUser.id, sql).catch(error => {
+                console.error('Team role sync failed after /join:');
+                console.error(error);
+                return false;
+            });
+
+            await postTeamRecruitWelcome(interaction.guild, parentUser.id, childUser.id, sql).catch(error => {
+                console.error('Team recruit welcome failed after /join:');
+                console.error(error);
+                return false;
+            });
 
             scheduleLeaderboardsRefreshForGuild(interaction.guild, sql);
 

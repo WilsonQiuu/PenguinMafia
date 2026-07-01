@@ -8,12 +8,19 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
+    scheduleLeaderboardsRefreshForGuild
+} = require('../utils/leaderboards.js');
+const {
     postBranchMilestoneEvents,
     postFirstRecruitEvent
 } = require('../utils/events.js');
 const {
     canRecruiterTakeRecruit
 } = require('../utils/ranks.js');
+const {
+    assignRecruitTreeToRecruiterTeam,
+    postTeamTreeMoveAnnouncement
+} = require('../utils/teams.js');
 
 const DEFAULT_RANK_NAME = 'Penguin Soldier';
 
@@ -224,12 +231,47 @@ module.exports = {
                 `;
             });
 
+            const teamSyncResult = await assignRecruitTreeToRecruiterTeam(
+                interaction.guild,
+                childUser.id,
+                parentUser.id,
+                sql
+            ).catch(error => {
+                console.error('Team sync failed after /give:');
+                console.error(error);
+                return {
+                    error
+                };
+            });
+            const teamSyncLine = teamSyncResult?.error
+                ? `\nTeam sync: **failed** (${teamSyncResult.error.message})`
+                : teamSyncResult?.team
+                    ? `\nTeam sync: **${teamSyncResult.affectedPlayerIds.length}** player(s) now follow **Team ${teamSyncResult.team.name}**.`
+                    : `\nTeam sync: **${teamSyncResult?.affectedPlayerIds?.length || 0}** player(s) now have no team because the new recruiter has no team.`;
+
             await interaction.editReply(
                 `✅ **Tree moved successfully!**\n\n` +
                 `New recruiter: ${parentUser} \`${parentUser.id}\`\n` +
                 `Moved player: ${childUser} \`${childUser.id}\`\n\n` +
-                `${childUser} and their entire recruit tree are now under ${parentUser}.`
+                `${childUser} and their entire recruit tree are now under ${parentUser}.` +
+                `${teamSyncLine}`
             );
+
+            scheduleLeaderboardsRefreshForGuild(interaction.guild, sql);
+
+            if (teamSyncResult?.team && teamSyncResult.affectedPlayerIds.length > 0) {
+                await postTeamTreeMoveAnnouncement(
+                    interaction.guild,
+                    teamSyncResult.team,
+                    childUser.id,
+                    parentUser.id,
+                    teamSyncResult.affectedPlayerIds.length
+                ).catch(error => {
+                    console.error('Team tree move announcement failed after /give:');
+                    console.error(error);
+                    return false;
+                });
+            }
 
             await postFirstRecruitEvent(interaction.guild, sql, {
                 recruiterId: parentUser.id,

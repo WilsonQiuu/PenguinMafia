@@ -82,6 +82,8 @@ const PROMOTION_EVENTS_CHANNEL_ID = process.env.PROMOTION_EVENTS_CHANNEL_ID || '
 const RANK_INFO_CHANNEL_ID = process.env.RANK_INFO_CHANNEL_ID || '1512488363788075250';
 const WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID = process.env.WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID || '1512488377490870392';
 const HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID = process.env.HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID || '1517802352046768148';
+const TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID = process.env.TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID || '1521886870123057182';
+const TEAM_CHANNEL_CATEGORY_ID = process.env.TEAM_CHANNEL_CATEGORY_ID || '1521889430548512890';
 const DONATIONS_LEADERBOARD_CHANNEL_ID = process.env.DONATIONS_LEADERBOARD_CHANNEL_ID || '1512488380280082493';
 const WELCOME_CATEGORY_NAME = '🐧-penguin-processing';
 const MOD_LOG_CHANNEL_NAME = 'mod-log';
@@ -387,6 +389,140 @@ async function ensureDatabaseSchema(sql) {
     await sql`
         alter table players
         add column if not exists first_emperor_branch_notified_at timestamptz
+    `;
+
+    await sql`
+        create table if not exists teams (
+            id bigserial primary key,
+            guild_id text not null,
+            name text not null,
+            normalized_name text not null,
+            color int not null check (color >= 0 and color <= 16777215),
+            owner_discord_id text references players(discord_id) on delete set null,
+            role_id text,
+            channel_id text,
+            status text not null default 'active' check (status in ('active', 'archived')),
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            archived_at timestamptz
+        )
+    `;
+
+    await sql`
+        alter table teams
+        add column if not exists normalized_name text
+    `;
+
+    await sql`
+        alter table teams
+        add column if not exists color int not null default 0 check (color >= 0 and color <= 16777215)
+    `;
+
+    await sql`
+        alter table teams
+        add column if not exists owner_discord_id text references players(discord_id) on delete set null
+    `;
+
+    await sql`
+        alter table teams
+        add column if not exists role_id text
+    `;
+
+    await sql`
+        alter table teams
+        add column if not exists channel_id text
+    `;
+
+    await sql`
+        alter table teams
+        add column if not exists status text not null default 'active'
+    `;
+
+    await sql`
+        alter table teams
+        add column if not exists archived_at timestamptz
+    `;
+
+    await sql`
+        update teams
+        set
+            normalized_name = lower(regexp_replace(trim(name), '\\s+', ' ', 'g')),
+            updated_at = now()
+        where normalized_name is null
+            or normalized_name = ''
+    `;
+
+    await sql`
+        alter table teams
+        alter column normalized_name set not null
+    `;
+
+    await sql`
+        alter table teams
+        drop constraint if exists teams_status_check
+    `;
+
+    await sql`
+        alter table teams
+        add constraint teams_status_check check (status in ('active', 'archived'))
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists team_id bigint references teams(id) on delete set null
+    `;
+
+    await sql`
+        create table if not exists team_create_requests (
+            id bigserial primary key,
+            guild_id text not null,
+            owner_discord_id text not null references players(discord_id) on delete cascade,
+            requested_by_discord_id text not null,
+            name text not null,
+            normalized_name text not null,
+            color int not null check (color >= 0 and color <= 16777215),
+            status text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'failed')),
+            team_id bigint references teams(id) on delete set null,
+            decision_by_discord_id text,
+            decision_note text,
+            requested_at timestamptz not null default now(),
+            decided_at timestamptz,
+            updated_at timestamptz not null default now()
+        )
+    `;
+
+    await sql`
+        alter table team_create_requests
+        add column if not exists normalized_name text
+    `;
+
+    await sql`
+        update team_create_requests
+        set
+            normalized_name = lower(regexp_replace(trim(name), '\\s+', ' ', 'g')),
+            updated_at = now()
+        where normalized_name is null
+            or normalized_name = ''
+    `;
+
+    await sql`
+        alter table team_create_requests
+        alter column normalized_name set not null
+    `;
+
+    await sql`
+        alter table team_create_requests
+        add column if not exists decision_note text
+    `;
+
+    await sql`
+        alter table team_create_requests
+        drop constraint if exists team_create_requests_status_check
+    `;
+
+    await sql`
+        alter table team_create_requests
+        add constraint team_create_requests_status_check check (status in ('pending', 'approved', 'rejected', 'failed'))
     `;
 
     await sql`
@@ -1055,6 +1191,40 @@ async function ensureDatabaseSchema(sql) {
     await sql`
         create index if not exists idx_players_staff_rank_name
         on players(staff_rank_name)
+    `;
+
+    await sql`
+        create index if not exists idx_players_team_id
+        on players(team_id)
+    `;
+
+    await sql`
+        create index if not exists idx_teams_guild_status
+        on teams(guild_id, status)
+    `;
+
+    await sql`
+        create index if not exists idx_teams_owner
+        on teams(guild_id, owner_discord_id)
+    `;
+
+    await sql`
+        create unique index if not exists idx_teams_active_name
+        on teams(guild_id, normalized_name)
+        where status = 'active'
+    `;
+
+    await sql`
+        create unique index if not exists idx_teams_active_owner
+        on teams(guild_id, owner_discord_id)
+        where status = 'active'
+            and owner_discord_id is not null
+    `;
+
+    await sql`
+        create index if not exists idx_team_create_requests_pending_owner
+        on team_create_requests(guild_id, owner_discord_id, requested_at)
+        where status = 'pending'
     `;
 
     await sql`
@@ -2092,6 +2262,8 @@ module.exports = {
     RANKS,
     STAFF_ROLE_IDS,
     STAFF_RANKS,
+    TEAM_CHANNEL_CATEGORY_ID,
+    TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID,
     TRAINER_ROLE_ID,
     TRAINER_ROLE_NAME,
     WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID,

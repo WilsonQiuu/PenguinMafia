@@ -130,8 +130,12 @@ async function postFirstRecruitEvent(guild, db, {
             discord_display_name,
             minecraft_ign,
             rank_name,
-            direct_recruits_count
+            direct_recruits_count,
+            team.name as team_name
         from players
+        left join teams team
+            on team.id = players.team_id
+            and team.status = 'active'
         where discord_id = ${recruiterId}
         limit 1
     `;
@@ -170,6 +174,9 @@ async function postFirstRecruitEvent(guild, db, {
         ? `Next promotion: **${nextRank}**\n` +
             `What they still need:\n${evaluateEligibility(children, nextRank).requirements.join('\n')}`
         : `They are already at the highest Penguin rank. Keep building the tree.`;
+    const teamLine = recruiter.team_name
+        ? `Team: **${recruiter.team_name}**\n`
+        : '';
 
     await channel.send({
         content:
@@ -178,6 +185,7 @@ async function postFirstRecruitEvent(guild, db, {
             `Recruiter: **${playerName(recruiter, 'Unknown Player')}**\n` +
             `New recruit: **${playerName(recruit || {}, 'Unknown Player')}**\n` +
             `Current rank: **${recruiter.rank_name}**\n\n` +
+            `${teamLine}` +
             `${progressLine}\n\n` +
             `The recruit tree has officially started. 🎉`,
         allowedMentions: {

@@ -2,6 +2,7 @@ const {
     DONATIONS_LEADERBOARD_CHANNEL_ID,
     DONATIONS_LEADERBOARD_CHANNEL_NAME,
     HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
+    TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID,
     WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
     WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME
 } = require('./bootstrap.js');
@@ -32,6 +33,14 @@ function leaderboardLine(index, player, value, suffix) {
     const marker = medals[index] || `**${index + 1}.**`;
 
     return `${marker} **${leaderboardName(player)}** - **${value}** ${suffix}`;
+}
+
+function teamLeaderboardLine(index, team) {
+    const medals = ['🥇', '🥈', '🥉'];
+    const marker = medals[index] || `**${index + 1}.**`;
+    const ownerLine = team.owner_discord_id ? ` — Owner: <@${team.owner_discord_id}>` : '';
+
+    return `${marker} **${team.name}** - **${team.recruit_count}** weekly team recruits${ownerLine}`;
 }
 
 function hourlyRecruitRewardAmount() {
@@ -372,6 +381,76 @@ async function updateDonationLeaderboardForGuild(guild, sql) {
     );
 }
 
+async function updateTeamWeeklyRecruitsLeaderboardForGuild(guild, sql) {
+    const teamRows = await sql`
+        with active_week as (
+            select current_weekly_recruit_started_at() as started_at
+        ),
+        team_totals as (
+            select
+                team.id,
+                team.name,
+                team.owner_discord_id,
+                sum(player.weekly_direct_recruits_count)::int as recruit_count
+            from teams team
+            join players player
+                on player.team_id = team.id
+            where team.status = 'active'
+                and player.weekly_direct_recruits_count > 0
+            group by
+                team.id,
+                team.name,
+                team.owner_discord_id
+        )
+        select
+            team_totals.id::text as id,
+            team_totals.name,
+            team_totals.owner_discord_id,
+            team_totals.recruit_count
+        from team_totals
+        cross join active_week
+        left join lateral (
+            select ranked.recruited_at as reached_at
+            from (
+                select
+                    history.recruited_at,
+                    row_number() over (
+                        order by history.recruited_at asc, history.recruit_discord_id asc
+                    ) as recruit_number
+                from recruit_history history
+                join players recruiter
+                    on recruiter.discord_id = history.recruiter_discord_id
+                where recruiter.team_id = team_totals.id
+                    and history.recruited_at >= active_week.started_at
+                    and history.counts_for_hourly = true
+            ) ranked
+            where ranked.recruit_number = team_totals.recruit_count
+            limit 1
+        ) team_progress on true
+        order by
+            team_totals.recruit_count desc,
+            team_progress.reached_at asc nulls last,
+            team_totals.name asc
+        limit 10
+    `;
+
+    const teamLines = teamRows.length > 0
+        ? teamRows.map(teamLeaderboardLine).join('\n')
+        : 'No team recruits yet this week.';
+
+    return updateLeaderboardChannel(
+        guild,
+        TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID,
+        'team-weekly-leaderboard',
+        'Penguin Mafia Weekly Team Recruit Leaderboard',
+        `🏆🐧 **Penguin Mafia Weekly Team Recruit Leaderboard** 🐧🏆\n\n` +
+        `Top 10 teams by adding up each current team member’s **personal weekly direct recruits**.\n` +
+        `Tie-breaker: if teams have the same recruit count, whichever team reached that count first ranks higher.\n` +
+        `This board resets every **Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time).\n\n` +
+        `${teamLines}\n\n`
+    );
+}
+
 async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
     const currentHourRows = await sql`
         with hour_window as (
@@ -526,6 +605,7 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
 
 async function updateLeaderboardsForGuild(guild, sql) {
     await updateWeeklyRecruitsLeaderboardForGuild(guild, sql);
+    await updateTeamWeeklyRecruitsLeaderboardForGuild(guild, sql);
     await updateDonationLeaderboardForGuild(guild, sql);
     await updateHourlyRecruitsLeaderboardForGuild(guild, sql);
 }
@@ -597,6 +677,7 @@ module.exports = {
     scheduleLeaderboardsRefreshForGuild,
     updateDonationLeaderboardForGuild,
     updateHourlyRecruitsLeaderboardForGuild,
+    updateTeamWeeklyRecruitsLeaderboardForGuild,
     updateWeeklyRecruitsLeaderboardForGuild,
     updateLeaderboardsForGuild
 };
