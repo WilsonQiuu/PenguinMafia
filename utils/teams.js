@@ -16,6 +16,28 @@ const {
 
 const TEAM_CREATE_APPROVE_PREFIX = 'team_create_approve:';
 const TEAM_CREATE_REJECT_PREFIX = 'team_create_reject:';
+const TEAM_COLOR_NAMES = new Map([
+    ['black', 0x000000],
+    ['white', 0xFFFFFF],
+    ['gray', 0x95A5A6],
+    ['grey', 0x95A5A6],
+    ['red', 0xE74C3C],
+    ['orange', 0xE67E22],
+    ['yellow', 0xF1C40F],
+    ['green', 0x2ECC71],
+    ['lime', 0x00FF00],
+    ['blue', 0x3498DB],
+    ['cyan', 0x1ABC9C],
+    ['teal', 0x11806A],
+    ['aqua', 0x00FFFF],
+    ['purple', 0x9B59B6],
+    ['pink', 0xE91E63],
+    ['magenta', 0xFF00FF],
+    ['gold', 0xFFD700],
+    ['brown', 0x8B4513],
+    ['navy', 0x34495E],
+    ['blurple', 0x5865F2]
+]);
 
 function normalizeTeamName(name) {
     return String(name || '')
@@ -44,10 +66,19 @@ function validateTeamName(name) {
 
 function parseTeamColor(color) {
     const raw = String(color || '').trim();
+    const normalized = raw.toLowerCase().replace(/\s+/g, '');
+    const namedColor = TEAM_COLOR_NAMES.get(normalized);
+
+    if (namedColor !== undefined) {
+        return namedColor;
+    }
+
     const match = raw.match(/^#?([0-9a-fA-F]{6})$/) || raw.match(/^0x([0-9a-fA-F]{6})$/);
 
     if (!match) {
-        throw new Error('Team color must be a hex color like `#7A5CFF`.');
+        throw new Error(
+            'Team color must be a color name like `yellow`, `red`, or `purple`, or a hex color like `#7A5CFF`.'
+        );
     }
 
     return Number.parseInt(match[1], 16);

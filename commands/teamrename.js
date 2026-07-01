@@ -26,7 +26,7 @@ module.exports = {
         .addStringOption(option =>
             option
                 .setName('color')
-                .setDescription('New team role color as hex, like #7A5CFF')
+                .setDescription('New team color name or hex, like yellow, red, purple, or #7A5CFF')
                 .setRequired(true)
         ),
 
