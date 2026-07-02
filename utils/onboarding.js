@@ -37,6 +37,7 @@ const MODAL_PREFIX = 'welcome_ign_submit';
 const JOIN_ALL_MODAL_PREFIX = 'welcome_join_all_ign';
 const WELCOME_REMINDER_INTERVAL_MS = 2 * 24 * 60 * 60 * 1000;
 const WELCOME_SELF_DESTRUCT_SECONDS = 30;
+const CLICK_HERE_PROMPT = '# CLICK HERE';
 
 const welcomeGraphCache = new Map();
 
@@ -98,6 +99,17 @@ function row(...components) {
     return new ActionRowBuilder().addComponents(...components);
 }
 
+function withClickHerePrompt(message) {
+    if (!message.components?.length || message.content.includes(CLICK_HERE_PROMPT)) {
+        return message;
+    }
+
+    return {
+        ...message,
+        content: `${message.content}\n\n${CLICK_HERE_PROMPT}`
+    };
+}
+
 function normalizeWelcomePayload(interaction, message) {
     const payload = {
         ...message
@@ -130,6 +142,16 @@ function sanitizeChannelName(name) {
 
 function welcomeChannelTopic(userId) {
     return `Penguin Mafia onboarding:${userId}`;
+}
+
+function escapeDiscordMarkdown(value) {
+    return String(value)
+        .replace(/\\/g, '\\\\')
+        .replace(/([*_`~|])/g, '\\$1');
+}
+
+function memberDisplayName(member) {
+    return escapeDiscordMarkdown(member?.displayName || member?.user?.globalName || member?.user?.username || 'new penguin');
 }
 
 async function resolveGrandRecruiterId(recruiterId) {
@@ -170,14 +192,16 @@ function isWelcomeFlowMessage(message, userId) {
 function introMessage(member, context = {}) {
     const helperMentions = [context.recruiterId, context.grandRecruiterId]
         .filter(Boolean);
+    const safeInviterDisplayName = escapeDiscordMarkdown(context.inviterDisplayName || 'your recruiter');
     const parentLine = context.inviterDisplayName
-        ? `Our bots detected ${context.recruiterId ? `<@${context.recruiterId}>` : `**${context.inviterDisplayName}**`} as your recruiter. They${context.grandRecruiterId ? ` and <@${context.grandRecruiterId}>` : ''} can see this room and help if you get stuck.`
+        ? `Our bots detected ${context.recruiterId ? `<@${context.recruiterId}>` : `**${safeInviterDisplayName}**`} as your recruiter. They${context.grandRecruiterId ? ` and <@${context.grandRecruiterId}>` : ''} can see this room and help if you get stuck.`
         : `No recruiter was detected for this join. If someone invited you, use \`/join recruiter:@TheirDiscord\` after this tutorial.`;
     const isTest = Boolean(context.isTest);
 
-    return {
+    return withClickHerePrompt({
         content:
             `# 🐧 Welcome to the Penguin Mafia\n\n` +
+            `This welcome room is for **${memberDisplayName(member)}** ${member}.\n\n` +
             `Here you can:\n\n` +
             `• **Buy and sell spawners**\n` +
             `• **Win giveaways**\n` +
@@ -186,12 +210,13 @@ function introMessage(member, context = {}) {
             `${parentLine}\n\n` +
             `Tap below to start the tutorial.`,
         allowedMentions: {
-            users: [member.id, ...helperMentions]
+            users: [member.id, ...helperMentions],
+            parse: []
         },
         components: [
             row(scopedButton('rank_graph', member.id, 'Start Tutorial', ButtonStyle.Success, isTest))
         ]
-    };
+    });
 }
 
 function simulatedWelcomePlayer(id, name, rankName, parentId = null) {
@@ -331,7 +356,7 @@ async function welcomeGraphAttachment(stageName, simulation) {
 
 async function withWelcomeGraph(stageName, simulation, message) {
     return {
-        ...message,
+        ...withClickHerePrompt(message),
         files: [
             await welcomeGraphAttachment(stageName, simulation)
         ]
@@ -415,7 +440,7 @@ async function emperorTrainingMessage(member, userId, generalCount, isTest = fal
 }
 
 function whyTeamMessage(userId, isTest = false) {
-    return {
+    return withClickHerePrompt({
         content:
             `# 5️⃣ Why do we want a large team?\n\n` +
             `If any teammate under you:\n\n` +
@@ -427,7 +452,7 @@ function whyTeamMessage(userId, isTest = false) {
         components: [
             row(scopedButton('giveaway_prompt', userId, 'Continue', ButtonStyle.Success, isTest))
         ]
-    };
+    });
 }
 
 async function activeGiveawaySummary(guild) {
@@ -455,7 +480,7 @@ async function giveawayJoinPromptMessage(guild, userId, isTest = false) {
         ? `There ${activeCount === 1 ? 'is' : 'are'} currently **${activeCount}** active giveaway${activeCount === 1 ? '' : 's'} with **${formatDonationAmount(totalAmount)}** in prize pools.`
         : `There are no active giveaways right now, but this is where new active giveaways will appear.`;
 
-    return {
+    return withClickHerePrompt({
         content:
             `# 6️⃣ Active giveaways\n\n` +
             `${giveawayLine}\n\n` +
@@ -466,11 +491,11 @@ async function giveawayJoinPromptMessage(guild, userId, isTest = false) {
                 scopedButton('giveaway_join_all_no', userId, 'No', ButtonStyle.Secondary, isTest)
             )
         ]
-    };
+    });
 }
 
 function joinAllGiveawaysInfoMessage(userId, isTest = false) {
-    return {
+    return withClickHerePrompt({
         content:
             `# 💰 Instant giveaway payouts\n\n` +
             `Our giveaways are hosted by players in the community, and the best part is that we have **instant payouts**.\n\n` +
@@ -483,7 +508,7 @@ function joinAllGiveawaysInfoMessage(userId, isTest = false) {
                 scopedButton('join_all_skip', userId, 'Skip', ButtonStyle.Secondary, isTest)
             )
         ]
-    };
+    });
 }
 
 function finalMessage(userId, linkedIgn = null, edition = null, options = {}) {

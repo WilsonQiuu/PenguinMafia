@@ -1200,6 +1200,16 @@ async function sendWelcomeMessage(guild, content) {
     }
 }
 
+function escapeDiscordMarkdown(value) {
+    return String(value)
+        .replace(/\\/g, '\\\\')
+        .replace(/([*_`~|])/g, '\\$1');
+}
+
+function welcomeMemberName(member) {
+    return escapeDiscordMarkdown(member?.displayName || member?.user?.globalName || member?.user?.username || 'New player');
+}
+
 async function processJoinBatch(guild) {
     const guildId = guild.id;
     const batch = client.joinBatches.get(guildId);
@@ -1264,6 +1274,7 @@ async function processJoinBatch(guild) {
                 inviterDisplayName,
                 welcomeCompleted
             } = await saveMemberWithParent(guild, member, inviter, inviteChanges[0].invite);
+            const safeInviterDisplayName = escapeDiscordMarkdown(inviterDisplayName);
             const recruiterTeamLine = await teamLineForRecruiter(sql, inviter.id).catch(error => {
                 console.error('Could not fetch recruiter team for welcome message:');
                 console.error(error);
@@ -1281,11 +1292,18 @@ async function processJoinBatch(guild) {
 
             await sendWelcomeMessage(
                 guild,
-                `🐧🎉 Welcome ${member} to the **Penguin Mafia**!\n\n` +
-                `You are member **#${guild.memberCount}** in the server.\n` +
-                `You were recruited by **${inviter}**.\n\n` +
-                `${member} is now a recruit of **${inviterDisplayName}**.\n` +
-                `${recruiterTeamLine}`
+                {
+                    content:
+                        `🐧🎉 Welcome **${welcomeMemberName(member)}** ${member} to the **Penguin Mafia**!\n\n` +
+                        `You are member **#${guild.memberCount}** in the server.\n` +
+                        `You were recruited by **${inviter}**.\n\n` +
+                        `**${welcomeMemberName(member)}** is now a recruit of **${safeInviterDisplayName}**.\n` +
+                        `${recruiterTeamLine}`,
+                    allowedMentions: {
+                        users: [member.id, inviter.id],
+                        parse: []
+                    }
+                }
             );
 
             await syncPlayerTeamRole(guild, member.user.id, sql).catch(error => {
@@ -1336,10 +1354,17 @@ async function processJoinBatch(guild) {
 
             await sendWelcomeMessage(
                 guild,
-                `🐧🎉 Welcome ${member} to the **Penguin Mafia**!\n\n` +
-                `You are member **#${guild.memberCount}** in the server.\n\n` +
-                `${member} joined the server.\n\n` +
-                `If you invited them, please tell them to join your team with \`/join recruiter:@YourDiscord\`.`
+                {
+                    content:
+                        `🐧🎉 Welcome **${welcomeMemberName(member)}** ${member} to the **Penguin Mafia**!\n\n` +
+                        `You are member **#${guild.memberCount}** in the server.\n\n` +
+                        `**${welcomeMemberName(member)}** joined the server.\n\n` +
+                        `If you invited them, please tell them to join your team with \`/join recruiter:@YourDiscord\`.`,
+                    allowedMentions: {
+                        users: [member.id],
+                        parse: []
+                    }
+                }
             );
 
             console.log(`${member.user.tag} saved as orphan. They can use /join recruiter:@Player.`);
