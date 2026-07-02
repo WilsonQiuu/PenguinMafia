@@ -37,7 +37,7 @@ const MODAL_PREFIX = 'welcome_ign_submit';
 const JOIN_ALL_MODAL_PREFIX = 'welcome_join_all_ign';
 const WELCOME_REMINDER_INTERVAL_MS = 2 * 24 * 60 * 60 * 1000;
 const WELCOME_SELF_DESTRUCT_SECONDS = 30;
-const CLICK_HERE_PROMPT = '# CLICK HERE';
+const CLICK_HERE_PROMPT = '# CLICK BELOW';
 const CLICK_HERE_COMPONENT_ID = `${BUTTON_PREFIX}:click_here_label`;
 
 const welcomeGraphCache = new Map();
@@ -104,7 +104,7 @@ function clickHereRow() {
     return row(
         new ButtonBuilder()
             .setCustomId(CLICK_HERE_COMPONENT_ID)
-            .setLabel('CLICK HERE')
+            .setLabel('CLICK BELOW')
             .setStyle(ButtonStyle.Primary)
             .setDisabled(true)
     );
