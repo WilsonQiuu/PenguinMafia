@@ -38,6 +38,7 @@ const JOIN_ALL_MODAL_PREFIX = 'welcome_join_all_ign';
 const WELCOME_REMINDER_INTERVAL_MS = 2 * 24 * 60 * 60 * 1000;
 const WELCOME_SELF_DESTRUCT_SECONDS = 30;
 const CLICK_HERE_PROMPT = '# CLICK HERE';
+const CLICK_HERE_COMPONENT_ID = `${BUTTON_PREFIX}:click_here_label`;
 
 const welcomeGraphCache = new Map();
 
@@ -99,6 +100,16 @@ function row(...components) {
     return new ActionRowBuilder().addComponents(...components);
 }
 
+function clickHereRow() {
+    return row(
+        new ButtonBuilder()
+            .setCustomId(CLICK_HERE_COMPONENT_ID)
+            .setLabel('CLICK HERE')
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(true)
+    );
+}
+
 function withClickHerePrompt(message) {
     if (!message.components?.length || message.content.includes(CLICK_HERE_PROMPT)) {
         return message;
@@ -107,6 +118,28 @@ function withClickHerePrompt(message) {
     return {
         ...message,
         content: `${message.content}\n\n${CLICK_HERE_PROMPT}`
+    };
+}
+
+function withClickHereComponent(message) {
+    if (!message.components?.length) {
+        return message;
+    }
+
+    const hasClickHereComponent = message.components.some(actionRow => {
+        return actionRow.components.some(component => component.data?.custom_id === CLICK_HERE_COMPONENT_ID);
+    });
+
+    if (hasClickHereComponent) {
+        return message;
+    }
+
+    return {
+        ...message,
+        components: [
+            clickHereRow(),
+            ...message.components
+        ]
     };
 }
 
@@ -356,7 +389,7 @@ async function welcomeGraphAttachment(stageName, simulation) {
 
 async function withWelcomeGraph(stageName, simulation, message) {
     return {
-        ...withClickHerePrompt(message),
+        ...withClickHereComponent(message),
         files: [
             await welcomeGraphAttachment(stageName, simulation)
         ]
