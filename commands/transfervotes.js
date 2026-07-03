@@ -14,7 +14,7 @@ const {
 function buildCommand(name) {
     return new SlashCommandBuilder()
         .setName(name)
-        .setDescription('Transfer votes you received to another penguin.')
+        .setDescription('Transfer votes you received before the final 12 election hours.')
         .addUserOption(option =>
             option
                 .setName('player')

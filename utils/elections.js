@@ -5,6 +5,9 @@ const ELECTION_EVENTS_CHANNEL_ID = process.env.ELECTION_EVENTS_CHANNEL_ID || '15
 const ELECTION_COMMANDS_CHANNEL_ID = process.env.ELECTION_COMMANDS_CHANNEL_ID || '1513405907051221092';
 const ELECTION_LEADERBOARD_REFRESH_DELAY_MS = 1_500;
 const electionLeaderboardRefreshes = new Map();
+const ELECTION_DURATION_HOURS = 24;
+const TRANSFER_VOTES_CUTOFF_REMAINING_HOURS = 12;
+const HOUR_MS = 60 * 60 * 1000;
 
 const VOTE_WEIGHT = 1;
 const VOTE_WEIGHTS = new Map([
@@ -39,6 +42,21 @@ function medal(index) {
 
 function electionChannelLink(guild, channelId) {
     return `https://discord.com/channels/${guild.id}/${channelId}`;
+}
+
+function electionTransferClosesAt(election) {
+    return new Date(new Date(election.ends_at).getTime() - TRANSFER_VOTES_CUTOFF_REMAINING_HOURS * HOUR_MS);
+}
+
+function transferVotesWindowStatus(election, now = new Date()) {
+    const closesAt = electionTransferClosesAt(election);
+    const closed = now.getTime() >= closesAt.getTime();
+
+    return {
+        closed,
+        closesAt,
+        remainingMs: Math.max(0, new Date(election.ends_at).getTime() - now.getTime())
+    };
 }
 
 async function getChannelById(guild, channelId, label) {
@@ -102,6 +120,7 @@ function renderPreStartAnnouncement() {
             `## 📅 Weekly Schedule\n` +
             `Elections begin every **Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time).\n` +
             `The weekly recruit leaderboard resets at the same time.\n\n` +
+            `The election runs for **24 hours**.\n` +
             `When the election opens, use \`/vote player:@Player\` to send your **1 vote** to one penguin.\n\n` +
             `## 🧊 Voting Rule\n` +
             `${voteRuleLine()}\n\n` +
@@ -125,7 +144,7 @@ function renderElectionCommandsMessage() {
             `\`/vote player:@Player\`\n` +
             `Cast your 1 vote for one penguin. Voters stay anonymous.\n\n` +
             `\`/transfervotes player:@Player\`\n` +
-            `Transfer the votes cast **for you** to another candidate.\n\n` +
+            `Transfer the votes cast **for you** to another candidate. This only works before the final **12 hours** of the election.\n\n` +
             `\`/election\`\n` +
             `Check the current election, time left, and top penguins.\n\n` +
             `\`/electionremove\`\n` +
@@ -133,7 +152,7 @@ function renderElectionCommandsMessage() {
             `\`/electionjoin\`\n` +
             `Rejoin the candidate ice. Lost votes do **not** come back.\n\n` +
             `## 👑 Don Commands\n` +
-            `\`/startelection\` - Start a new 2-day election. If one is active, it cancels the old election and resets votes.\n` +
+            `\`/startelection\` - Start a new 24-hour election. If one is active, it cancels the old election and resets votes.\n` +
             `\`/endelection\` - End the election and show the winner.\n` +
             `\`/electioncancel\` - Cancel the election with no winner.\n` +
             `\`/electionclear\` - Clear a finished board back to the starting-soon message.\n` +
@@ -146,6 +165,8 @@ function renderElectionCommandsMessage() {
 
 function renderActiveLeaderboard(election, scores) {
     const endsAt = Math.floor(new Date(election.ends_at).getTime() / 1000);
+    const transferClosesAt = Math.floor(electionTransferClosesAt(election).getTime() / 1000);
+    const transferWindow = transferVotesWindowStatus(election);
     const leaderboardLines = scores.length > 0
         ? scores.slice(0, 15).map((player, index) => {
             return `${medal(index)} ${playerMention(player.discord_id)} - **${player.votes}** vote${player.votes === 1 ? '' : 's'}`;
@@ -159,7 +180,9 @@ function renderActiveLeaderboard(election, scores) {
             `We are voting for the next **DON**.\n\n` +
             `Voting ends <t:${endsAt}:R>.\n\n` +
             `Use \`/vote player:@Player\` to vote.\n` +
-            `Use \`/transfervotes player:@Player\` to transfer votes cast **for you** to another candidate.\n` +
+            (transferWindow.closed
+                ? `Vote transfers are **closed** for the final 12 hours.\n`
+                : `Use \`/transfervotes player:@Player\` to transfer votes cast **for you** to another candidate until <t:${transferClosesAt}:R>.\n`) +
             `Your vote goes to **one** player, and you can change it with \`/vote\` before the ice clock melts.\n\n` +
             `## 🧊 Voting Rule\n` +
             `${voteRuleLine()}\n\n` +
@@ -530,12 +553,14 @@ function postVoteEventInBackground(guild, content, userIds = []) {
 
 async function postElectionStartedEvent(guild, election) {
     const endsAt = Math.floor(new Date(election.ends_at).getTime() / 1000);
+    const transferClosesAt = Math.floor(electionTransferClosesAt(election).getTime() / 1000);
 
     return postVoteEvent(
         guild,
         `🚨🐧 **DON ELECTION STARTED!** 🐧🚨\n\n` +
-        `The ballot box is open. Voting ends <t:${endsAt}:R>.\n\n` +
+        `The ballot box is open for **24 hours**. Voting ends <t:${endsAt}:R>.\n\n` +
         `Vote in <#${ELECTION_LEADERBOARD_CHANNEL_ID}> with \`/vote player:@Player\`.\n` +
+        `Received-vote transfers with \`/transfervotes\` close <t:${transferClosesAt}:R>, when the final 12 hours begin.\n` +
         `Need help? Check <#${ELECTION_COMMANDS_CHANNEL_ID}>.\n\n` +
         `Votes are anonymous. The ice sees totals, not names. 🧊🗳️`
     );
@@ -600,7 +625,7 @@ async function startElection(guild, createdById, db = sql) {
             )
             values (
                 ${createdById},
-                now() + interval '2 days',
+                now() + interval '24 hours',
                 ${existing?.leaderboard_message_id || startingSoonMessage?.id || null}
             )
             returning *
@@ -745,6 +770,15 @@ async function transferReceivedElectionVotes(guild, sourceUser, targetUser, db =
     if (new Date(election.ends_at).getTime() <= Date.now()) {
         await endElection(guild, null, db, 'ended');
         throw new Error('The election timer has ended. The ballot box just snapped shut.');
+    }
+
+    const transferWindow = transferVotesWindowStatus(election);
+
+    if (transferWindow.closed) {
+        throw new Error(
+            `Vote transfers are closed for the final ${TRANSFER_VOTES_CUTOFF_REMAINING_HOURS} hours of the election. ` +
+            `Players can still change their own vote with /vote until the election ends.`
+        );
     }
 
     if (sourceUser.id === targetUser.id) {
@@ -973,8 +1007,10 @@ async function getVotesForPlayer(playerId, db = sql) {
 
 module.exports = {
     ELECTION_COMMANDS_CHANNEL_ID,
+    ELECTION_DURATION_HOURS,
     ELECTION_EVENTS_CHANNEL_ID,
     ELECTION_LEADERBOARD_CHANNEL_ID,
+    TRANSFER_VOTES_CUTOFF_REMAINING_HOURS,
     VOTE_WEIGHTS,
     castElectionVote,
     clearLatestFinishedElectionBoard,
@@ -992,6 +1028,7 @@ module.exports = {
     resetExpiredElectionResultBoardForGuild,
     scheduleElectionLeaderboardUpdate,
     startElection,
+    transferVotesWindowStatus,
     transferReceivedElectionVotes,
     updateElectionLeaderboard
 };

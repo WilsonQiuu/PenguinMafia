@@ -10,7 +10,8 @@ const {
 const {
     ELECTION_LEADERBOARD_CHANNEL_ID,
     getActiveElection,
-    getElectionScores
+    getElectionScores,
+    transferVotesWindowStatus
 } = require('../utils/elections.js');
 
 function medal(index) {
@@ -37,6 +38,11 @@ module.exports = {
 
             const scores = await getElectionScores(election.id, sql);
             const endsAt = Math.floor(new Date(election.ends_at).getTime() / 1000);
+            const transferWindow = transferVotesWindowStatus(election);
+            const transferClosesAt = Math.floor(transferWindow.closesAt.getTime() / 1000);
+            const transferLine = transferWindow.closed
+                ? `Vote transfers are **closed** for the final 12 hours. You can still switch your own vote with \`/vote\`.\n`
+                : `Use \`/transfervotes player:@Player\` to transfer votes cast for you until <t:${transferClosesAt}:R>.\n`;
             const topLines = scores.length > 0
                 ? scores.slice(0, 10).map((player, index) => {
                     return `${medal(index)} <@${player.discord_id}> - **${player.votes}** vote${player.votes === 1 ? '' : 's'}`;
@@ -48,7 +54,8 @@ module.exports = {
                 `Voting ends <t:${endsAt}:R>.\n` +
                 `Leaderboard: <#${ELECTION_LEADERBOARD_CHANNEL_ID}>\n\n` +
                 `Use \`/vote player:@Player\` to cast your vote.\n` +
-                `Use \`/transfervotes player:@Player\` to transfer votes cast for you.\n\n` +
+                transferLine +
+                `\n` +
                 `## Top Penguins\n${topLines}`
             );
         } catch (error) {

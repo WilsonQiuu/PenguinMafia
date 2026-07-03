@@ -899,9 +899,10 @@ function weeklyElectionAndGiveawayReminderMessage(totalAmount) {
 
     return (
         `🗳️🐧 **Penguin Mafia DON Election Started!** 🐧🗳️\n\n` +
-        `The weekly election is open. Vote for the next **DON** with:\n` +
+        `The weekly 24-hour election is open. Vote for the next **DON** with:\n` +
         `\`/vote player:@Player\`\n\n` +
         `Every player gets **1 vote**. You can vote for yourself, and you can change your vote any time before the election ends.\n` +
+        `Received-vote transfers with \`/transfervotes\` close during the final **12 hours**.\n` +
         `Vote and watch the leaderboard in <#${ELECTION_LEADERBOARD_CHANNEL_ID}>.\n\n` +
         `If Discord says you are not registered yet, finish the welcome onboarding first.\n\n` +
         `🎉 **Giveaway Reminder**\n` +
