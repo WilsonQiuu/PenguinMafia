@@ -631,6 +631,7 @@ async function updateCaptainSpeedLeaderboardForGuild(guild, db) {
         where player.reached_captain_at is not null
             and player.created_at is not null
             and player.captain_leaderboard_disqualified = false
+            and date_trunc('month', player.reached_captain_at) = date_trunc('month', now() at time zone 'UTC')
         order by promotion_seconds asc, player.reached_captain_at asc
         limit 10
     `;
@@ -641,9 +642,9 @@ async function updateCaptainSpeedLeaderboardForGuild(guild, db) {
             CAPTAIN_SPEED_LEADERBOARD_CHANNEL_ID,
             'captain-speed-leaderboard',
             'Penguin Mafia Fastest Captains',
-            `⚡🐧 **Penguin Mafia Fastest Captains** 🐧⚡\n\n` +
-            `Top 10 fastest promotions from **Penguin Soldier** to **Penguin Captain**.\n\n` +
-            `No promotions recorded yet. Be the first!\n\n`
+            `⚡🐧 **Penguin Mafia Fastest Captains — ${new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}** 🐧⚡\n\n` +
+            `Top 10 fastest promotions from **Penguin Soldier** to **Penguin Captain** this month.\n\n` +
+            `No promotions recorded yet this month. Be the first!\n\n`
         );
     }
 
@@ -660,8 +661,8 @@ async function updateCaptainSpeedLeaderboardForGuild(guild, db) {
         CAPTAIN_SPEED_LEADERBOARD_CHANNEL_ID,
         'captain-speed-leaderboard',
         'Penguin Mafia Fastest Captains',
-        `⚡🐧 **Penguin Mafia Fastest Captains** 🐧⚡\n\n` +
-        `Top 10 fastest promotions from **Penguin Soldier** to **Penguin Captain**.\n\n` +
+        `⚡🐧 **Penguin Mafia Fastest Captains — ${new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}** 🐧⚡\n\n` +
+        `Top 10 fastest promotions from **Penguin Soldier** to **Penguin Captain** this month.\n\n` +
         `${lines}\n\n`
     );
 }
