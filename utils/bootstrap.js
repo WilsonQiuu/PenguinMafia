@@ -1333,6 +1333,10 @@ async function ensureDatabaseSchema(sql) {
                     set
                         direct_recruits_count = direct_recruits_count + 1,
                         weekly_direct_recruits_count = weekly_direct_recruits_count + 1,
+                        rank_name = case
+                            when direct_recruits_count + 1 >= 3 and rank_name = 'Penguin Soldier' then 'Penguin Captain'
+                            else rank_name
+                        end,
                         updated_at = now()
                     where discord_id = new.parent_discord_id;
                 end if;
@@ -1357,6 +1361,10 @@ async function ensureDatabaseSchema(sql) {
                             weekly_direct_recruits_count = weekly_direct_recruits_count + case
                                 when old.parent_discord_id is null then 1
                                 else 0
+                            end,
+                            rank_name = case
+                                when direct_recruits_count + 1 >= 3 and rank_name = 'Penguin Soldier' then 'Penguin Captain'
+                                else rank_name
                             end,
                             updated_at = now()
                         where discord_id = new.parent_discord_id;

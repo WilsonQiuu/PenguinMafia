@@ -1274,6 +1274,15 @@ async function processJoinBatch(guild) {
                 inviterDisplayName,
                 welcomeCompleted
             } = await saveMemberWithParent(guild, member, inviter, inviteChanges[0].invite);
+
+            const inviterMember = await guild.members.fetch(inviter.id).catch(() => null);
+            if (inviterMember) {
+                await syncMemberRoleFromDatabase(inviterMember).catch(error => {
+                    console.error('Inviter role sync failed after new recruit:');
+                    console.error(error);
+                });
+            }
+
             const safeInviterDisplayName = escapeDiscordMarkdown(inviterDisplayName);
             const recruiterTeamLine = await teamLineForRecruiter(sql, inviter.id).catch(error => {
                 console.error('Could not fetch recruiter team for welcome message:');

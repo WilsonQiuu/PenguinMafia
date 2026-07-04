@@ -18,10 +18,10 @@ const DEFAULT_COBBLE_IDLE_MS = 100;
 const DEFAULT_COBBLE_ERROR_MS = 1_000;
 const DEFAULT_COBBLE_SWING_MS = 300;
 const DEFAULT_COBBLE_MIN_DIG_MS = 50;
-const DEFAULT_COBBLE_USE_ITEM_MS = 250;
+const DEFAULT_COBBLE_USE_ITEM_INTERVAL_MS = 2 * 60 * 1_000;
+const DEFAULT_COBBLE_USE_ITEM_HOLD_MS = 8_000;
 const DEFAULT_COBBLE_WIGGLE_TAP_MS = 250;
 const DEFAULT_COBBLE_WIGGLE_GAP_MS = 100;
-const COBBLE_LOOK_STRAIGHT_UP_PITCH = Math.PI / 2;
 const COBBLE_WIGGLE_CONTROLS = ['left', 'right', 'forward', 'back'];
 const DEFAULT_BALANCE_COMMANDS = ['/balance', '/money', '/bal'];
 const DEFAULT_PAYMENT_SUCCESS_PATTERN =
@@ -1378,6 +1378,40 @@ function cobbleDigFace(block) {
     return Number.isInteger(block?.face) ? block.face : 1;
 }
 
+function cobbleBlockAtCursor(state) {
+    const mineflayerBlock = state.bot.blockAtCursor?.(DEFAULT_COBBLE_DIG_DISTANCE);
+    if (mineflayerBlock) {
+        state.usedFallbackRaycast = false;
+        return mineflayerBlock;
+    }
+
+    const entity = state.bot.entity;
+    if (!entity?.position || !state.bot.world?.raycast) {
+        state.usedFallbackRaycast = false;
+        return null;
+    }
+
+    const pitch = Number.isFinite(entity.pitch) ? entity.pitch : 0;
+    const yaw = Number.isFinite(entity.yaw) ? entity.yaw : 0;
+    const eyeHeight = Number.isFinite(entity.eyeHeight)
+        ? entity.eyeHeight
+        : (Number.isFinite(entity.height) ? entity.height : 1.62);
+    const Vec3 = entity.position.constructor;
+    const cosPitch = Math.cos(pitch);
+    const direction = new Vec3(
+        -Math.sin(yaw) * cosPitch,
+        Math.sin(pitch),
+        -Math.cos(yaw) * cosPitch
+    ).normalize();
+
+    state.usedFallbackRaycast = true;
+    return state.bot.world.raycast(
+        entity.position.offset(0, eyeHeight, 0),
+        direction,
+        DEFAULT_COBBLE_DIG_DISTANCE
+    );
+}
+
 function cobbleModeStatus() {
     if (!cobbleMode) {
         return {
@@ -1394,30 +1428,57 @@ function cobbleModeStatus() {
         destroyHeld: Boolean(cobbleMode.destroyingBlockKey),
         useHeld: Boolean(cobbleMode.bot?.usingHeldItem),
         usePacketsSent: cobbleMode.usePacketsSent || 0,
+        useIntervalSeconds: DEFAULT_COBBLE_USE_ITEM_INTERVAL_MS / 1_000,
+        useHoldSeconds: DEFAULT_COBBLE_USE_ITEM_HOLD_MS / 1_000,
+        usedFallbackRaycast: Boolean(cobbleMode.usedFallbackRaycast),
         digsCompleted: cobbleMode.digsCompleted
     };
 }
 
 function activateCobbleUseItem(state, now = Date.now(), force = false) {
-    const shouldSendUsePacket =
+    const useIsDue =
         force ||
-        !state.bot.usingHeldItem ||
         !state.lastUseItemAt ||
-        now - state.lastUseItemAt >= DEFAULT_COBBLE_USE_ITEM_MS;
+        now - state.lastUseItemAt >= DEFAULT_COBBLE_USE_ITEM_INTERVAL_MS;
 
-    if (shouldSendUsePacket) {
+    if (!useIsDue) {
+        return;
+    }
+
+    if (!state.bot.usingHeldItem) {
         state.bot.activateItem();
-        state.lastUseItemAt = now;
-        state.usePacketsSent += 1;
+    }
+
+    state.lastUseItemAt = now;
+    state.usePacketsSent += 1;
+    scheduleCobbleUseItemRelease(state);
+}
+
+function clearCobbleUseItemReleaseTimer(state) {
+    if (state?.useReleaseTimer) {
+        clearTimeout(state.useReleaseTimer);
+        state.useReleaseTimer = null;
     }
 }
 
-async function forceCobbleLookUp(state) {
-    await state.bot.look(
-        state.bot.entity.yaw,
-        COBBLE_LOOK_STRAIGHT_UP_PITCH,
-        true
-    );
+function scheduleCobbleUseItemRelease(state) {
+    clearCobbleUseItemReleaseTimer(state);
+
+    state.useReleaseTimer = setTimeout(() => {
+        state.useReleaseTimer = null;
+
+        if (!state.active || cobbleMode !== state || !isConnected() || bot !== state.bot) {
+            return;
+        }
+
+        try {
+            if (state.bot.usingHeldItem) {
+                state.bot.deactivateItem();
+            }
+        } catch (error) {
+            state.lastError = error.message;
+        }
+    }, DEFAULT_COBBLE_USE_ITEM_HOLD_MS);
 }
 
 function releaseCobbleMovementControls(state) {
@@ -1455,6 +1516,7 @@ async function runCobbleStartupWiggle(state) {
 
 function restoreCobbleControls(state) {
     cancelCobbleDestroyHold(state);
+    clearCobbleUseItemReleaseTimer(state);
 
     try {
         state.bot.stopDigging?.();
@@ -1588,17 +1650,15 @@ async function runCobbleModeLoop(state) {
         }
 
         try {
-            await forceCobbleLookUp(state);
             await runCobbleStartupWiggle(state);
             state.bot.setControlState('sneak', true);
-            await forceCobbleLookUp(state);
-            activateCobbleUseItem(state);
 
-            const block = state.bot.blockAtCursor(DEFAULT_COBBLE_DIG_DISTANCE);
+            const block = cobbleBlockAtCursor(state);
             state.lastTarget = cobbleTargetLabel(block);
 
             if (!block) {
                 tickCobbleDestroyHold(state, null);
+                activateCobbleUseItem(state);
                 await sleep(DEFAULT_COBBLE_IDLE_MS);
                 continue;
             }
@@ -1607,11 +1667,13 @@ async function runCobbleModeLoop(state) {
                 state.lastError = `Cannot dig ${state.lastTarget}.`;
                 cancelCobbleDestroyHold(state);
                 swingCobbleDestroyArm(state, Date.now(), true);
+                activateCobbleUseItem(state);
                 await sleep(DEFAULT_COBBLE_ERROR_MS);
                 continue;
             }
 
             tickCobbleDestroyHold(state, block);
+            activateCobbleUseItem(state);
             state.lastError = null;
             await sleep(DEFAULT_COBBLE_IDLE_MS);
         } catch (error) {
@@ -1671,21 +1733,16 @@ function startCobbleMode(context = {}) {
         destroyFinishAt: null,
         lastSwingAt: null,
         lastUseItemAt: null,
+        useReleaseTimer: null,
         usePacketsSent: 0,
         wiggleStarted: false,
         wiggleCompleted: false,
         lastWiggleControl: null
     };
 
-    void forceCobbleLookUp(cobbleMode).catch(error => {
-        if (cobbleMode) {
-            cobbleMode.lastError = error.message;
-        }
-    });
-
     emitMinecraftEvent(
         'Cobble Mode Started',
-        'The Minecraft bot started cobble mode: startup movement wiggle, looking straight up, sneak/shift held, left click/destroy held at the crosshair, and right click/use item held.',
+        'The Minecraft bot started cobble mode: startup movement wiggle, sneak/shift held, left click/destroy held at the current crosshair, and right click/use held for 8 seconds every 2 minutes.',
         'success',
         {
             'Dig distance': `${DEFAULT_COBBLE_DIG_DISTANCE} blocks`,
@@ -2133,7 +2190,7 @@ function printHelp() {
             '  msg <player> <message>       Send /msg [PLAYER] [message]',
             '  pay <player> <amount>        Send /pay [PLAYER] [AMOUNT]',
             '  bal                          Send /bal and wait for the balance response',
-            '  cobble [start|stop|status]   Hold sneak, left click/destroy, and right click/use',
+            '  cobble [start|stop|status]   Hold sneak/left click and pulse right click/use',
             '  unstuck                      Release held controls and print position/velocity',
             '  reconnect                    Reconnect to the Minecraft server',
             '  quit                         Disconnect and stop this process',

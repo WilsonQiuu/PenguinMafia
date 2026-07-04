@@ -120,7 +120,8 @@ function cobbleStatusLine(status) {
         `Cobble mode is running.\n` +
         `Digs completed: **${status.digsCompleted || 0}**\n` +
         `Left click/destroy held: **${status.destroyHeld ? 'yes' : 'no'}**\n` +
-        `Right click/use held: **${status.useHeld ? 'yes' : 'no'}**\n` +
+        `Right click/use active: **${status.useHeld ? 'yes' : 'no'}**\n` +
+        `Right click/use: **${status.useHoldSeconds || 8}s every ${status.useIntervalSeconds || 120}s**\n` +
         `Last target: **${status.lastTarget || 'None yet'}**` +
         `${status.lastError ? `\nLast error: **${status.lastError}**` : ''}`
     );
@@ -202,7 +203,7 @@ module.exports = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('cobble')
-                .setDescription('Hold shift, left click/destroy, and right click/use item.')
+                .setDescription('Hold shift/left click, and pulse right click every 2 minutes.')
                 .addStringOption(option =>
                     option
                         .setName('action')
@@ -330,7 +331,7 @@ module.exports = {
                 const result = startCobbleMode(actionContext);
                 await interaction.editReply(
                     result.started
-                        ? '✅ Cobble mode started. The bot will wiggle left/right/forward/back, then look straight up, hold shift/sneak, hold left click/destroy on the block in its crosshair, and keep right click/use item held. Use `/bot cobble action:stop` to stop it.'
+                        ? '✅ Cobble mode started. The bot will wiggle left/right/forward/back, keep its current view direction, hold shift/sneak, hold left click/destroy on the block in its crosshair, and hold right click/use for 8 seconds every 2 minutes. Use `/bot cobble action:stop` to stop it.'
                         : `ℹ️ ${cobbleStatusLine(result.status)}`
                 );
                 return;
