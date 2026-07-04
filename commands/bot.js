@@ -18,7 +18,7 @@ const {
     checkBalance,
     cobbleModeStatus,
     emitMinecraftEvent,
-    goHome,
+    goHomeNumber,
     messagePlayer,
     minecraftBotStatus,
     payPlayer,
@@ -194,6 +194,11 @@ module.exports = {
         )
         .addSubcommand(subcommand =>
             subcommand
+                .setName('home2')
+                .setDescription('Send the Minecraft bot to home 2.')
+        )
+        .addSubcommand(subcommand =>
+            subcommand
                 .setName('cobble')
                 .setDescription('Hold use and repeatedly mine/attack the block in the bot crosshair.')
                 .addStringOption(option =>
@@ -349,9 +354,10 @@ module.exports = {
                 );
             }
 
-            if (subcommand === 'home') {
-                await goHome(actionContext);
-                await interaction.editReply('✅ Sent `/home 1` to the Minecraft bot.');
+            if (subcommand === 'home' || subcommand === 'home2') {
+                const homeNumber = subcommand === 'home2' ? 2 : 1;
+                await goHomeNumber(homeNumber, actionContext);
+                await interaction.editReply(`✅ Sent \`/home ${homeNumber}\` to the Minecraft bot.`);
                 return;
             }
 

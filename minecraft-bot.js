@@ -1329,19 +1329,30 @@ async function messagePlayer(player, message, context = {}) {
     );
 }
 
-async function goHome(context = {}) {
-    const command = '/home 1';
+async function goHomeNumber(homeNumber, context = {}) {
+    const normalizedHomeNumber = Number(homeNumber);
+
+    if (!Number.isInteger(normalizedHomeNumber) || normalizedHomeNumber < 1 || normalizedHomeNumber > 99) {
+        throw new Error('Home number must be a whole number between 1 and 99.');
+    }
+
+    const command = `/home ${normalizedHomeNumber}`;
     await sendChat(command);
     console.log(`Minecraft command sent: ${command}`);
     emitMinecraftEvent(
         'Home Command Sent',
-        'The Minecraft bot was sent to home 1.',
+        `The Minecraft bot was sent to home ${normalizedHomeNumber}.`,
         'success',
         {
             Command: command,
+            Home: String(normalizedHomeNumber),
             ...actionDetails(context)
         }
     );
+}
+
+function goHome(context = {}) {
+    return goHomeNumber(1, context);
 }
 
 function cobbleTargetLabel(block) {
@@ -2128,6 +2139,7 @@ module.exports = {
     minecraftOptions,
     handleTerminalCommand,
     goHome,
+    goHomeNumber,
     logIncomingPayment,
     messagePlayer,
     emitMinecraftEvent,
