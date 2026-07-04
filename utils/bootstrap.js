@@ -1037,14 +1037,6 @@ async function ensureDatabaseSchema(sql) {
         add column if not exists captain_leaderboard_disqualified boolean not null default false
     `;
 
-    // Backfill reached_captain_at for existing captains using updated_at as approximation
-    await sql`
-        update players
-        set reached_captain_at = updated_at
-        where reached_captain_at is null
-            and rank_name in ('Penguin Captain', 'Penguin General', 'Emperor Penguin')
-    `;
-
     await sql`
         create table if not exists recruit_history (
             recruit_discord_id text primary key,
