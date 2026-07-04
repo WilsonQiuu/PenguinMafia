@@ -1460,6 +1460,7 @@ async function runCobbleModeLoop(state) {
         try {
             await forceCobbleLookUp(state);
             await runCobbleStartupWiggle(state);
+            state.bot.setControlState('sneak', true);
             await forceCobbleLookUp(state);
             activateCobbleUseItem(state);
 
@@ -1545,7 +1546,7 @@ function startCobbleMode(context = {}) {
 
     emitMinecraftEvent(
         'Cobble Mode Started',
-        'The Minecraft bot started cobble mode: startup movement wiggle, looking straight up, use item held, and repeated digging/attacking at the crosshair. Sneak is not held.',
+        'The Minecraft bot started cobble mode: startup movement wiggle, looking straight up, sneak/shift held, use item held, and repeated digging/attacking at the crosshair.',
         'success',
         {
             'Dig distance': `${DEFAULT_COBBLE_DIG_DISTANCE} blocks`,
@@ -1993,7 +1994,7 @@ function printHelp() {
             '  msg <player> <message>       Send /msg [PLAYER] [message]',
             '  pay <player> <amount>        Send /pay [PLAYER] [AMOUNT]',
             '  bal                          Send /bal and wait for the balance response',
-            '  cobble [start|stop|status]   Hold use and repeatedly dig/attack the block in view',
+            '  cobble [start|stop|status]   Hold sneak/use and repeatedly dig/attack the block in view',
             '  unstuck                      Release held controls and print position/velocity',
             '  reconnect                    Reconnect to the Minecraft server',
             '  quit                         Disconnect and stop this process',
