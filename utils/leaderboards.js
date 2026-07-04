@@ -630,6 +630,7 @@ async function updateCaptainSpeedLeaderboardForGuild(guild, db) {
         from players player
         where player.reached_captain_at is not null
             and player.created_at is not null
+            and player.captain_leaderboard_disqualified = false
         order by promotion_seconds asc, player.reached_captain_at asc
         limit 10
     `;
