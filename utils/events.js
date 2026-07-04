@@ -47,7 +47,7 @@ async function postPromotionEvent(guild, {
         content:
             `🎖️🐧 **PROMOTION ALERT!** 🐧🎖️\n\n` +
             `<@${playerId}> has waddled up from **${oldRank}** to **${newRank}**! 🧊⬆️\n` +
-            `Promoted by: <@${promoterId}> 👏\n` +
+            `${promoterId ? `Promoted by: <@${promoterId}> 👏\n` : ''}` +
             `${recruiterLine}\n\n` +
             `The Penguin Mafia grows stronger. Make some noise! 🎉🐧`,
         allowedMentions: {
@@ -351,7 +351,27 @@ async function postGiveawayDonationEvent(guild, {
     return true;
 }
 
+async function postAutoPromotionEventIfDue(guild, db, playerId, oldRank) {
+    const rows = await db`
+        select rank_name from players where discord_id = ${playerId} limit 1
+    `;
+    const newRank = rows[0]?.rank_name;
+
+    if (!newRank || !oldRank || newRank === oldRank) {
+        return false;
+    }
+
+    return postPromotionEvent(guild, {
+        playerId,
+        promoterId: null,
+        recruiterId: null,
+        oldRank,
+        newRank
+    });
+}
+
 module.exports = {
+    postAutoPromotionEventIfDue,
     postBranchMilestoneEvents,
     postDonationEvent,
     postGiveawayDonationEvent,

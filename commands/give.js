@@ -11,6 +11,7 @@ const {
     scheduleLeaderboardsRefreshForGuild
 } = require('../utils/leaderboards.js');
 const {
+    postAutoPromotionEventIfDue,
     postBranchMilestoneEvents,
     postFirstRecruitEvent
 } = require('../utils/events.js');
@@ -85,6 +86,11 @@ module.exports = {
             childMember?.displayName ||
             childUser.globalName ||
             childUser.username;
+
+        const oldRankRows = await sql`
+            select rank_name from players where discord_id = ${parentUser.id} limit 1
+        `;
+        const oldRank = oldRankRows[0]?.rank_name;
 
         try {
             await sql.begin(async sql => {
@@ -229,6 +235,11 @@ module.exports = {
                         updated_at = now()
                     where discord_id = ${childUser.id}
                 `;
+            });
+
+            await postAutoPromotionEventIfDue(interaction.guild, sql, parentUser.id, oldRank).catch(error => {
+                console.error('Auto-promotion event failed after /give:');
+                console.error(error);
             });
 
             const teamSyncResult = await assignRecruitTreeToRecruiterTeam(

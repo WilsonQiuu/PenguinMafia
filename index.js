@@ -1269,11 +1269,22 @@ async function processJoinBatch(guild) {
             const member = joinedMembers[0];
             const inviter = inviteChanges[0].invite.inviter;
 
+            const oldRankRows = await sql`
+                select rank_name from players where discord_id = ${inviter.id} limit 1
+            `;
+            const oldRank = oldRankRows[0]?.rank_name;
+
             const {
                 inviterId,
                 inviterDisplayName,
                 welcomeCompleted
             } = await saveMemberWithParent(guild, member, inviter, inviteChanges[0].invite);
+
+            const { postAutoPromotionEventIfDue } = require('./utils/events.js');
+            await postAutoPromotionEventIfDue(guild, sql, inviter.id, oldRank).catch(error => {
+                console.error('Auto-promotion event failed after invite join:');
+                console.error(error);
+            });
 
             const inviterMember = await guild.members.fetch(inviter.id).catch(() => null);
             if (inviterMember) {
