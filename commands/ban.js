@@ -151,11 +151,17 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('ban')
         .setDescription('Discord-ban a player without removing them from the database.')
+        .addUserOption(option =>
+            option
+                .setName('user')
+                .setDescription('The Discord user to ban')
+                .setRequired(false)
+        )
         .addStringOption(option =>
             option
                 .setName('player')
-                .setDescription('The player mention or Discord ID to ban')
-                .setRequired(true)
+                .setDescription('Discord mention or ID to ban, useful if user lookup does not work')
+                .setRequired(false)
         )
         .addStringOption(option =>
             option
@@ -185,24 +191,47 @@ module.exports = {
             return;
         }
 
-        const playerInput = interaction.options.getString('player');
-        const playerDiscordId = parseDiscordId(playerInput);
+        const playerUser = interaction.options.getUser('user');
+        const playerInput = interaction.options.getString('player')?.trim() || '';
+        let playerDiscordId = playerUser?.id || null;
         let reason = interaction.options.getString('reason')?.trim() || '';
+
+        if (playerUser && playerInput) {
+            await logBanCommand(interaction, 'Ban Failed', [
+                {
+                    name: 'Target Input',
+                    value: `${playerUser.tag || playerUser.username} and ${playerInput}`
+                },
+                {
+                    name: 'Reason',
+                    value: 'Both user and player options were provided.'
+                }
+            ]);
+
+            await interaction.editReply(
+                '❌ Use either `user` or `player`, not both.'
+            );
+            return;
+        }
+
+        if (!playerDiscordId && playerInput) {
+            playerDiscordId = parseDiscordId(playerInput);
+        }
 
         if (!playerDiscordId) {
             await logBanCommand(interaction, 'Ban Failed', [
                 {
                     name: 'Target Input',
-                    value: playerInput
+                    value: playerInput || 'none'
                 },
                 {
                     name: 'Reason',
-                    value: 'Invalid player mention or Discord ID.'
+                    value: 'Missing or invalid player mention/Discord ID.'
                 }
             ]);
 
             await interaction.editReply(
-                '❌ Please provide a valid player mention or Discord ID.'
+                '❌ Please choose a Discord `user` or provide a valid mention/Discord ID in `player`.'
             );
             return;
         }

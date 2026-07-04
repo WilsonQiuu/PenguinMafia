@@ -195,7 +195,7 @@ module.exports = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('cobble')
-                .setDescription('Hold sneak/use and repeatedly mine the block in the bot crosshair.')
+                .setDescription('Hold use and repeatedly mine/attack the block in the bot crosshair.')
                 .addStringOption(option =>
                     option
                         .setName('action')
@@ -314,7 +314,7 @@ module.exports = {
                     );
                     await interaction.editReply(
                         result.stopped
-                            ? '✅ Cobble mode stopped. Sneak/use/digging were released.'
+                            ? '✅ Cobble mode stopped. Use/digging were released.'
                             : 'ℹ️ Cobble mode was not running.'
                     );
                     return;
@@ -323,7 +323,7 @@ module.exports = {
                 const result = startCobbleMode(actionContext);
                 await interaction.editReply(
                     result.started
-                        ? '✅ Cobble mode started. The bot will wiggle left/right/forward/back, then look straight up, hold sneak, hold use item, and repeatedly mine the block in its crosshair. Use `/bot cobble action:stop` to stop it.'
+                        ? '✅ Cobble mode started. The bot will wiggle left/right/forward/back, then look straight up, hold use item, and repeatedly mine/attack the block in its crosshair. Sneak/crouch is not held. Use `/bot cobble action:stop` to stop it.'
                         : `ℹ️ ${cobbleStatusLine(result.status)}`
                 );
                 return;
