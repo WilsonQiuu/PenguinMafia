@@ -296,6 +296,11 @@ module.exports = {
                     update players
                     set
                         rank_name = ${nextRank},
+                        reached_captain_at = case
+                            when ${nextRank} = 'Penguin Captain' and ${player.rank_name} = 'Penguin Soldier'
+                            then coalesce(reached_captain_at, now())
+                            else reached_captain_at
+                        end,
                         updated_at = now()
                     where discord_id = ${playerUser.id}
                 `;

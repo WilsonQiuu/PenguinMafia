@@ -1,4 +1,5 @@
 const {
+    CAPTAIN_SPEED_LEADERBOARD_CHANNEL_ID,
     DONATIONS_LEADERBOARD_CHANNEL_ID,
     DONATIONS_LEADERBOARD_CHANNEL_NAME,
     HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
@@ -45,6 +46,20 @@ function teamLeaderboardLine(index, team) {
 
 function hourlyRecruitRewardAmount() {
     return parseDonationAmount(process.env.HOURLY_RECRUIT_REWARD_AMOUNT || DEFAULT_HOURLY_RECRUIT_REWARD_AMOUNT);
+}
+
+function formatDuration(seconds) {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+
+    const parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (minutes > 0) parts.push(`${minutes}m`);
+    parts.push(`${secs}s`);
+    return parts.join(' ');
 }
 
 function previousCompletedHourStart() {
@@ -603,11 +618,59 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
     );
 }
 
+async function updateCaptainSpeedLeaderboardForGuild(guild, db) {
+    const rows = await db`
+        select
+            player.discord_id,
+            player.discord_username,
+            player.discord_display_name,
+            player.minecraft_ign,
+            player.parent_discord_id,
+            extract(epoch from (player.reached_captain_at - player.created_at))::bigint as promotion_seconds
+        from players player
+        where player.reached_captain_at is not null
+            and player.created_at is not null
+        order by promotion_seconds asc, player.reached_captain_at asc
+        limit 10
+    `;
+
+    if (rows.length === 0) {
+        return updateLeaderboardChannel(
+            guild,
+            CAPTAIN_SPEED_LEADERBOARD_CHANNEL_ID,
+            'captain-speed-leaderboard',
+            'Penguin Mafia Fastest Captains',
+            `⚡🐧 **Penguin Mafia Fastest Captains** 🐧⚡\n\n` +
+            `Top 10 fastest promotions from **Penguin Soldier** to **Penguin Captain**.\n\n` +
+            `No promotions recorded yet. Be the first!\n\n`
+        );
+    }
+
+    const lines = rows.map((row, index) => {
+        const medals = ['🥇', '🥈', '🥉'];
+        const marker = medals[index] || `**${index + 1}.**`;
+        const name = row.minecraft_ign || row.discord_display_name || row.discord_username || 'Unknown';
+        return `${marker} **${name}** — ${formatDuration(row.promotion_seconds)}` +
+            (row.parent_discord_id ? ` (recruited by <@${row.parent_discord_id}>)` : '');
+    }).join('\n');
+
+    return updateLeaderboardChannel(
+        guild,
+        CAPTAIN_SPEED_LEADERBOARD_CHANNEL_ID,
+        'captain-speed-leaderboard',
+        'Penguin Mafia Fastest Captains',
+        `⚡🐧 **Penguin Mafia Fastest Captains** 🐧⚡\n\n` +
+        `Top 10 fastest promotions from **Penguin Soldier** to **Penguin Captain**.\n\n` +
+        `${lines}\n\n`
+    );
+}
+
 async function updateLeaderboardsForGuild(guild, sql) {
     await updateWeeklyRecruitsLeaderboardForGuild(guild, sql);
     await updateTeamWeeklyRecruitsLeaderboardForGuild(guild, sql);
     await updateDonationLeaderboardForGuild(guild, sql);
     await updateHourlyRecruitsLeaderboardForGuild(guild, sql);
+    await updateCaptainSpeedLeaderboardForGuild(guild, sql);
 }
 
 function scheduleLeaderboardsRefreshForGuild(guild, sql, delayMs = LEADERBOARD_REFRESH_DELAY_MS) {
@@ -675,6 +738,7 @@ async function runScheduledLeaderboardsRefresh(key, delayMs) {
 module.exports = {
     resetWeeklyRecruitsAndSaveTopThree,
     scheduleLeaderboardsRefreshForGuild,
+    updateCaptainSpeedLeaderboardForGuild,
     updateDonationLeaderboardForGuild,
     updateHourlyRecruitsLeaderboardForGuild,
     updateTeamWeeklyRecruitsLeaderboardForGuild,

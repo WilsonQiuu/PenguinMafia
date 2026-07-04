@@ -83,6 +83,7 @@ const RANK_INFO_CHANNEL_ID = process.env.RANK_INFO_CHANNEL_ID || '15124883637880
 const WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID = process.env.WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID || '1512488377490870392';
 const HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID = process.env.HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID || '1517802352046768148';
 const TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID = process.env.TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID || '1521886870123057182';
+const CAPTAIN_SPEED_LEADERBOARD_CHANNEL_ID = process.env.CAPTAIN_SPEED_LEADERBOARD_CHANNEL_ID || '1523067446167212132';
 const TEAM_CHANNEL_CATEGORY_ID = process.env.TEAM_CHANNEL_CATEGORY_ID || '1521889430548512890';
 const DONATIONS_LEADERBOARD_CHANNEL_ID = process.env.DONATIONS_LEADERBOARD_CHANNEL_ID || '1512488380280082493';
 const WELCOME_CATEGORY_NAME = '🐧-penguin-processing';
@@ -1027,6 +1028,11 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        alter table players
+        add column if not exists reached_captain_at timestamptz
+    `;
+
+    await sql`
         create table if not exists recruit_history (
             recruit_discord_id text primary key,
             recruiter_discord_id text not null,
@@ -1337,6 +1343,10 @@ async function ensureDatabaseSchema(sql) {
                             when direct_recruits_count + 1 >= 3 and rank_name = 'Penguin Soldier' then 'Penguin Captain'
                             else rank_name
                         end,
+                        reached_captain_at = case
+                            when direct_recruits_count + 1 >= 3 and rank_name = 'Penguin Soldier' then coalesce(reached_captain_at, now())
+                            else reached_captain_at
+                        end,
                         updated_at = now()
                     where discord_id = new.parent_discord_id;
                 end if;
@@ -1365,6 +1375,10 @@ async function ensureDatabaseSchema(sql) {
                             rank_name = case
                                 when direct_recruits_count + 1 >= 3 and rank_name = 'Penguin Soldier' then 'Penguin Captain'
                                 else rank_name
+                            end,
+                            reached_captain_at = case
+                                when direct_recruits_count + 1 >= 3 and rank_name = 'Penguin Soldier' then coalesce(reached_captain_at, now())
+                                else reached_captain_at
                             end,
                             updated_at = now()
                         where discord_id = new.parent_discord_id;
@@ -2258,6 +2272,7 @@ async function syncMemberStaffRankFromRoles(sql, member, staffRoles) {
 }
 
 module.exports = {
+    CAPTAIN_SPEED_LEADERBOARD_CHANNEL_ID,
     DEFAULT_RANK_NAME,
     DONATIONS_LEADERBOARD_CHANNEL_ID,
     DONATIONS_LEADERBOARD_CHANNEL_NAME,
