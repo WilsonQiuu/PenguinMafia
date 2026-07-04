@@ -137,6 +137,20 @@ async function teamLineForRecruiter(db, recruiterId) {
     return team ? `Team: **${team.name}**\n` : '';
 }
 
+const teamPingCooldowns = new Map();
+
+function canTeamPing(teamId) {
+    const lastPing = teamPingCooldowns.get(teamId);
+    if (lastPing && Date.now() - lastPing < 60_000) {
+        return Math.ceil((60_000 - (Date.now() - lastPing)) / 1000);
+    }
+    return 0;
+}
+
+function consumeTeamPing(teamId) {
+    teamPingCooldowns.set(teamId, Date.now());
+}
+
 async function requestTeamCreation(interaction, options, db = sql) {
     const donDiscordId = process.env.DON_DISCORD_ID;
 
@@ -374,6 +388,7 @@ async function renameTeam(guild, ownerDiscordId, name, color, db = sql) {
             await role.edit({
                 name: updatedTeam.name,
                 color: Number(updatedTeam.color),
+                mentionable: true,
                 reason: `Penguin Mafia team renamed by ${ownerDiscordId}`
             }).catch(error => {
                 syncFailures.push(`Role: ${error.message}`);
@@ -473,6 +488,7 @@ async function createTeamRoleAndChannel(guild, request) {
     const role = await guild.roles.create({
         name: request.name,
         color: Number(request.color),
+        mentionable: true,
         reason: `Penguin Mafia team approved for ${request.owner_discord_id}`
     });
     let channel = null;
@@ -814,6 +830,36 @@ async function postTeamTreeMoveAnnouncement(guild, team, rootDiscordId, recruite
     });
 
     return true;
+}
+
+async function pingTeamRole(guild, team) {
+    if (!team?.channel_id || !team?.role_id) {
+        return { sent: false, reason: 'Team has no channel or role configured.' };
+    }
+
+    const cooldown = canTeamPing(team.id);
+    if (cooldown > 0) {
+        return { sent: false, reason: `Team ping is on cooldown. Try again in **${cooldown}** seconds.` };
+    }
+
+    const channel = guild.channels.cache.get(team.channel_id) ||
+        (await guild.channels.fetch(team.channel_id).catch(() => null));
+
+    if (!channel?.isTextBased?.()) {
+        return { sent: false, reason: 'Team channel could not be found.' };
+    }
+
+    consumeTeamPing(team.id);
+
+    await channel.send({
+        content: `<@&${team.role_id}>`,
+        allowedMentions: {
+            roles: [team.role_id],
+            parse: []
+        }
+    });
+
+    return { sent: true };
 }
 
 async function approveTeamRequest(interaction, requestId, db = sql) {
@@ -1176,6 +1222,7 @@ module.exports = {
     handleTeamApprovalButton,
     normalizeTeamName,
     parseTeamColor,
+    pingTeamRole,
     postTeamRecruitWelcome,
     postTeamTreeMoveAnnouncement,
     renameTeam,
