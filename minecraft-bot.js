@@ -14,8 +14,11 @@ const DEFAULT_ALERT_COOLDOWN_MS = 15 * 60 * 1_000;
 const MIN_CHAT_COMMAND_DELAY_MS = 250;
 const MAX_PENDING_PAYMENT_RESPONSES = 5;
 const DEFAULT_COBBLE_DIG_DISTANCE = 5;
-const DEFAULT_COBBLE_IDLE_MS = 250;
+const DEFAULT_COBBLE_IDLE_MS = 100;
 const DEFAULT_COBBLE_ERROR_MS = 1_000;
+const DEFAULT_COBBLE_SWING_MS = 300;
+const DEFAULT_COBBLE_MIN_DIG_MS = 50;
+const DEFAULT_COBBLE_USE_ITEM_MS = 250;
 const DEFAULT_COBBLE_WIGGLE_TAP_MS = 250;
 const DEFAULT_COBBLE_WIGGLE_GAP_MS = 100;
 const COBBLE_LOOK_STRAIGHT_UP_PITCH = Math.PI / 2;
@@ -1363,6 +1366,18 @@ function cobbleTargetLabel(block) {
     return `${block.name} at ${block.position.x}, ${block.position.y}, ${block.position.z}`;
 }
 
+function cobbleBlockKey(block) {
+    if (!block?.position) {
+        return null;
+    }
+
+    return `${block.position.x},${block.position.y},${block.position.z}`;
+}
+
+function cobbleDigFace(block) {
+    return Number.isInteger(block?.face) ? block.face : 1;
+}
+
 function cobbleModeStatus() {
     if (!cobbleMode) {
         return {
@@ -1376,13 +1391,24 @@ function cobbleModeStatus() {
         lastTarget: cobbleMode.lastTarget || null,
         lastError: cobbleMode.lastError || null,
         wiggleCompleted: Boolean(cobbleMode.wiggleCompleted),
+        destroyHeld: Boolean(cobbleMode.destroyingBlockKey),
+        useHeld: Boolean(cobbleMode.bot?.usingHeldItem),
+        usePacketsSent: cobbleMode.usePacketsSent || 0,
         digsCompleted: cobbleMode.digsCompleted
     };
 }
 
-function activateCobbleUseItem(state) {
-    if (!state.bot.usingHeldItem) {
+function activateCobbleUseItem(state, now = Date.now(), force = false) {
+    const shouldSendUsePacket =
+        force ||
+        !state.bot.usingHeldItem ||
+        !state.lastUseItemAt ||
+        now - state.lastUseItemAt >= DEFAULT_COBBLE_USE_ITEM_MS;
+
+    if (shouldSendUsePacket) {
         state.bot.activateItem();
+        state.lastUseItemAt = now;
+        state.usePacketsSent += 1;
     }
 }
 
@@ -1428,6 +1454,8 @@ async function runCobbleStartupWiggle(state) {
 }
 
 function restoreCobbleControls(state) {
+    cancelCobbleDestroyHold(state);
+
     try {
         state.bot.stopDigging?.();
     } catch (error) {
@@ -1450,6 +1478,108 @@ function restoreCobbleControls(state) {
     }
 }
 
+function writeCobbleDigPacket(state, status, block, face) {
+    state.bot._client.write('block_dig', {
+        status,
+        location: block.position,
+        face
+    });
+}
+
+function cancelCobbleDestroyHold(state) {
+    if (!state?.destroyingBlock || !state?.bot?._client) {
+        return;
+    }
+
+    try {
+        writeCobbleDigPacket(
+            state,
+            1,
+            state.destroyingBlock,
+            state.destroyFace ?? cobbleDigFace(state.destroyingBlock)
+        );
+    } catch (error) {
+        state.lastError = error.message;
+    } finally {
+        state.destroyingBlock = null;
+        state.destroyingBlockKey = null;
+        state.destroyFace = null;
+        state.destroyStartedAt = null;
+        state.destroyFinishAt = null;
+        state.lastSwingAt = null;
+    }
+}
+
+function swingCobbleDestroyArm(state, now = Date.now(), force = false) {
+    if (!force && state.lastSwingAt && now - state.lastSwingAt < DEFAULT_COBBLE_SWING_MS) {
+        return;
+    }
+
+    state.bot.swingArm('right');
+    state.lastSwingAt = now;
+}
+
+function startCobbleDestroyHold(state, block, now = Date.now()) {
+    const face = cobbleDigFace(block);
+    const rawDigTime = Number(state.bot.digTime(block));
+    const digTime = Number.isFinite(rawDigTime)
+        ? Math.max(DEFAULT_COBBLE_MIN_DIG_MS, rawDigTime)
+        : DEFAULT_COBBLE_ERROR_MS;
+
+    writeCobbleDigPacket(state, 0, block, face);
+
+    state.destroyingBlock = block;
+    state.destroyingBlockKey = cobbleBlockKey(block);
+    state.destroyFace = face;
+    state.destroyStartedAt = now;
+    state.destroyFinishAt = now + digTime;
+    swingCobbleDestroyArm(state, now, true);
+}
+
+function finishCobbleDestroyHold(state) {
+    if (!state.destroyingBlock) {
+        return;
+    }
+
+    const block = state.destroyingBlock;
+    const face = state.destroyFace ?? cobbleDigFace(block);
+
+    writeCobbleDigPacket(state, 2, block, face);
+
+    state.digsCompleted += 1;
+    state.destroyingBlock = null;
+    state.destroyingBlockKey = null;
+    state.destroyFace = null;
+    state.destroyStartedAt = null;
+    state.destroyFinishAt = null;
+}
+
+function tickCobbleDestroyHold(state, block) {
+    const now = Date.now();
+    const blockKey = cobbleBlockKey(block);
+
+    if (!blockKey) {
+        cancelCobbleDestroyHold(state);
+        swingCobbleDestroyArm(state, now);
+        return;
+    }
+
+    if (state.destroyingBlockKey && state.destroyingBlockKey !== blockKey) {
+        cancelCobbleDestroyHold(state);
+    }
+
+    if (!state.destroyingBlockKey) {
+        startCobbleDestroyHold(state, block, now);
+        return;
+    }
+
+    swingCobbleDestroyArm(state, now);
+
+    if (state.destroyFinishAt && now >= state.destroyFinishAt) {
+        finishCobbleDestroyHold(state);
+    }
+}
+
 async function runCobbleModeLoop(state) {
     while (cobbleMode === state && state.active) {
         if (!isConnected() || bot !== state.bot) {
@@ -1468,20 +1598,20 @@ async function runCobbleModeLoop(state) {
             state.lastTarget = cobbleTargetLabel(block);
 
             if (!block) {
-                state.bot.swingArm('right');
+                tickCobbleDestroyHold(state, null);
                 await sleep(DEFAULT_COBBLE_IDLE_MS);
                 continue;
             }
 
             if (!state.bot.canDigBlock(block)) {
                 state.lastError = `Cannot dig ${state.lastTarget}.`;
-                state.bot.swingArm('right');
+                cancelCobbleDestroyHold(state);
+                swingCobbleDestroyArm(state, Date.now(), true);
                 await sleep(DEFAULT_COBBLE_ERROR_MS);
                 continue;
             }
 
-            await state.bot.dig(block, 'ignore');
-            state.digsCompleted += 1;
+            tickCobbleDestroyHold(state, block);
             state.lastError = null;
             await sleep(DEFAULT_COBBLE_IDLE_MS);
         } catch (error) {
@@ -1492,7 +1622,8 @@ async function runCobbleModeLoop(state) {
             state.lastError = error.message;
 
             try {
-                state.bot.swingArm('right');
+                cancelCobbleDestroyHold(state);
+                swingCobbleDestroyArm(state, Date.now(), true);
             } catch {
                 // Ignore secondary animation failures while retrying cobble mode.
             }
@@ -1533,6 +1664,14 @@ function startCobbleMode(context = {}) {
         lastTarget: null,
         lastError: null,
         digsCompleted: 0,
+        destroyingBlock: null,
+        destroyingBlockKey: null,
+        destroyFace: null,
+        destroyStartedAt: null,
+        destroyFinishAt: null,
+        lastSwingAt: null,
+        lastUseItemAt: null,
+        usePacketsSent: 0,
         wiggleStarted: false,
         wiggleCompleted: false,
         lastWiggleControl: null
@@ -1546,7 +1685,7 @@ function startCobbleMode(context = {}) {
 
     emitMinecraftEvent(
         'Cobble Mode Started',
-        'The Minecraft bot started cobble mode: startup movement wiggle, looking straight up, sneak/shift held, use item held, and repeated digging/attacking at the crosshair.',
+        'The Minecraft bot started cobble mode: startup movement wiggle, looking straight up, sneak/shift held, left click/destroy held at the crosshair, and right click/use item held.',
         'success',
         {
             'Dig distance': `${DEFAULT_COBBLE_DIG_DISTANCE} blocks`,
@@ -1994,7 +2133,7 @@ function printHelp() {
             '  msg <player> <message>       Send /msg [PLAYER] [message]',
             '  pay <player> <amount>        Send /pay [PLAYER] [AMOUNT]',
             '  bal                          Send /bal and wait for the balance response',
-            '  cobble [start|stop|status]   Hold sneak/use and repeatedly dig/attack the block in view',
+            '  cobble [start|stop|status]   Hold sneak, left click/destroy, and right click/use',
             '  unstuck                      Release held controls and print position/velocity',
             '  reconnect                    Reconnect to the Minecraft server',
             '  quit                         Disconnect and stop this process',
