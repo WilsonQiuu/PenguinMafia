@@ -407,7 +407,13 @@ async function renameTeam(guild, ownerDiscordId, name, color, db = sql) {
                 name: teamChannelName(updatedTeam.name),
                 reason: `Penguin Mafia team renamed by ${ownerDiscordId}`
             }).catch(error => {
-                syncFailures.push(`Channel: ${error.message}`);
+                syncFailures.push(`Channel name: ${error.message}`);
+            });
+
+            await channel.permissionOverwrites.edit(updatedTeam.role_id, {
+                MentionEveryone: true
+            }).catch(error => {
+                syncFailures.push(`Channel permissions: ${error.message}`);
             });
         } else {
             syncFailures.push(`Channel ${updatedTeam.channel_id} was not found`);
@@ -504,7 +510,8 @@ async function createTeamRoleAndChannel(guild, request) {
                 allow: [
                     PermissionFlagsBits.ViewChannel,
                     PermissionFlagsBits.SendMessages,
-                    PermissionFlagsBits.ReadMessageHistory
+                    PermissionFlagsBits.ReadMessageHistory,
+                    PermissionFlagsBits.MentionEveryone
                 ]
             },
             {
@@ -545,7 +552,9 @@ async function fetchTeamRoles(db, guildId) {
     const rows = await db`
         select
             id::text as id,
-            role_id
+            name,
+            role_id,
+            channel_id
         from teams
         where guild_id = ${guildId}
             and role_id is not null
@@ -675,6 +684,24 @@ async function syncAllTeamRoles(guild, db = sql) {
         console.error(error);
         return false;
     });
+
+    for (const team of teamRows) {
+        if (!team.channel_id || !team.role_id) continue;
+
+        const channel = guild.channels.cache.get(team.channel_id) ||
+            (await guild.channels.fetch(team.channel_id).catch(() => null));
+
+        if (!channel?.isTextBased?.()) continue;
+
+        try {
+            await channel.permissionOverwrites.edit(team.role_id, {
+                MentionEveryone: true
+            });
+        } catch (error) {
+            console.error(`Could not update channel permissions for team ${team.name}:`);
+            console.error(error);
+        }
+    }
 
     return result;
 }
