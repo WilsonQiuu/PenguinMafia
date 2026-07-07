@@ -105,12 +105,14 @@ async function createPendingClaimRequest(guild, member, minecraftIgn, plotNumber
 
 async function processIncomingIcebergPayment(guild, payment) {
     const paymentPlayer = (payment.player || '').toLowerCase();
-    const paymentBotUser = (process.env.MINECRAFT_BOT_USERNAME || 'penguinmafiabot').toLowerCase();
     const paidAmount = parseMinecraftAmountValue(payment.amount);
 
     if (!paidAmount || paidAmount <= 0n) {
         return { status: 'unmatched', reason: 'Could not parse payment amount.' };
     }
+
+    const tolerance = 100_000n;
+    const acceptableAmount = paidAmount + tolerance;
 
     const requestRows = await sql`
         select *
@@ -118,7 +120,7 @@ async function processIncomingIcebergPayment(guild, payment) {
         where guild_id = ${guild.id}
             and status = 'pending'
             and lower(player_minecraft_ign) in (${paymentPlayer}, ${paymentPlayer.replace(/^\./, '')}, ${'.' + paymentPlayer.replace(/^\./, '')})
-            and amount <= ${paidAmount.toString()}::bigint + 100_000n
+            and amount <= ${acceptableAmount.toString()}::bigint
         order by created_at asc
         limit 1
     `;
@@ -126,10 +128,6 @@ async function processIncomingIcebergPayment(guild, payment) {
 
     if (!request) {
         return { status: 'unmatched' };
-    }
-
-    if (paidAmount < request.amount) {
-        return { status: 'too_low', request, paidAmount };
     }
 
     const guildDb = guild;
