@@ -15,6 +15,7 @@ const {
 const {
     STAFF_ROLE_IDS
 } = require('./bootstrap.js');
+const sql = require('../db.js');
 const {
     isDon
 } = require('./staff.js');
@@ -37,6 +38,39 @@ const STAFF_RANK_ORDER = [
 ];
 const closingTicketChannels = new Set();
 const creatingTicketKeys = new Set();
+
+const TICKET_COOLDOWN_DAYS = 7;
+
+async function checkTicketCooldown(userId, type) {
+    if (type !== 'media' && type !== 'staff') return null;
+
+    const rows = await sql`
+        select created_at
+        from ticket_cooldowns
+        where player_discord_id = ${userId}
+            and ticket_type = ${type}
+            and created_at > now() - make_interval(days => ${TICKET_COOLDOWN_DAYS})
+        limit 1
+    `;
+
+    if (rows[0]) {
+        const daysLeft = Math.ceil((rows[0].created_at.getTime() + TICKET_COOLDOWN_DAYS * 86400000 - Date.now()) / 86400000);
+        return daysLeft;
+    }
+
+    return null;
+}
+
+async function setTicketCooldown(userId, type) {
+    if (type !== 'media' && type !== 'staff') return;
+
+    await sql`
+        insert into ticket_cooldowns (player_discord_id, ticket_type, created_at)
+        values (${userId}, ${type}, now())
+        on conflict (player_discord_id, ticket_type) do update
+        set created_at = now()
+    `;
+}
 
 function staffRoleIdsAtOrAbove(minimumRankName) {
     const minimumRankIndex = STAFF_RANK_ORDER.indexOf(minimumRankName);
@@ -391,6 +425,16 @@ async function handleTicketButton(interaction) {
         return true;
     }
 
+    const cooldownDays = await checkTicketCooldown(interaction.user.id, type);
+
+    if (cooldownDays !== null) {
+        await interaction.reply({
+            content: `⏳ You can only submit one ${ticketTypeLabel(type)} every **${TICKET_COOLDOWN_DAYS} days**. Please wait **${cooldownDays}** day${cooldownDays === 1 ? '' : 's'} before submitting another.`,
+            flags: MessageFlags.Ephemeral
+        });
+        return true;
+    }
+
     await interaction.showModal(modal);
     return true;
 }
@@ -430,6 +474,16 @@ async function handleTicketModal(interaction) {
         return true;
     }
 
+    const cooldownDays = await checkTicketCooldown(interaction.user.id, type);
+
+    if (cooldownDays !== null) {
+        await interaction.reply({
+            content: `⏳ You can only submit one ${ticketTypeLabel(type)} every **${TICKET_COOLDOWN_DAYS} days**. Please wait **${cooldownDays}** day${cooldownDays === 1 ? '' : 's'} before submitting another.`,
+            flags: MessageFlags.Ephemeral
+        });
+        return true;
+    }
+
     creatingTicketKeys.add(key);
 
     try {
@@ -440,11 +494,13 @@ async function handleTicketModal(interaction) {
 
         if (type === 'media') {
             await createMediaApplication(interaction);
+            await setTicketCooldown(interaction.user.id, 'media');
             return true;
         }
 
         if (type === 'staff') {
             await createStaffApplication(interaction);
+            await setTicketCooldown(interaction.user.id, 'staff');
             return true;
         }
 

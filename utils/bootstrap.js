@@ -1485,6 +1485,15 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        create table if not exists ticket_cooldowns (
+            player_discord_id text not null references players(discord_id) on delete cascade,
+            ticket_type text not null check (ticket_type in ('media', 'staff')),
+            created_at timestamptz not null default now(),
+            primary key (player_discord_id, ticket_type)
+        )
+    `;
+
+    await sql`
         create table if not exists iceberg_members (
             discord_id text primary key references players(discord_id) on delete cascade,
             joined_at timestamptz not null default now()
