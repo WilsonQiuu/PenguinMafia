@@ -286,12 +286,21 @@ async function updateIcebergChannel(guild) {
         `\`/iceberg join\` — Start the join process\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
         `**📊 PLOT PRICING**\n\n` +
-        `Plots 1-2: ${formatDonationAmount(plotPriceCents(1))} each\n` +
-        `Plots 3-4: ${formatDonationAmount(plotPriceCents(3))} each\n` +
-        `Plots 5-6: ${formatDonationAmount(plotPriceCents(5))} each\n` +
-        `Plots 7-8: ${formatDonationAmount(plotPriceCents(7))} each\n` +
-        `Plots 9-10: ${formatDonationAmount(plotPriceCents(9))} each\n` +
-        `Plots 11+: ${formatDonationAmount(ICEBERG_MIN_PLOT_PRICE_CENTS)} each (minimum)\n\n` +
+        (() => {
+            let pricingLines = [];
+            let plot = 1;
+            while (true) {
+                const price = plotPriceCents(plot);
+                const nextPrice = plotPriceCents(plot + 1);
+                if (price <= ICEBERG_MIN_PLOT_PRICE_CENTS && nextPrice <= ICEBERG_MIN_PLOT_PRICE_CENTS) {
+                    pricingLines.push(`Plot ${plot}+: ${formatDonationAmount(ICEBERG_MIN_PLOT_PRICE_CENTS)} each (minimum)`);
+                    break;
+                }
+                pricingLines.push(`Plots ${plot}-${plot + 1}: ${formatDonationAmount(price)} each`);
+                plot += 2;
+            }
+            return pricingLines.join('\n');
+        })() + '\n\n' +
         `━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
         `**📋 PLOT COMMANDS**\n\n` +
         `\`/iceberg claimplot [number]\` — Purchase a plot (must be Iceberg member with linked IGN)\n` +
