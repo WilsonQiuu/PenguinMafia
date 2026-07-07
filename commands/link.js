@@ -13,6 +13,11 @@ const {
 const {
     setMemberNicknameToIgn
 } = require('../utils/nicknames.js');
+const {
+    ensureMinecraftBotConnected,
+    formatMinecraftPaymentAmountFromCents,
+    payPlayerAfterBusyWait
+} = require('../utils/commissionPayments.js');
 
 const DEFAULT_RANK_NAME = 'Penguin Soldier';
 
@@ -146,6 +151,43 @@ module.exports = {
                     updated_at = now()
             `;
 
+            const commRows = await sql`
+                select unpaid_commissions from players
+                where discord_id = ${interaction.user.id} and unpaid_commissions > 0
+                limit 1
+            `;
+            let payoutLine = '';
+
+            if (commRows[0]?.unpaid_commissions) {
+                try {
+                    await ensureMinecraftBotConnected({
+                        guild: interaction.guild,
+                        source: '/penguinlink commission payout'
+                    });
+
+                    const amountCents = BigInt(commRows[0].unpaid_commissions);
+                    const amount = formatMinecraftPaymentAmountFromCents(amountCents);
+                    const payment = await payPlayerAfterBusyWait(minecraftIGN, amount, {
+                        guild: interaction.guild,
+                        source: `/penguinlink payout for ${interaction.user.id}`,
+                        actorId: interaction.user.id,
+                        suppressPaymentLog: true
+                    });
+
+                    await sql`
+                        update players
+                        set
+                            unpaid_commissions = greatest(unpaid_commissions - ${amountCents.toString()}::bigint, 0),
+                            updated_at = now()
+                        where discord_id = ${interaction.user.id}
+                    `;
+
+                    payoutLine = `\n💸 Unpaid commissions of **${formatMinecraftPaymentAmountFromCents(amountCents)}** have been paid out!`;
+                } catch (payoutError) {
+                    console.log(`Commission payout failed during /penguinlink for ${interaction.user.tag}: ${payoutError.message}`);
+                }
+            }
+
             const nicknameUpdated = await setMemberNicknameToIgn(
                 buttonInteraction.member,
                 minecraftIGN
@@ -157,7 +199,7 @@ module.exports = {
                     `✅ **Minecraft IGN linked successfully!**\n\n` +
                     `Discord: ${interaction.user}\n` +
                     `Minecraft IGN: **${minecraftIGN}**\n` +
-                    `Edition: **${editionLabel}**\n\n` +
+                    `Edition: **${editionLabel}**${payoutLine}\n\n` +
                     `You can run \`/penguinlink\` again if this was wrong.`,
                 components: []
             });
