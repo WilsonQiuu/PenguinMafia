@@ -1038,6 +1038,11 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        alter table players
+        add column if not exists transferred_at timestamptz
+    `;
+
+    await sql`
         update players
         set captain_direct_recruits_count = direct_recruits_count
         where captain_direct_recruits_count <> direct_recruits_count
@@ -1398,6 +1403,10 @@ async function ensureDatabaseSchema(sql) {
                             updated_at = now()
                         where discord_id = new.parent_discord_id;
                     end if;
+
+                    update players
+                    set transferred_at = coalesce(transferred_at, now()), updated_at = now()
+                    where discord_id = new.discord_id;
                 end if;
 
                 return new;
