@@ -103,7 +103,8 @@ async function handleJoin(interaction) {
 
         if (pendingRows[0]) {
             await interaction.editReply(
-                `⏳ You already have a pending join request. Pay **${formatDonationAmount(ICEBERG_ENTRY_FEE_CENTS)}** to the Minecraft bot (${giveawayPaymentBotUser()}) from **${ign}**.\n\n` +
+                `⏳ You already have a pending join request.\n\n` +
+                `\`/pay ${giveawayPaymentBotUser()} ${formatDonationAmount(ICEBERG_ENTRY_FEE_CENTS)}\` from **${ign}**\n\n` +
                 `Your payment will be detected automatically.`
             );
             return;
@@ -113,7 +114,8 @@ async function handleJoin(interaction) {
 
         await interaction.editReply(
             `✅ **Iceberg join initiated!**\n\n` +
-            `Please pay **${formatDonationAmount(ICEBERG_ENTRY_FEE_CENTS)}** to the Minecraft bot (${giveawayPaymentBotUser()}) from **${ign}**.\n\n` +
+            `Pay **${formatDonationAmount(ICEBERG_ENTRY_FEE_CENTS)}** to the bot:\n` +
+            `\`/pay ${giveawayPaymentBotUser()} ${formatDonationAmount(ICEBERG_ENTRY_FEE_CENTS)}\` from **${ign}**\n\n` +
             `Your payment will be detected automatically and you will receive the Iceberg role.`
         );
     } catch (error) {
@@ -164,8 +166,8 @@ async function handleClaimPlot(interaction) {
 
         if (pendingRows[0]) {
             await interaction.editReply(
-                `⏳ You already have a pending claim for Plot ${plotNumber}. ` +
-                `Pay **${formatDonationAmount(price)}** to the Minecraft bot from **${ign}**.`
+                `⏳ You already have a pending claim for Plot ${plotNumber}.\n\n` +
+                `\`/pay ${giveawayPaymentBotUser()} ${formatDonationAmount(price)}\` from **${ign}**`
             );
             return;
         }
@@ -175,7 +177,8 @@ async function handleClaimPlot(interaction) {
         await interaction.editReply(
             `✅ **Plot ${plotNumber} claim initiated!**\n\n` +
             `Price: **${formatDonationAmount(price)}**\n` +
-            `You have **5 minutes** to pay the Minecraft bot (${giveawayPaymentBotUser()}) from **${ign}**.\n\n` +
+            `You have **5 minutes** to pay:\n` +
+            `\`/pay ${giveawayPaymentBotUser()} ${formatDonationAmount(price)}\` from **${ign}**\n\n` +
             `Your payment will be detected automatically and the plot will be assigned to you.`
         );
     } catch (error) {
