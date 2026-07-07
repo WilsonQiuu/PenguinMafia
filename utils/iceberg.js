@@ -110,10 +110,16 @@ async function createPendingClaimRequest(guild, member, minecraftIgn, plotNumber
 
 async function processIncomingIcebergPayment(guild, payment) {
     const paymentPlayer = (payment.player || '').toLowerCase();
-    const paidAmount = parseMinecraftAmountValue(payment.amount);
+
+    let paidAmount;
+    try {
+        paidAmount = parseMinecraftAmountValue(payment.amount);
+    } catch {
+        return { status: 'unmatched', reason: 'Could not parse payment amount.' };
+    }
 
     if (!paidAmount || paidAmount <= 0n) {
-        return { status: 'unmatched', reason: 'Could not parse payment amount.' };
+        return { status: 'unmatched', reason: 'Invalid payment amount.' };
     }
 
     const tolerance = 100_000n;
