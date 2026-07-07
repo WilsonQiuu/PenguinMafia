@@ -23,7 +23,7 @@ const {
 
 function plotPriceCents(plotNumber) {
     const step = Math.floor((plotNumber - 1) / 2);
-    const price = 20_000_000n - BigInt(step) * 2_000_000n;
+    const price = 20_000_000n - BigInt(step) * 1_000_000n;
     return price >= ICEBERG_MIN_PLOT_PRICE_CENTS ? price : ICEBERG_MIN_PLOT_PRICE_CENTS;
 }
 
