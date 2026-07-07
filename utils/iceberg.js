@@ -125,6 +125,20 @@ async function processIncomingIcebergPayment(guild, payment) {
     const tolerance = 100_000n;
     const acceptableAmount = paidAmount + tolerance;
 
+    const debugRows = await sql`
+        select id, amount, status, lower(player_minecraft_ign) as ign, purpose, created_at
+        from iceberg_payment_requests
+        where guild_id = ${guild.id}
+            and lower(player_minecraft_ign) = ${paymentPlayer}
+        order by created_at desc
+        limit 5
+    `;
+    if (debugRows.length > 0) {
+        console.log(`Iceberg pending requests for ${paymentPlayer}:`, JSON.stringify(debugRows));
+    } else {
+        console.log(`Iceberg: No requests at all for ${paymentPlayer} in guild ${guild.id}`);
+    }
+
     const requestRows = await sql`
         select *
         from iceberg_payment_requests
@@ -138,6 +152,7 @@ async function processIncomingIcebergPayment(guild, payment) {
     const request = requestRows[0];
 
     if (!request) {
+        console.log(`Iceberg: No pending request for ${paymentPlayer} (${payment.amount}, acceptable ${acceptableAmount.toString()}) in guild ${guild.id}`);
         return { status: 'unmatched' };
     }
 
