@@ -1531,13 +1531,19 @@ async function ensureDatabaseSchema(sql) {
         create table if not exists iceberg_fund (
             id int primary key default 1 check (id = 1),
             balance bigint not null default 0 check (balance >= 0),
+            claims_enabled boolean not null default false,
             updated_at timestamptz not null default now()
         )
     `;
 
     await sql`
-        insert into iceberg_fund (id, balance) values (1, 0)
+        insert into iceberg_fund (id, balance, claims_enabled) values (1, 0, false)
         on conflict (id) do nothing
+    `;
+
+    await sql`
+        alter table iceberg_fund
+        add column if not exists claims_enabled boolean not null default false
     `;
 
     await sql`

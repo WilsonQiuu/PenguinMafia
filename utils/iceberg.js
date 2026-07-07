@@ -46,6 +46,17 @@ async function getFundBalance() {
     return rows[0]?.balance || 0n;
 }
 
+async function areClaimsEnabled() {
+    const rows = await sql`select claims_enabled from iceberg_fund where id = 1 limit 1`;
+    return rows[0]?.claims_enabled === true;
+}
+
+async function setClaimsEnabled(enabled) {
+    await sql`
+        update iceberg_fund set claims_enabled = ${enabled}, updated_at = now() where id = 1
+    `;
+}
+
 async function addToFund(amountCents) {
     const rows = await sql`
         update iceberg_fund
@@ -361,6 +372,7 @@ async function updateMembersListChannel(guild) {
 
 module.exports = {
     addToFund,
+    areClaimsEnabled,
     checkExpiredClaims,
     createPendingClaimRequest,
     createPendingJoinRequest,
@@ -373,6 +385,7 @@ module.exports = {
     isTrustedPenguin,
     plotPriceCents,
     processIncomingIcebergPayment,
+    setClaimsEnabled,
     transferPlot,
     updateIcebergChannel,
     updateMembersListChannel

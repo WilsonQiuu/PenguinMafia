@@ -17,13 +17,15 @@ const {
     giveawayPaymentBotUser
 } = require('../utils/giveaways.js');
 const {
-    createPendingJoinRequest,
+    areClaimsEnabled,
     createPendingClaimRequest,
+    createPendingJoinRequest,
     getPlotInfo,
     isIcebergMember,
     isPlotClaimed,
     isTrustedPenguin,
     plotPriceCents,
+    setClaimsEnabled,
     transferPlot,
     updateIcebergChannel,
     updateMembersListChannel
@@ -59,6 +61,19 @@ module.exports = {
                 .addUserOption(opt =>
                     opt.setName('user').setDescription('The player to transfer to').setRequired(true)
                 )
+        )
+        .addSubcommand(sub =>
+            sub.setName('claims')
+                .setDescription('Enable or disable plot claiming. Don only.')
+                .addStringOption(opt =>
+                    opt.setName('state')
+                        .setDescription('Enable or disable claiming')
+                        .setRequired(true)
+                        .addChoices(
+                            { name: 'enable', value: 'enable' },
+                            { name: 'disable', value: 'disable' }
+                        )
+                )
         ),
 
     async execute(interaction) {
@@ -68,6 +83,7 @@ module.exports = {
         if (sub === 'claimplot') return handleClaimPlot(interaction);
         if (sub === 'plot') return handlePlot(interaction);
         if (sub === 'transfer') return handleTransfer(interaction);
+        if (sub === 'claims') return handleClaims(interaction);
     }
 };
 
@@ -130,6 +146,11 @@ async function handleClaimPlot(interaction) {
     try {
         if (!await isIcebergMember(interaction.guild, interaction.member)) {
             await interaction.editReply('❌ You must be an Iceberg member to claim a plot. Use `/iceberg join` first.');
+            return;
+        }
+
+        if (!await areClaimsEnabled()) {
+            await interaction.editReply('❌ Plot claiming is currently disabled.');
             return;
         }
 
@@ -253,5 +274,30 @@ async function handleTransfer(interaction) {
     } catch (error) {
         logCommandError(interaction, '/iceberg transfer', error);
         await interaction.editReply(`❌ **Transfer failed.**\n\`\`\`\n${error.message}\n\`\`\``);
+    }
+}
+
+async function handleClaims(interaction) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    if (!process.env.DON_DISCORD_ID || interaction.user.id !== process.env.DON_DISCORD_ID) {
+        await interaction.editReply('❌ Only the Don can use `/iceberg claims`.');
+        return;
+    }
+
+    try {
+        const state = interaction.options.getString('state');
+        const enabled = state === 'enable';
+
+        await setClaimsEnabled(enabled);
+
+        await updateIcebergChannel(interaction.guild).catch(() => {});
+
+        await interaction.editReply(
+            enabled ? '✅ Plot claiming is now **enabled**.' : '✅ Plot claiming is now **disabled**.'
+        );
+    } catch (error) {
+        logCommandError(interaction, '/iceberg claims', error);
+        await interaction.editReply(`❌ **Claims toggle failed.**\n\`\`\`\n${error.message}\n\`\`\``);
     }
 }
