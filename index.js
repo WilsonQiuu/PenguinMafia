@@ -308,16 +308,16 @@ minecraftEvents.on('log', event => {
                 .then(async result => {
                     if (result.status === 'join_completed' || result.status === 'claim_completed') {
                         const fundBalance = await require('./utils/iceberg.js').getFundBalance();
-                        const { formatMinecraftPaymentAmountFromCents } = require('./utils/commissionPayments.js');
+                        const { formatDonationAmount } = require('./utils/donations.js');
                         emitMinecraftEvent(
                             result.status === 'join_completed' ? 'Iceberg Join Completed' : 'Iceberg Plot Claimed',
-                            `${payment.player} paid ${formatMinecraftPaymentAmountFromCents(result.paidAmount)} for ${result.status === 'join_completed' ? 'Iceberg entry' : 'Plot ' + result.plotNumber}.`,
+                            `${payment.player} paid ${formatDonationAmount(result.paidAmount)} for ${result.status === 'join_completed' ? 'Iceberg entry' : 'Plot ' + result.plotNumber}.`,
                             'success',
                             {
                                 Player: `<@${result.request.player_discord_id}>`,
                                 'Minecraft IGN': payment.player,
-                                Amount: formatMinecraftPaymentAmountFromCents(result.paidAmount),
-                                'Builder\'s Fund': formatMinecraftPaymentAmountFromCents(fundBalance)
+                                Amount: formatDonationAmount(result.paidAmount),
+                                'Builder\'s Fund': formatDonationAmount(fundBalance)
                             }
                         );
                         await updateMembersListChannel(guild);

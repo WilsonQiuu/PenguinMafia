@@ -8,9 +8,8 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
-    formatMinecraftPaymentAmountFromCents,
-    parseMinecraftAmountValue
-} = require('../utils/commissionPayments.js');
+    formatDonationAmount
+} = require('../utils/donations.js');
 const {
     ICEBERG_ENTRY_FEE_CENTS
 } = require('../utils/bootstrap.js');
@@ -101,7 +100,7 @@ async function handleJoin(interaction) {
 
         if (pendingRows[0]) {
             await interaction.editReply(
-                `⏳ You already have a pending join request. Pay **${formatMinecraftPaymentAmountFromCents(ICEBERG_ENTRY_FEE_CENTS)}** to the Minecraft bot (${process.env.MINECRAFT_BOT_USERNAME || 'PenguinMafiaBot'}) from **${ign}**.\n\n` +
+                `⏳ You already have a pending join request. Pay **${formatDonationAmount(ICEBERG_ENTRY_FEE_CENTS)}** to the Minecraft bot (${process.env.MINECRAFT_BOT_USERNAME || 'PenguinMafiaBot'}) from **${ign}**.\n\n` +
                 `Your payment will be detected automatically.`
             );
             return;
@@ -111,7 +110,7 @@ async function handleJoin(interaction) {
 
         await interaction.editReply(
             `✅ **Iceberg join initiated!**\n\n` +
-            `Please pay **${formatMinecraftPaymentAmountFromCents(ICEBERG_ENTRY_FEE_CENTS)}** to the Minecraft bot (${process.env.MINECRAFT_BOT_USERNAME || 'PenguinMafiaBot'}) from **${ign}**.\n\n` +
+            `Please pay **${formatDonationAmount(ICEBERG_ENTRY_FEE_CENTS)}** to the Minecraft bot (${process.env.MINECRAFT_BOT_USERNAME || 'PenguinMafiaBot'}) from **${ign}**.\n\n` +
             `Your payment will be detected automatically and you will receive the Iceberg role.`
         );
     } catch (error) {
@@ -163,7 +162,7 @@ async function handleClaimPlot(interaction) {
         if (pendingRows[0]) {
             await interaction.editReply(
                 `⏳ You already have a pending claim for Plot ${plotNumber}. ` +
-                `Pay **${formatMinecraftPaymentAmountFromCents(price)}** to the Minecraft bot from **${ign}**.`
+                `Pay **${formatDonationAmount(price)}** to the Minecraft bot from **${ign}**.`
             );
             return;
         }
@@ -172,7 +171,7 @@ async function handleClaimPlot(interaction) {
 
         await interaction.editReply(
             `✅ **Plot ${plotNumber} claim initiated!**\n\n` +
-            `Price: **${formatMinecraftPaymentAmountFromCents(price)}**\n` +
+            `Price: **${formatDonationAmount(price)}**\n` +
             `You have **5 minutes** to pay the Minecraft bot (${process.env.MINECRAFT_BOT_USERNAME || 'PenguinMafiaBot'}) from **${ign}**.\n\n` +
             `Your payment will be detected automatically and the plot will be assigned to you.`
         );
@@ -191,7 +190,7 @@ async function handlePlot(interaction) {
         const info = await getPlotInfo(plotNumber);
 
         let lines = [`**Plot ${plotNumber}**`];
-        lines.push(`Price: **${formatMinecraftPaymentAmountFromCents(price)}**`);
+        lines.push(`Price: **${formatDonationAmount(price)}**`);
 
         if (!info) {
             lines.push('Status: **Available**');
@@ -199,7 +198,7 @@ async function handlePlot(interaction) {
             const ownerName = info.minecraft_ign || info.discord_display_name || info.discord_username || 'Unknown';
             lines.push(`Status: **Owned** by **${ownerName}**`);
             lines.push(`Original owner: **${ownerName}**`);
-            lines.push(`Original price: **${formatMinecraftPaymentAmountFromCents(info.original_price)}**`);
+            lines.push(`Original price: **${formatDonationAmount(info.original_price)}**`);
         } else if (info.current_claimer_discord_id && info.claim_expires_at && new Date(info.claim_expires_at) > new Date()) {
             lines.push('Status: **On Hold** — currently being claimed');
         } else {

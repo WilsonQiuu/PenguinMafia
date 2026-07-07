@@ -12,9 +12,11 @@ const {
     ICEBERG_MIN_PLOT_PRICE_CENTS
 } = require('./bootstrap.js');
 const {
-    formatMinecraftPaymentAmountFromCents,
+    formatDonationAmount
+} = require('./donations.js');
+const {
     parseMinecraftAmountValue
-} = require('./commissionPayments.js');
+} = require('../minecraft-bot.js');
 
 function plotPriceCents(plotNumber) {
     const step = Math.floor((plotNumber - 1) / 2);
@@ -247,7 +249,7 @@ async function updateIcebergChannel(guild) {
     if (!channel) return false;
 
     const balance = await getFundBalance();
-    const balanceFormatted = formatMinecraftPaymentAmountFromCents(balance);
+    const balanceFormatted = formatDonationAmount(balance);
 
     const memberCount = (await sql`select count(*)::int as count from iceberg_members`)[0]?.count || 0;
 
@@ -255,12 +257,12 @@ async function updateIcebergChannel(guild) {
     for (let n = 1; n <= 20; n++) {
         const info = await getPlotInfo(n);
         const price = plotPriceCents(n);
-        const priceFormatted = formatMinecraftPaymentAmountFromCents(price);
+        const priceFormatted = formatDonationAmount(price);
         if (!info) {
             plotLines.push(`**Plot ${n}** — ${priceFormatted} (available)`);
         } else if (info.owner_discord_id) {
             const ownerName = info.minecraft_ign || info.discord_display_name || info.discord_username || 'Unknown';
-            plotLines.push(`**Plot ${n}** — Owned by **${ownerName}** (bought for ${formatMinecraftPaymentAmountFromCents(info.original_price)})`);
+            plotLines.push(`**Plot ${n}** — Owned by **${ownerName}** (bought for ${formatDonationAmount(info.original_price)})`);
         } else if (info.current_claimer_discord_id && info.claim_expires_at && new Date(info.claim_expires_at) > new Date()) {
             plotLines.push(`**Plot ${n}** — ${priceFormatted} (on hold — being claimed)`);
         } else {
@@ -277,16 +279,16 @@ async function updateIcebergChannel(guild) {
         `━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
         `**❄️ JOIN THE ICEBERG**\n\n` +
         `To join, you must be **Trusted Penguin** first.\n` +
-        `Entry fee: **${formatMinecraftPaymentAmountFromCents(ICEBERG_ENTRY_FEE_CENTS)}**\n\n` +
+        `Entry fee: **${formatDonationAmount(ICEBERG_ENTRY_FEE_CENTS)}**\n\n` +
         `\`/iceberg join\` — Start the join process\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
         `**📊 PLOT PRICING**\n\n` +
-        `Plots 1-2: ${formatMinecraftPaymentAmountFromCents(plotPriceCents(1))} each\n` +
-        `Plots 3-4: ${formatMinecraftPaymentAmountFromCents(plotPriceCents(3))} each\n` +
-        `Plots 5-6: ${formatMinecraftPaymentAmountFromCents(plotPriceCents(5))} each\n` +
-        `Plots 7-8: ${formatMinecraftPaymentAmountFromCents(plotPriceCents(7))} each\n` +
-        `Plots 9-10: ${formatMinecraftPaymentAmountFromCents(plotPriceCents(9))} each\n` +
-        `Plots 11+: ${formatMinecraftPaymentAmountFromCents(ICEBERG_MIN_PLOT_PRICE_CENTS)} each (minimum)\n\n` +
+        `Plots 1-2: ${formatDonationAmount(plotPriceCents(1))} each\n` +
+        `Plots 3-4: ${formatDonationAmount(plotPriceCents(3))} each\n` +
+        `Plots 5-6: ${formatDonationAmount(plotPriceCents(5))} each\n` +
+        `Plots 7-8: ${formatDonationAmount(plotPriceCents(7))} each\n` +
+        `Plots 9-10: ${formatDonationAmount(plotPriceCents(9))} each\n` +
+        `Plots 11+: ${formatDonationAmount(ICEBERG_MIN_PLOT_PRICE_CENTS)} each (minimum)\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
         `**📋 PLOT COMMANDS**\n\n` +
         `\`/iceberg claimplot [number]\` — Purchase a plot (must be Iceberg member with linked IGN)\n` +
