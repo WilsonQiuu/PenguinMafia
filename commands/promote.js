@@ -171,7 +171,8 @@ module.exports = {
                     discord_id,
                     discord_username,
                     discord_display_name,
-                    rank_name
+                    rank_name,
+                    captain_direct_recruits_count
                 from players
                 where discord_id = ${playerUser.id}
                 limit 1
@@ -212,7 +213,9 @@ module.exports = {
             }
 
             const children = await getDirectChildren(playerUser.id);
-            const eligibility = evaluateEligibility(children, nextRank);
+            const eligibility = evaluateEligibility(children, nextRank, {
+                captainDirectRecruitsCount: Number(player.captain_direct_recruits_count || 0)
+            });
 
             if (!isDon) {
                 const actorRows = await sql`
@@ -258,6 +261,7 @@ module.exports = {
                     const lockedRows = await sql`
                         select
                             player.rank_name as player_rank_name,
+                            player.captain_direct_recruits_count,
                             actor.rank_name as actor_rank_name
                         from players player
                         cross join players actor
@@ -272,7 +276,9 @@ module.exports = {
 
                     const locked = lockedRows[0];
                     const lockedChildren = await getDirectChildren(playerUser.id, sql);
-                    const lockedEligibility = evaluateEligibility(lockedChildren, nextRank);
+                    const lockedEligibility = evaluateEligibility(lockedChildren, nextRank, {
+                        captainDirectRecruitsCount: Number(locked.captain_direct_recruits_count || 0)
+                    });
 
                     const recheckError = promotionAuthorityError(
                         locked.actor_rank_name,

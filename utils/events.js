@@ -131,6 +131,7 @@ async function postFirstRecruitEvent(guild, db, {
             minecraft_ign,
             rank_name,
             direct_recruits_count,
+            captain_direct_recruits_count,
             team.name as team_name
         from players
         left join teams team
@@ -172,7 +173,9 @@ async function postFirstRecruitEvent(guild, db, {
     const nextRank = getNextRank(recruiter.rank_name);
     const progressLine = nextRank
         ? `Next promotion: **${nextRank}**\n` +
-            `What they still need:\n${evaluateEligibility(children, nextRank).requirements.join('\n')}`
+            `What they still need:\n${evaluateEligibility(children, nextRank, {
+                captainDirectRecruitsCount: Number(recruiter.captain_direct_recruits_count || 0)
+            }).requirements.join('\n')}`
         : `They are already at the highest Penguin rank. Keep building the tree.`;
     const teamLine = recruiter.team_name
         ? `Team: **${recruiter.team_name}**\n`

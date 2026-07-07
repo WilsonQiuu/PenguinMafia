@@ -59,7 +59,8 @@ function missingLine(label, current, required) {
     return `- ${label}: **${current}/${required}**${missing > 0 ? `, need **${missing}** more` : ''}`;
 }
 
-function evaluateEligibility(children, targetRank) {
+function evaluateEligibility(children, targetRank, options = {}) {
+    const captainDirectRecruitsCount = options.captainDirectRecruitsCount ?? children.length;
     const totalChildren = children.length;
     const captainOrHigher = countAtLeast(children, 'Penguin Captain');
     const generalOrHigher = countAtLeast(children, 'Penguin General');
@@ -67,8 +68,8 @@ function evaluateEligibility(children, targetRank) {
     let eligible = false;
 
     if (targetRank === 'Penguin Captain') {
-        eligible = totalChildren >= 3;
-        requirements.push(missingLine('Direct recruits at Penguin Soldier or higher', totalChildren, 3));
+        eligible = captainDirectRecruitsCount >= 3;
+        requirements.push(missingLine('Direct recruits at Penguin Soldier or higher', captainDirectRecruitsCount, 3));
     } else if (targetRank === 'Penguin General') {
         eligible = captainOrHigher >= 3;
         requirements.push(missingLine('Direct recruits at Penguin Captain or higher', captainOrHigher, 3));

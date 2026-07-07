@@ -49,7 +49,8 @@ module.exports = {
                     discord_id,
                     discord_username,
                     discord_display_name,
-                    rank_name
+                    rank_name,
+                    captain_direct_recruits_count
                 from players
                 where discord_id = ${playerUser.id}
                 limit 1
@@ -75,7 +76,9 @@ module.exports = {
                 order by discord_display_name asc
             `;
 
-            const eligibility = evaluateEligibility(children, targetRank);
+            const eligibility = evaluateEligibility(children, targetRank, {
+                captainDirectRecruitsCount: Number(player.captain_direct_recruits_count || 0)
+            });
 
             if (eligibility.requirements.length === 0) {
                 await interaction.editReply(

@@ -1034,6 +1034,17 @@ async function ensureDatabaseSchema(sql) {
 
     await sql`
         alter table players
+        add column if not exists captain_direct_recruits_count int not null default 0 check (captain_direct_recruits_count >= 0)
+    `;
+
+    await sql`
+        update players
+        set captain_direct_recruits_count = direct_recruits_count
+        where captain_direct_recruits_count <> direct_recruits_count
+    `;
+
+    await sql`
+        alter table players
         add column if not exists reached_captain_at timestamptz
     `;
 
@@ -1349,12 +1360,13 @@ async function ensureDatabaseSchema(sql) {
                     set
                         direct_recruits_count = direct_recruits_count + 1,
                         weekly_direct_recruits_count = weekly_direct_recruits_count + 1,
+                        captain_direct_recruits_count = captain_direct_recruits_count + 1,
                         rank_name = case
-                            when direct_recruits_count + 1 >= 3 and rank_name = 'Penguin Soldier' then 'Penguin Captain'
+                            when captain_direct_recruits_count + 1 >= 3 and rank_name = 'Penguin Soldier' then 'Penguin Captain'
                             else rank_name
                         end,
                         reached_captain_at = case
-                            when direct_recruits_count + 1 >= 3 and rank_name = 'Penguin Soldier' then coalesce(reached_captain_at, now())
+                            when captain_direct_recruits_count + 1 >= 3 and rank_name = 'Penguin Soldier' then coalesce(reached_captain_at, now())
                             else reached_captain_at
                         end,
                         updated_at = now()
@@ -1370,6 +1382,7 @@ async function ensureDatabaseSchema(sql) {
                         update players
                         set
                             direct_recruits_count = greatest(direct_recruits_count - 1, 0),
+                            captain_direct_recruits_count = greatest(captain_direct_recruits_count - 1, 0),
                             updated_at = now()
                         where discord_id = old.parent_discord_id;
                     end if;
@@ -1381,14 +1394,6 @@ async function ensureDatabaseSchema(sql) {
                             weekly_direct_recruits_count = weekly_direct_recruits_count + case
                                 when old.parent_discord_id is null then 1
                                 else 0
-                            end,
-                            rank_name = case
-                                when direct_recruits_count + 1 >= 3 and rank_name = 'Penguin Soldier' then 'Penguin Captain'
-                                else rank_name
-                            end,
-                            reached_captain_at = case
-                                when direct_recruits_count + 1 >= 3 and rank_name = 'Penguin Soldier' then coalesce(reached_captain_at, now())
-                                else reached_captain_at
                             end,
                             updated_at = now()
                         where discord_id = new.parent_discord_id;
@@ -1403,6 +1408,7 @@ async function ensureDatabaseSchema(sql) {
                     update players
                     set
                         direct_recruits_count = greatest(direct_recruits_count - 1, 0),
+                        captain_direct_recruits_count = greatest(captain_direct_recruits_count - 1, 0),
                         weekly_direct_recruits_count = greatest(
                             weekly_direct_recruits_count - case
                                 when exists (
