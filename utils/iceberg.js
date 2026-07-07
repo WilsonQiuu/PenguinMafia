@@ -12,12 +12,11 @@ const {
     ICEBERG_MIN_PLOT_PRICE_CENTS
 } = require('./bootstrap.js');
 const {
-    formatDonationAmount
+    formatDonationAmount,
+    parseDonationAmount
 } = require('./donations.js');
 const {
-    parseMinecraftAmountValue
-} = require('../minecraft-bot.js');
-const {
+    normalizeMinecraftUsername,
     giveawayPaymentBotUser
 } = require('./giveaways.js');
 
@@ -109,11 +108,12 @@ async function createPendingClaimRequest(guild, member, minecraftIgn, plotNumber
 }
 
 async function processIncomingIcebergPayment(guild, payment) {
-    const paymentPlayer = (payment.player || '').toLowerCase();
+    const paymentPlayer = String(payment.player || '').trim().toLowerCase();
 
     let paidAmount;
     try {
-        paidAmount = parseMinecraftAmountValue(payment.amount);
+        const cleanAmount = String(payment.amount || '').replace(/[$,\s]/g, '');
+        paidAmount = parseDonationAmount(cleanAmount);
     } catch {
         return { status: 'unmatched', reason: 'Could not parse payment amount.' };
     }
@@ -124,20 +124,6 @@ async function processIncomingIcebergPayment(guild, payment) {
 
     const tolerance = 100_000n;
     const acceptableAmount = paidAmount + tolerance;
-
-    const debugRows = await sql`
-        select id, amount, status, lower(player_minecraft_ign) as ign, purpose, created_at
-        from iceberg_payment_requests
-        where guild_id = ${guild.id}
-            and lower(player_minecraft_ign) = ${paymentPlayer}
-        order by created_at desc
-        limit 5
-    `;
-    if (debugRows.length > 0) {
-        console.log(`Iceberg pending requests for ${paymentPlayer}:`, JSON.stringify(debugRows));
-    } else {
-        console.log(`Iceberg: No requests at all for ${paymentPlayer} in guild ${guild.id}`);
-    }
 
     const requestRows = await sql`
         select *
