@@ -302,6 +302,30 @@ minecraftEvents.on('log', event => {
                         }
                     );
                 });
+
+            const { processIncomingIcebergPayment, updateIcebergChannel, updateMembersListChannel, checkExpiredClaims } = require('./utils/iceberg.js');
+            processIncomingIcebergPayment(guild, payment)
+                .then(async result => {
+                    if (result.status === 'join_completed' || result.status === 'claim_completed') {
+                        const fundBalance = await require('./utils/iceberg.js').getFundBalance();
+                        const { formatMinecraftPaymentAmountFromCents } = require('./utils/commissionPayments.js');
+                        emitMinecraftEvent(
+                            result.status === 'join_completed' ? 'Iceberg Join Completed' : 'Iceberg Plot Claimed',
+                            `${payment.player} paid ${formatMinecraftPaymentAmountFromCents(result.paidAmount)} for ${result.status === 'join_completed' ? 'Iceberg entry' : 'Plot ' + result.plotNumber}.`,
+                            'success',
+                            {
+                                Player: `<@${result.request.player_discord_id}>`,
+                                'Minecraft IGN': payment.player,
+                                Amount: formatMinecraftPaymentAmountFromCents(result.paidAmount),
+                                'Builder\'s Fund': formatMinecraftPaymentAmountFromCents(fundBalance)
+                            }
+                        );
+                        await updateMembersListChannel(guild);
+                    }
+                })
+                .catch(error => {
+                    console.error('Iceberg payment processing failed:', error.message);
+                });
         }
     }
 });
@@ -430,6 +454,16 @@ async function setupGuildOnStartup(guild) {
 
     await ensureInfoChannels(guild, rankRoles, staffRoles);
     logStartupStep('managed channels ready');
+
+    const { updateIcebergChannel, updateMembersListChannel, checkExpiredClaims } = require('./utils/iceberg.js');
+    await updateIcebergChannel(guild).catch(error => {
+        console.error(`Could not update iceberg channel for ${guild.name}:`);
+        console.error(error);
+    });
+    await updateMembersListChannel(guild).catch(error => {
+        console.error(`Could not update members list channel for ${guild.name}:`);
+        console.error(error);
+    });
 
     await ensureMinecraftBotLogChannel(guild);
     logStartupStep('private Minecraft bot log channel ready');
@@ -2374,6 +2408,20 @@ client.once(Events.ClientReady, async () => {
     });
 
     setInterval(runPayoutQueue, 15_000);
+
+    const { checkExpiredClaims, updateIcebergChannel } = require('./utils/iceberg.js');
+    setInterval(async () => {
+        try {
+            const expired = await checkExpiredClaims();
+            if (expired > 0) {
+                for (const [, guild] of client.guilds.cache) {
+                    await updateIcebergChannel(guild).catch(() => {});
+                }
+            }
+        } catch (error) {
+            console.error('Iceberg claim expiry check failed:', error.message);
+        }
+    }, 30_000);
 
     const runScheduledMaintenance = createNonOverlappingRunner('Scheduled maintenance', async () => {
         for (const [, guild] of client.guilds.cache) {

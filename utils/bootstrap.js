@@ -85,6 +85,11 @@ const HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID = process.env.HOURLY_RECRUITS_LEADE
 const TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID = process.env.TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID || '1521886870123057182';
 const CAPTAIN_SPEED_LEADERBOARD_CHANNEL_ID = process.env.CAPTAIN_SPEED_LEADERBOARD_CHANNEL_ID || '1523067446167212132';
 const TEAM_CHANNEL_CATEGORY_ID = process.env.TEAM_CHANNEL_CATEGORY_ID || '1521889430548512890';
+const ICEBERG_CHANNEL_ID = process.env.ICEBERG_CHANNEL_ID || '1524127345047503100';
+const ICEBERG_MEMBERS_CHANNEL_ID = process.env.ICEBERG_MEMBERS_CHANNEL_ID || '1524138778518749334';
+const ICEBERG_ROLE_ID = process.env.ICEBERG_ROLE_ID || '1524126922295218310';
+const ICEBERG_ENTRY_FEE_CENTS = 10_000_000n;
+const ICEBERG_MIN_PLOT_PRICE_CENTS = 10_000_000n;
 const DONATIONS_LEADERBOARD_CHANNEL_ID = process.env.DONATIONS_LEADERBOARD_CHANNEL_ID || '1512488380280082493';
 const WELCOME_CATEGORY_NAME = '🐧-penguin-processing';
 const MOD_LOG_CHANNEL_NAME = 'mod-log';
@@ -1478,6 +1483,63 @@ async function ensureDatabaseSchema(sql) {
         when (new.parent_discord_id is not null)
         execute function record_first_recruit()
     `;
+
+    await sql`
+        create table if not exists iceberg_members (
+            discord_id text primary key references players(discord_id) on delete cascade,
+            joined_at timestamptz not null default now()
+        )
+    `;
+
+    await sql`
+        create table if not exists iceberg_plots (
+            plot_number int primary key check (plot_number > 0),
+            owner_discord_id text references players(discord_id) on delete set null,
+            original_price bigint not null check (original_price >= 0),
+            bought_at timestamptz,
+            current_claimer_discord_id text references players(discord_id) on delete set null,
+            claim_expires_at timestamptz,
+            updated_at timestamptz not null default now()
+        )
+    `;
+
+    await sql`
+        create table if not exists iceberg_fund (
+            id int primary key default 1 check (id = 1),
+            balance bigint not null default 0 check (balance >= 0),
+            updated_at timestamptz not null default now()
+        )
+    `;
+
+    await sql`
+        insert into iceberg_fund (id, balance) values (1, 0)
+        on conflict (id) do nothing
+    `;
+
+    await sql`
+        create table if not exists iceberg_payment_requests (
+            id bigserial primary key,
+            guild_id text not null,
+            player_discord_id text not null references players(discord_id) on delete cascade,
+            player_minecraft_ign text not null,
+            payment_bot_user text not null,
+            amount bigint not null check (amount > 0),
+            purpose text not null check (purpose in ('join', 'claim')),
+            plot_number int references iceberg_plots(plot_number) on delete set null,
+            status text not null default 'pending' check (status in ('pending', 'processing', 'completed', 'cancelled', 'expired')),
+            paid_amount bigint,
+            payment_message text,
+            created_at timestamptz not null default now(),
+            paid_at timestamptz,
+            updated_at timestamptz not null default now()
+        )
+    `;
+
+    await sql`
+        create index if not exists idx_iceberg_payment_requests_pending
+        on iceberg_payment_requests(guild_id, lower(player_minecraft_ign), amount, created_at)
+        where status = 'pending'
+    `;
 }
 
 async function ensureRankRoles(guild, options = {}) {
@@ -2282,6 +2344,11 @@ module.exports = {
     DONATIONS_LEADERBOARD_CHANNEL_ID,
     DONATIONS_LEADERBOARD_CHANNEL_NAME,
     HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
+    ICEBERG_CHANNEL_ID,
+    ICEBERG_ENTRY_FEE_CENTS,
+    ICEBERG_MEMBERS_CHANNEL_ID,
+    ICEBERG_MIN_PLOT_PRICE_CENTS,
+    ICEBERG_ROLE_ID,
     MOD_LOG_CHANNEL_ID,
     MOD_LOG_CHANNEL_NAME,
     PROMOTION_EVENTS_CHANNEL_ID,
