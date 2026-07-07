@@ -17,6 +17,9 @@ const {
 const {
     parseMinecraftAmountValue
 } = require('../minecraft-bot.js');
+const {
+    giveawayPaymentBotUser
+} = require('./giveaways.js');
 
 function plotPriceCents(plotNumber) {
     const step = Math.floor((plotNumber - 1) / 2);
@@ -77,7 +80,7 @@ async function createPendingJoinRequest(guild, member, minecraftIgn) {
             payment_bot_user, amount, purpose
         ) values (
             ${guild.id}, ${member.id}, ${minecraftIgn},
-            ${process.env.MINECRAFT_BOT_USERNAME || 'PenguinMafiaBot'}, ${ICEBERG_ENTRY_FEE_CENTS.toString()}::bigint, 'join'
+            ${giveawayPaymentBotUser()}, ${ICEBERG_ENTRY_FEE_CENTS.toString()}::bigint, 'join'
         )
     `;
 }
@@ -90,7 +93,7 @@ async function createPendingClaimRequest(guild, member, minecraftIgn, plotNumber
             payment_bot_user, amount, purpose, plot_number
         ) values (
             ${guild.id}, ${member.id}, ${minecraftIgn},
-            ${process.env.MINECRAFT_BOT_USERNAME || 'PenguinMafiaBot'}, ${price.toString()}::bigint, 'claim', ${plotNumber}
+            ${giveawayPaymentBotUser()}, ${price.toString()}::bigint, 'claim', ${plotNumber}
         )
     `;
 

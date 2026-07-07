@@ -14,6 +14,9 @@ const {
     ICEBERG_ENTRY_FEE_CENTS
 } = require('../utils/bootstrap.js');
 const {
+    giveawayPaymentBotUser
+} = require('../utils/giveaways.js');
+const {
     createPendingJoinRequest,
     createPendingClaimRequest,
     getPlotInfo,
@@ -100,7 +103,7 @@ async function handleJoin(interaction) {
 
         if (pendingRows[0]) {
             await interaction.editReply(
-                `⏳ You already have a pending join request. Pay **${formatDonationAmount(ICEBERG_ENTRY_FEE_CENTS)}** to the Minecraft bot (${process.env.MINECRAFT_BOT_USERNAME || 'PenguinMafiaBot'}) from **${ign}**.\n\n` +
+                `⏳ You already have a pending join request. Pay **${formatDonationAmount(ICEBERG_ENTRY_FEE_CENTS)}** to the Minecraft bot (${giveawayPaymentBotUser()}) from **${ign}**.\n\n` +
                 `Your payment will be detected automatically.`
             );
             return;
@@ -110,7 +113,7 @@ async function handleJoin(interaction) {
 
         await interaction.editReply(
             `✅ **Iceberg join initiated!**\n\n` +
-            `Please pay **${formatDonationAmount(ICEBERG_ENTRY_FEE_CENTS)}** to the Minecraft bot (${process.env.MINECRAFT_BOT_USERNAME || 'PenguinMafiaBot'}) from **${ign}**.\n\n` +
+            `Please pay **${formatDonationAmount(ICEBERG_ENTRY_FEE_CENTS)}** to the Minecraft bot (${giveawayPaymentBotUser()}) from **${ign}**.\n\n` +
             `Your payment will be detected automatically and you will receive the Iceberg role.`
         );
     } catch (error) {
@@ -172,7 +175,7 @@ async function handleClaimPlot(interaction) {
         await interaction.editReply(
             `✅ **Plot ${plotNumber} claim initiated!**\n\n` +
             `Price: **${formatDonationAmount(price)}**\n` +
-            `You have **5 minutes** to pay the Minecraft bot (${process.env.MINECRAFT_BOT_USERNAME || 'PenguinMafiaBot'}) from **${ign}**.\n\n` +
+            `You have **5 minutes** to pay the Minecraft bot (${giveawayPaymentBotUser()}) from **${ign}**.\n\n` +
             `Your payment will be detected automatically and the plot will be assigned to you.`
         );
     } catch (error) {
