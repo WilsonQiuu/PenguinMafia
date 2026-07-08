@@ -976,7 +976,7 @@ function balanceDropCoversPayment(beforeBalance, afterBalance, paymentAmount) {
     };
 }
 
-function formatPaymentBalanceDetails(beforeBalance, afterBalance, decrease) {
+function formatPaymentBalanceDetails(beforeBalance, afterBalance, decrease, paymentAmount) {
     const details = {};
 
     if (beforeBalance) {
@@ -989,6 +989,15 @@ function formatPaymentBalanceDetails(beforeBalance, afterBalance, decrease) {
 
     if (decrease !== null) {
         details['Balance decrease'] = decrease.toString();
+    }
+
+    if (paymentAmount !== undefined && decrease !== null) {
+        details['Expected decrease'] = paymentAmount.toString();
+        if (decrease > paymentAmount) {
+            details['Overpaid'] = (decrease - paymentAmount).toString();
+        } else if (decrease < paymentAmount) {
+            details['Underpaid'] = (paymentAmount - decrease).toString();
+        }
     }
 
     return details;
@@ -1186,7 +1195,7 @@ async function payPlayerWithBalanceChecks(player, amount, context = {}) {
         confirmed,
         decrease
     } = balanceDropCoversPayment(beforeBalance, afterBalance, paymentAmount);
-    const balanceDetails = formatPaymentBalanceDetails(beforeBalance, afterBalance, decrease);
+    const balanceDetails = formatPaymentBalanceDetails(beforeBalance, afterBalance, decrease, paymentAmount);
 
     if (paymentResult) {
         if (!shouldSuppressPaymentLog(context)) {
