@@ -67,6 +67,58 @@ async function addToFund(amountCents) {
     return rows[0]?.balance || 0n;
 }
 
+async function addManualIcebergMember(guild, member, amountCents = ICEBERG_ENTRY_FEE_CENTS) {
+    let result = {
+        added: false,
+        newBalance: 0n
+    };
+
+    await sql.begin(async transaction => {
+        await transaction`
+            insert into players (discord_id, discord_username, discord_display_name)
+            values (${member.id}, ${member.user.username}, ${member.displayName})
+            on conflict (discord_id) do update
+            set
+                discord_username = excluded.discord_username,
+                discord_display_name = excluded.discord_display_name,
+                updated_at = now()
+        `;
+
+        const insertedRows = await transaction`
+            insert into iceberg_members (discord_id)
+            values (${member.id})
+            on conflict (discord_id) do nothing
+            returning discord_id
+        `;
+
+        if (insertedRows.length > 0) {
+            const balanceRows = await transaction`
+                update iceberg_fund
+                set balance = balance + ${amountCents.toString()}::bigint, updated_at = now()
+                where id = 1
+                returning balance
+            `;
+
+            result = {
+                added: true,
+                newBalance: balanceRows[0]?.balance || 0n
+            };
+            return;
+        }
+
+        const balanceRows = await transaction`
+            select balance from iceberg_fund where id = 1 limit 1
+        `;
+
+        result = {
+            added: false,
+            newBalance: balanceRows[0]?.balance || 0n
+        };
+    });
+
+    return result;
+}
+
 async function isPlotClaimed(plotNumber, guild) {
     const rows = await sql`
         select owner_discord_id, current_claimer_discord_id, claim_expires_at
@@ -372,6 +424,7 @@ async function updateMembersListChannel(guild) {
 }
 
 module.exports = {
+    addManualIcebergMember,
     addToFund,
     areClaimsEnabled,
     checkExpiredClaims,

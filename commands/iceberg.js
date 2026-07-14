@@ -17,9 +17,11 @@ const {
     giveawayPaymentBotUser
 } = require('../utils/giveaways.js');
 const {
+    addManualIcebergMember,
     areClaimsEnabled,
     createPendingClaimRequest,
     createPendingJoinRequest,
+    getIcebergRole,
     getPlotInfo,
     isIcebergMember,
     isPlotClaimed,
@@ -63,6 +65,13 @@ module.exports = {
                 )
         )
         .addSubcommand(sub =>
+            sub.setName('addmember')
+                .setDescription('Manually add a player to the Iceberg and add the 30m entry fee. Don only.')
+                .addUserOption(opt =>
+                    opt.setName('user').setDescription('The Discord user to add').setRequired(true)
+                )
+        )
+        .addSubcommand(sub =>
             sub.setName('claims')
                 .setDescription('Enable or disable plot claiming. Don only.')
                 .addStringOption(opt =>
@@ -83,6 +92,7 @@ module.exports = {
         if (sub === 'claimplot') return handleClaimPlot(interaction);
         if (sub === 'plot') return handlePlot(interaction);
         if (sub === 'transfer') return handleTransfer(interaction);
+        if (sub === 'addmember') return handleAddMember(interaction);
         if (sub === 'claims') return handleClaims(interaction);
     }
 };
@@ -274,6 +284,71 @@ async function handleTransfer(interaction) {
     } catch (error) {
         logCommandError(interaction, '/iceberg transfer', error);
         await interaction.editReply(`❌ **Transfer failed.**\n\`\`\`\n${error.message}\n\`\`\``);
+    }
+}
+
+async function handleAddMember(interaction) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    if (!process.env.DON_DISCORD_ID || interaction.user.id !== process.env.DON_DISCORD_ID) {
+        await interaction.editReply('❌ Only the Don can use `/iceberg addmember`.');
+        return;
+    }
+
+    try {
+        const targetUser = interaction.options.getUser('user');
+        const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
+
+        if (!targetMember) {
+            await interaction.editReply('❌ That user is not in this server, so I cannot add the Iceberg role.');
+            return;
+        }
+
+        if (targetMember.user.bot) {
+            await interaction.editReply('❌ Bots cannot be added as Iceberg members.');
+            return;
+        }
+
+        const role = await getIcebergRole(interaction.guild);
+
+        if (!role) {
+            await interaction.editReply('❌ Iceberg role could not be found. Check `ICEBERG_ROLE_ID`.');
+            return;
+        }
+
+        if (!role.editable) {
+            await interaction.editReply('❌ I cannot assign the Iceberg role. Move my bot role above the Iceberg role.');
+            return;
+        }
+
+        if (!targetMember.roles.cache.has(role.id)) {
+            await targetMember.roles.add(role, `Manually added to Iceberg by ${interaction.user.tag}`);
+        }
+
+        const result = await addManualIcebergMember(interaction.guild, targetMember, ICEBERG_ENTRY_FEE_CENTS);
+
+        await Promise.allSettled([
+            updateIcebergChannel(interaction.guild),
+            updateMembersListChannel(interaction.guild)
+        ]);
+
+        if (!result.added) {
+            await interaction.editReply(
+                `✅ ${targetMember} already had an Iceberg membership record, so I made sure they have the role.\n` +
+                `No extra Builder's Fund money was added.\n\n` +
+                `Builder's Fund: **${formatDonationAmount(result.newBalance)}**`
+            );
+            return;
+        }
+
+        await interaction.editReply(
+            `✅ Added ${targetMember} to the Iceberg.\n` +
+            `Added **${formatDonationAmount(ICEBERG_ENTRY_FEE_CENTS)}** to the Builder's Fund.\n\n` +
+            `Builder's Fund: **${formatDonationAmount(result.newBalance)}**`
+        );
+    } catch (error) {
+        logCommandError(interaction, '/iceberg addmember', error);
+        await interaction.editReply(`❌ **Add member failed.**\n\`\`\`\n${error.message}\n\`\`\``);
     }
 }
 
