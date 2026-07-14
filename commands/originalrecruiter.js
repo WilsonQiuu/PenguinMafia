@@ -68,6 +68,7 @@ module.exports = {
                     player.parent_discord_id,
                     player.joined_via_inviter_discord_id,
                     player.joined_invite_code,
+                    player.created_at,
                     player.transferred_at,
                     current_parent.discord_username as current_parent_username,
                     current_parent.discord_display_name as current_parent_display_name,
@@ -116,7 +117,17 @@ module.exports = {
                 minecraft_ign: player.invite_parent_minecraft_ign
             };
 
-            const originalId = player.original_recruiter_discord_id;
+            const originalId = player.original_recruiter_discord_id || player.joined_via_inviter_discord_id;
+            const effectiveOriginalRecruiter = player.original_recruiter_discord_id
+                ? originalRecruiter
+                : inviteRecruiter;
+            const originalSource = player.original_recruiter_discord_id
+                ? 'First recruiter assignment (`/join` or detected invite)'
+                : player.joined_via_inviter_discord_id
+                    ? 'Detected invite link fallback'
+                    : 'None recorded';
+            const originalTimestamp = player.original_recruited_at ||
+                (player.joined_via_inviter_discord_id ? player.created_at : null);
             const currentId = player.parent_discord_id;
             const transferStatus = originalId
                 ? (currentId === originalId ? 'No' : 'Yes')
@@ -126,8 +137,9 @@ module.exports = {
                 `🧾 **Recruiter Audit: ${playerName(player, playerUser.username)}**\n\n` +
                 `Player: ${playerUser} \`${player.discord_id}\`\n` +
                 `${recruiterLine('Current recruiter', currentId, currentRecruiter, 'None / Orphan')}\n` +
-                `${recruiterLine('Original recruiter', originalId, originalRecruiter)}\n` +
-                `${timestampLine('Original recruited at', player.original_recruited_at)}\n` +
+                `${recruiterLine('Original recruiter', originalId, effectiveOriginalRecruiter)}\n` +
+                `Original source: \`${originalSource}\`\n` +
+                `${timestampLine('Original recruited at', originalTimestamp)}\n` +
                 `${recruiterLine('Invite-detected recruiter', player.joined_via_inviter_discord_id, inviteRecruiter)}\n` +
                 `Joined invite code: \`${player.joined_invite_code || 'None recorded'}\`\n` +
                 `${timestampLine('First recruiter update recorded at', player.transferred_at)}\n` +
