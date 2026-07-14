@@ -307,7 +307,19 @@ async function handleTransfer(interaction) {
         const success = await transferPlot(plotNumber, interaction.user.id, targetUser.id);
 
         if (success) {
-            await interaction.editReply(`✅ Plot ${plotNumber} has been transferred to ${targetUser}.`);
+            const refreshed = await updateIcebergChannel(interaction.guild)
+                .then(() => true)
+                .catch(error => error);
+
+            if (refreshed === true) {
+                await interaction.editReply(`✅ Plot ${plotNumber} has been transferred to ${targetUser}.`);
+                return;
+            }
+
+            await interaction.editReply(
+                `✅ Plot ${plotNumber} has been transferred to ${targetUser}.\n` +
+                `⚠️ The Iceberg plot list did not refresh automatically: \`${refreshed.message || refreshed}\``
+            );
         } else {
             await interaction.editReply('❌ Transfer failed. You may not own this plot.');
         }
