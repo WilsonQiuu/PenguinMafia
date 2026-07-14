@@ -97,25 +97,27 @@ async function createPendingJoinRequest(guild, member, minecraftIgn) {
 
 async function createPendingClaimRequest(guild, member, minecraftIgn, plotNumber) {
     const price = plotPriceCents(plotNumber);
-    await sql`
-        insert into iceberg_payment_requests (
-            guild_id, player_discord_id, player_minecraft_ign,
-            payment_bot_user, amount, purpose, plot_number
-        ) values (
-            ${guild.id}, ${member.id}, ${minecraftIgn},
-            ${giveawayPaymentBotUser()}, ${price.toString()}::bigint, 'claim', ${plotNumber}
-        )
-    `;
+    await sql.begin(async transaction => {
+        await transaction`
+            insert into iceberg_plots (plot_number, original_price, current_claimer_discord_id, claim_expires_at)
+            values (${plotNumber}, ${price.toString()}::bigint, ${member.id}, now() + interval '5 minutes')
+            on conflict (plot_number) do update
+            set
+                current_claimer_discord_id = ${member.id},
+                claim_expires_at = now() + interval '5 minutes',
+                updated_at = now()
+        `;
 
-    await sql`
-        insert into iceberg_plots (plot_number, original_price, current_claimer_discord_id, claim_expires_at)
-        values (${plotNumber}, ${price.toString()}::bigint, ${member.id}, now() + interval '5 minutes')
-        on conflict (plot_number) do update
-        set
-            current_claimer_discord_id = ${member.id},
-            claim_expires_at = now() + interval '5 minutes',
-            updated_at = now()
-    `;
+        await transaction`
+            insert into iceberg_payment_requests (
+                guild_id, player_discord_id, player_minecraft_ign,
+                payment_bot_user, amount, purpose, plot_number
+            ) values (
+                ${guild.id}, ${member.id}, ${minecraftIgn},
+                ${giveawayPaymentBotUser()}, ${price.toString()}::bigint, 'claim', ${plotNumber}
+            )
+        `;
+    });
 }
 
 async function processIncomingIcebergPayment(guild, payment) {
@@ -224,7 +226,6 @@ async function checkExpiredClaims() {
             set status = 'expired', updated_at = now()
             where status = 'pending' and purpose = 'claim'
                 and plot_number = any(${expired.map(r => r.plot_number)})
-                and claim_expires_at is not null and claim_expires_at <= now()
         `;
     }
 
