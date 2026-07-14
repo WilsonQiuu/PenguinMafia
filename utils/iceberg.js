@@ -289,8 +289,6 @@ async function processIncomingIcebergPayment(guild, payment) {
             where id = ${request.id}
         `;
 
-        await updateIcebergChannel(guild);
-
         return { status: 'join_completed', request, paidAmount, newBalance, member };
     }
 
@@ -312,8 +310,6 @@ async function processIncomingIcebergPayment(guild, payment) {
                 payment_message = ${payment.message || null}, paid_at = now(), updated_at = now()
             where id = ${request.id}
         `;
-
-        await updateIcebergChannel(guild);
 
         return { status: 'claim_completed', request, paidAmount, newBalance, member, plotNumber: request.plot_number };
     }
@@ -373,6 +369,35 @@ async function getAllMembers() {
     `;
 }
 
+function truncateIcebergName(name, maxLength = 28) {
+    const text = String(name || 'Unknown').trim();
+    return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
+async function upsertIcebergMessage(channel, marker, content) {
+    const safeContent = content.length <= 2000
+        ? content
+        : `${content.slice(0, 1950)}\n\n…trimmed`;
+    const recentMessages = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+    const existing = recentMessages?.find(m =>
+        m.author.id === channel.client.user.id &&
+        m.content.includes(marker)
+    );
+
+    if (existing) {
+        await existing.edit({
+            content: safeContent,
+            allowedMentions: { parse: [] }
+        });
+        return existing;
+    }
+
+    return channel.send({
+        content: safeContent,
+        allowedMentions: { parse: [] }
+    });
+}
+
 async function updateIcebergChannel(guild) {
     const channel = guild.channels.cache.get(ICEBERG_CHANNEL_ID) ||
         (await guild.channels.fetch(ICEBERG_CHANNEL_ID).catch(() => null));
@@ -384,24 +409,24 @@ async function updateIcebergChannel(guild) {
 
     const memberCount = (await sql`select count(*)::int as count from iceberg_members`)[0]?.count || 0;
 
-    let plotLines = [];
+    const plotLines = [];
     for (let n = 1; n <= 20; n++) {
         const info = await getPlotInfo(n);
         const price = plotPriceCents(n);
         const priceFormatted = formatDonationAmount(price);
         if (!info) {
-            plotLines.push(`**Plot ${n}** — ${priceFormatted} (available)`);
+            plotLines.push(`**${n}.** ${priceFormatted} — 🟢 Available`);
         } else if (info.owner_discord_id) {
-            const ownerName = info.minecraft_ign || info.discord_display_name || info.discord_username || 'Unknown';
-            plotLines.push(`**Plot ${n}** — Owned by **${ownerName}** (bought for ${formatDonationAmount(info.original_price)})`);
+            const ownerName = truncateIcebergName(info.minecraft_ign || info.discord_display_name || info.discord_username);
+            plotLines.push(`**${n}.** ${formatDonationAmount(info.original_price)} — ✅ ${ownerName}`);
         } else if (info.current_claimer_discord_id && info.claim_expires_at && new Date(info.claim_expires_at) > new Date()) {
-            plotLines.push(`**Plot ${n}** — ${priceFormatted} (on hold — being claimed)`);
+            plotLines.push(`**${n}.** ${priceFormatted} — ⏳ On hold`);
         } else {
-            plotLines.push(`**Plot ${n}** — ${priceFormatted} (available)`);
+            plotLines.push(`**${n}.** ${priceFormatted} — 🟢 Available`);
         }
     }
 
-    const content =
+    const summaryContent =
         `🏔️🐧 **BUILDER'S FUND** 🐧🏔️\n\n` +
         `**Current Balance: ${balanceFormatted}**\n\n` +
         `All entry fees and plot sales go directly into the Builder's Fund.\n` +
@@ -413,41 +438,21 @@ async function updateIcebergChannel(guild) {
         `Entry fee: **${formatDonationAmount(ICEBERG_ENTRY_FEE_CENTS)}**\n\n` +
         `\`/iceberg join\` — Start the join process\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-        `**📊 PLOT PRICING**\n\n` +
-        (() => {
-            let pricingLines = [];
-            let plot = 1;
-            while (true) {
-                const price = plotPriceCents(plot);
-                const nextPrice = plotPriceCents(plot + 1);
-                if (price <= ICEBERG_MIN_PLOT_PRICE_CENTS && nextPrice <= ICEBERG_MIN_PLOT_PRICE_CENTS) {
-                    pricingLines.push(`Plot ${plot}+: ${formatDonationAmount(ICEBERG_MIN_PLOT_PRICE_CENTS)} each (minimum)`);
-                    break;
-                }
-                pricingLines.push(`Plots ${plot}-${plot + 1}: ${formatDonationAmount(price)} each`);
-                plot += 2;
-            }
-            return pricingLines.join('\n');
-        })() + '\n\n' +
-        `━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
         `**📋 PLOT COMMANDS**\n\n` +
+        `\`/claimplot [number]\` — Purchase a plot quickly\n` +
         `\`/iceberg claimplot [number]\` — Purchase a plot (must be Iceberg member with linked IGN)\n` +
         `\`/iceberg plot [number]\` — Check plot ownership and price\n` +
         `\`/iceberg transfer [number] [user]\` — Transfer your plot to another player\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-        `**🏘️ PLOT LIST**\n\n` +
-        plotLines.join('\n') + '\n\n' +
-        `━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
         `**👥 ICEBERG MEMBERS: ${memberCount}**`;
 
-    const recentMessages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
-    const existing = recentMessages?.find(m => m.author.id === guild.client.user.id && m.content.includes('BUILDER\'S FUND'));
+    const plotContent =
+        `🏘️🐧 **ICEBERG PLOT LIST** 🐧🏘️\n\n` +
+        `✅ Owned  •  🟢 Available  •  ⏳ Payment hold\n\n` +
+        plotLines.join('\n');
 
-    if (existing) {
-        await existing.edit({ content, allowedMentions: { parse: [] } });
-    } else {
-        await channel.send({ content, allowedMentions: { parse: [] } });
-    }
+    await upsertIcebergMessage(channel, 'BUILDER\'S FUND', summaryContent);
+    await upsertIcebergMessage(channel, 'ICEBERG PLOT LIST', plotContent);
 
     return true;
 }

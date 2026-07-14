@@ -303,7 +303,7 @@ minecraftEvents.on('log', event => {
                     );
                 });
 
-            const { processIncomingIcebergPayment, updateIcebergChannel, updateMembersListChannel, checkExpiredClaims } = require('./utils/iceberg.js');
+            const { processIncomingIcebergPayment, updateIcebergChannel, updateMembersListChannel } = require('./utils/iceberg.js');
             processIncomingIcebergPayment(guild, payment)
                 .then(async result => {
                     if (result.status === 'join_completed' || result.status === 'claim_completed') {
@@ -320,11 +320,44 @@ minecraftEvents.on('log', event => {
                                 'Builder\'s Fund': formatDonationAmount(fundBalance)
                             }
                         );
-                        await updateMembersListChannel(guild);
+
+                        const refreshes = [
+                            updateIcebergChannel(guild)
+                        ];
+
+                        if (result.status === 'join_completed') {
+                            refreshes.push(updateMembersListChannel(guild));
+                        }
+
+                        const refreshResults = await Promise.allSettled(refreshes);
+                        const failedRefresh = refreshResults.find(refreshResult => refreshResult.status === 'rejected');
+
+                        if (failedRefresh) {
+                            emitMinecraftEvent(
+                                'Iceberg Board Update Failed',
+                                'The Iceberg payment completed, but one of the Discord board messages could not be refreshed.',
+                                'warning',
+                                {
+                                    Player: `<@${result.request.player_discord_id}>`,
+                                    'Minecraft IGN': payment.player,
+                                    Amount: formatDonationAmount(result.paidAmount),
+                                    Error: failedRefresh.reason?.message || String(failedRefresh.reason)
+                                }
+                            );
+                        }
                     }
                 })
                 .catch(error => {
                     console.error('Iceberg payment processing failed:', error.message);
+                    emitMinecraftEvent(
+                        'Iceberg Payment Processing Failed',
+                        error.message,
+                        'error',
+                        {
+                            Player: payment.player,
+                            Amount: payment.amount
+                        }
+                    );
                 });
         }
     }

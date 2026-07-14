@@ -122,7 +122,9 @@ module.exports = {
         if (sub === 'plotclear') return handlePlotClear(interaction);
         if (sub === 'fund') return handleFund(interaction);
         if (sub === 'claims') return handleClaims(interaction);
-    }
+    },
+
+    handleClaimPlot
 };
 
 async function handleJoin(interaction) {
@@ -178,7 +180,7 @@ async function handleJoin(interaction) {
     }
 }
 
-async function handleClaimPlot(interaction) {
+async function handleClaimPlot(interaction, commandLabel = '/iceberg claimplot') {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
@@ -241,7 +243,7 @@ async function handleClaimPlot(interaction) {
             `Your payment will be detected automatically and the plot will be assigned to you.`
         );
     } catch (error) {
-        logCommandError(interaction, '/iceberg claimplot', error);
+        logCommandError(interaction, commandLabel, error);
         await interaction.editReply(`❌ **Claim failed.**\n\`\`\`\n${error.message}\n\`\`\``);
     }
 }
