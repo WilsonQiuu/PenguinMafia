@@ -8,7 +8,8 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
-    formatDonationAmount
+    formatDonationAmount,
+    parseDonationAmount
 } = require('../utils/donations.js');
 const {
     ICEBERG_ENTRY_FEE_CENTS
@@ -18,7 +19,9 @@ const {
 } = require('../utils/giveaways.js');
 const {
     addManualIcebergMember,
+    adjustFund,
     areClaimsEnabled,
+    clearPlotOwner,
     createPendingClaimRequest,
     createPendingJoinRequest,
     getIcebergRole,
@@ -72,6 +75,29 @@ module.exports = {
                 )
         )
         .addSubcommand(sub =>
+            sub.setName('plotclear')
+                .setDescription('Clear the owner and active hold from an Iceberg plot. Don only.')
+                .addIntegerOption(opt =>
+                    opt.setName('number').setDescription('Plot number').setRequired(true).setMinValue(1)
+                )
+        )
+        .addSubcommand(sub =>
+            sub.setName('fund')
+                .setDescription('Add or remove money from the Iceberg Builder\'s Fund. Don only.')
+                .addStringOption(opt =>
+                    opt.setName('action')
+                        .setDescription('Whether to add or remove money')
+                        .setRequired(true)
+                        .addChoices(
+                            { name: 'add', value: 'add' },
+                            { name: 'remove', value: 'remove' }
+                        )
+                )
+                .addStringOption(opt =>
+                    opt.setName('amount').setDescription('Amount like 30m, 1.5b, or 500000').setRequired(true)
+                )
+        )
+        .addSubcommand(sub =>
             sub.setName('claims')
                 .setDescription('Enable or disable plot claiming. Don only.')
                 .addStringOption(opt =>
@@ -93,6 +119,8 @@ module.exports = {
         if (sub === 'plot') return handlePlot(interaction);
         if (sub === 'transfer') return handleTransfer(interaction);
         if (sub === 'addmember') return handleAddMember(interaction);
+        if (sub === 'plotclear') return handlePlotClear(interaction);
+        if (sub === 'fund') return handleFund(interaction);
         if (sub === 'claims') return handleClaims(interaction);
     }
 };
@@ -349,6 +377,76 @@ async function handleAddMember(interaction) {
     } catch (error) {
         logCommandError(interaction, '/iceberg addmember', error);
         await interaction.editReply(`❌ **Add member failed.**\n\`\`\`\n${error.message}\n\`\`\``);
+    }
+}
+
+async function handlePlotClear(interaction) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    if (!process.env.DON_DISCORD_ID || interaction.user.id !== process.env.DON_DISCORD_ID) {
+        await interaction.editReply('❌ Only the Don can use `/iceberg plotclear`.');
+        return;
+    }
+
+    try {
+        const plotNumber = interaction.options.getInteger('number');
+        const result = await clearPlotOwner(plotNumber);
+
+        await updateIcebergChannel(interaction.guild).catch(() => {});
+
+        const previousLine = result.previousOwnerId
+            ? `Previous owner: <@${result.previousOwnerId}>`
+            : result.previousClaimerId
+                ? `Previous hold: <@${result.previousClaimerId}>`
+                : 'Plot was already available.';
+
+        const cancelledLine = result.cancelledRequests > 0
+            ? `Cancelled pending claim requests: **${result.cancelledRequests}**`
+            : 'No pending claim requests needed cancelling.';
+
+        await interaction.editReply(
+            `✅ Plot ${plotNumber} is now clear and available.\n` +
+            `${previousLine}\n` +
+            `${cancelledLine}`
+        );
+    } catch (error) {
+        logCommandError(interaction, '/iceberg plotclear', error);
+        await interaction.editReply(`❌ **Plot clear failed.**\n\`\`\`\n${error.message}\n\`\`\``);
+    }
+}
+
+async function handleFund(interaction) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    if (!process.env.DON_DISCORD_ID || interaction.user.id !== process.env.DON_DISCORD_ID) {
+        await interaction.editReply('❌ Only the Don can use `/iceberg fund`.');
+        return;
+    }
+
+    try {
+        const action = interaction.options.getString('action');
+        const amountText = interaction.options.getString('amount');
+        const amount = parseDonationAmount(amountText);
+        const signedAmount = action === 'remove' ? -amount : amount;
+        const newBalance = await adjustFund(signedAmount);
+
+        if (newBalance === null) {
+            await interaction.editReply(
+                `❌ Cannot remove **${formatDonationAmount(amount)}** because the Builder's Fund does not have enough money.`
+            );
+            return;
+        }
+
+        await updateIcebergChannel(interaction.guild).catch(() => {});
+
+        await interaction.editReply(
+            `✅ ${action === 'remove' ? 'Removed' : 'Added'} **${formatDonationAmount(amount)}** ` +
+            `${action === 'remove' ? 'from' : 'to'} the Builder's Fund.\n\n` +
+            `Builder's Fund: **${formatDonationAmount(newBalance)}**`
+        );
+    } catch (error) {
+        logCommandError(interaction, '/iceberg fund', error);
+        await interaction.editReply(`❌ **Fund update failed.**\n\`\`\`\n${error.message}\n\`\`\``);
     }
 }
 

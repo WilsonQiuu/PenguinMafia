@@ -67,6 +67,16 @@ async function addToFund(amountCents) {
     return rows[0]?.balance || 0n;
 }
 
+async function adjustFund(amountCents) {
+    const rows = await sql`
+        update iceberg_fund
+        set balance = balance + ${amountCents.toString()}::bigint, updated_at = now()
+        where id = 1 and balance + ${amountCents.toString()}::bigint >= 0
+        returning balance
+    `;
+    return rows[0]?.balance ?? null;
+}
+
 async function addManualIcebergMember(guild, member, amountCents = ICEBERG_ENTRY_FEE_CENTS) {
     let result = {
         added: false,
@@ -113,6 +123,53 @@ async function addManualIcebergMember(guild, member, amountCents = ICEBERG_ENTRY
         result = {
             added: false,
             newBalance: balanceRows[0]?.balance || 0n
+        };
+    });
+
+    return result;
+}
+
+async function clearPlotOwner(plotNumber) {
+    const price = plotPriceCents(plotNumber);
+    let result = null;
+
+    await sql.begin(async transaction => {
+        const previousRows = await transaction`
+            select owner_discord_id, current_claimer_discord_id
+            from iceberg_plots
+            where plot_number = ${plotNumber}
+            limit 1
+        `;
+        const previous = previousRows[0] || null;
+
+        const plotRows = await transaction`
+            insert into iceberg_plots (plot_number, original_price)
+            values (${plotNumber}, ${price.toString()}::bigint)
+            on conflict (plot_number) do update
+            set
+                owner_discord_id = null,
+                bought_at = null,
+                current_claimer_discord_id = null,
+                claim_expires_at = null,
+                original_price = ${price.toString()}::bigint,
+                updated_at = now()
+            returning plot_number, original_price
+        `;
+
+        const cancelledRows = await transaction`
+            update iceberg_payment_requests
+            set status = 'cancelled', updated_at = now()
+            where purpose = 'claim'
+                and plot_number = ${plotNumber}
+                and status in ('pending', 'processing')
+            returning id
+        `;
+
+        result = {
+            plot: plotRows[0] || null,
+            previousOwnerId: previous?.owner_discord_id || null,
+            previousClaimerId: previous?.current_claimer_discord_id || null,
+            cancelledRequests: cancelledRows.length
         };
     });
 
@@ -424,10 +481,12 @@ async function updateMembersListChannel(guild) {
 }
 
 module.exports = {
+    adjustFund,
     addManualIcebergMember,
     addToFund,
     areClaimsEnabled,
     checkExpiredClaims,
+    clearPlotOwner,
     createPendingClaimRequest,
     createPendingJoinRequest,
     getAllMembers,
