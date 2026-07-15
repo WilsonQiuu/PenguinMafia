@@ -16,7 +16,6 @@ const {
     parseDonationAmount
 } = require('./donations.js');
 const {
-    normalizeMinecraftUsername,
     giveawayPaymentBotUser
 } = require('./giveaways.js');
 
