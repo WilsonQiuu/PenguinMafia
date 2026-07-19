@@ -50,6 +50,38 @@ function parseMinecraftPaymentAmount(amount) {
     return parseDonationAmount(normalizedAmount);
 }
 
+function parseJsonArray(value) {
+    if (Array.isArray(value)) {
+        return value;
+    }
+
+    if (!value) {
+        return [];
+    }
+
+    if (typeof value !== 'string') {
+        return [];
+    }
+
+    try {
+        const parsed = JSON.parse(value);
+
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+function isoOrNull(value) {
+    if (!value) {
+        return null;
+    }
+
+    const date = safeDate(value);
+
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 function teamMonthlyRewardAmount() {
     return parseDonationAmount(
         process.env.TEAM_MONTHLY_REWARD_AMOUNT ||
@@ -245,6 +277,9 @@ async function fetchPreviousMonthTopTeam(guildId, db = sql) {
                 player.discord_username,
                 player.discord_display_name,
                 player.minecraft_ign,
+                player.minecraft_edition,
+                player.rank_name,
+                player.team_id::text as team_id,
                 count(history.recruit_discord_id)::int as recruit_count
             from players player
             join recruit_history history
@@ -258,11 +293,15 @@ async function fetchPreviousMonthTopTeam(guildId, db = sql) {
                 player.discord_id,
                 player.discord_username,
                 player.discord_display_name,
-                player.minecraft_ign
+                player.minecraft_ign,
+                player.minecraft_edition,
+                player.rank_name,
+                player.team_id
         )
         select
             member_counts.*,
-            member_progress.reached_at
+            member_progress.reached_at,
+            coalesce(recruit_details.recruits, '[]'::jsonb) as recruits
         from member_counts
         cross join month_window
         left join lateral (
@@ -282,6 +321,30 @@ async function fetchPreviousMonthTopTeam(guildId, db = sql) {
             where ranked.recruit_number = member_counts.recruit_count
             limit 1
         ) member_progress on true
+        left join lateral (
+            select jsonb_agg(
+                jsonb_build_object(
+                    'recruit_discord_id', history.recruit_discord_id,
+                    'discord_id', history.recruit_discord_id,
+                    'discord_username', recruit.discord_username,
+                    'discord_display_name', recruit.discord_display_name,
+                    'minecraft_ign', recruit.minecraft_ign,
+                    'minecraft_edition', recruit.minecraft_edition,
+                    'rank_name', recruit.rank_name,
+                    'team_id_at_snapshot', recruit.team_id::text,
+                    'recruited_at', history.recruited_at,
+                    'counts_for_hourly', history.counts_for_hourly
+                )
+                order by history.recruited_at asc, history.recruit_discord_id asc
+            ) as recruits
+            from recruit_history history
+            left join players recruit
+                on recruit.discord_id = history.recruit_discord_id
+            where history.recruiter_discord_id = member_counts.discord_id
+                and history.recruited_at >= month_window.started_at
+                and history.recruited_at < month_window.ended_at
+                and history.counts_for_hourly = true
+        ) recruit_details on true
         order by
             member_counts.recruit_count desc,
             member_progress.reached_at asc nulls last,
@@ -345,14 +408,31 @@ function calculateMemberPrizeShares(members, prizeAmount, totalRecruitCount) {
     }
 
     return rows
-        .filter(row => row.share_amount > 0n)
         .map(row => ({
             discord_id: row.discord_id,
             discord_username: row.discord_username,
             discord_display_name: row.discord_display_name,
             minecraft_ign: row.minecraft_ign,
+            minecraft_edition: row.minecraft_edition || null,
+            rank_name: row.rank_name || null,
+            team_id: row.team_id ? String(row.team_id) : null,
             recruit_count: Number(row.recruit_count || 0),
-            reached_at: row.reached_at || null,
+            reached_at: isoOrNull(row.reached_at),
+            recruits: parseJsonArray(row.recruits).map(recruit => ({
+                recruit_discord_id: recruit.recruit_discord_id || recruit.discord_id || null,
+                discord_id: recruit.discord_id || recruit.recruit_discord_id || null,
+                discord_username: recruit.discord_username || null,
+                discord_display_name: recruit.discord_display_name || null,
+                minecraft_ign: recruit.minecraft_ign || null,
+                minecraft_edition: recruit.minecraft_edition || null,
+                rank_name: recruit.rank_name || null,
+                team_id_at_snapshot: recruit.team_id_at_snapshot
+                    ? String(recruit.team_id_at_snapshot)
+                    : null,
+                recruited_at: isoOrNull(recruit.recruited_at),
+                counts_for_hourly: recruit.counts_for_hourly !== false
+            })),
+            share_basis_points: ((recruitCount * 10000n) / total).toString(),
             share_amount: row.share_amount.toString()
         }));
 }
@@ -408,6 +488,7 @@ async function ensureMonthlyTeamRewardForGuild(guild, db = sql) {
                 Team: topTeam.team_name,
                 Recruits: String(topTeam.recruit_count),
                 'Prize pool': formatDonationAmount(prizeAmount),
+                'Snapshot recruiters': String(memberShares.length),
                 Payer: teamMonthlyRewardPayer(),
                 Instruction: `/pay ${process.env.BOT_USER || 'bot_account'} ${formatDonationAmount(prizeAmount)}`
             }
@@ -457,7 +538,12 @@ function aggregatePayout(aggregate, payout, source) {
     existing.sources.push({
         recruiterDiscordId: source.recruiterDiscordId,
         recruiterName: source.recruiterName,
+        recruiterRecruitCount: Number(source.recruiterRecruitCount || 0),
         recruiterShareAmount: source.recruiterShareAmount.toString(),
+        recruiterShareBasisPoints: source.recruiterShareBasisPoints
+            ? String(source.recruiterShareBasisPoints)
+            : null,
+        recruitDiscordIds: source.recruitDiscordIds || [],
         payoutAmountCents: amountCents.toString(),
         label: payout.label || null,
         roleName: payout.roleName || player.rank_name || 'Unknown'
@@ -496,7 +582,12 @@ async function enqueueMonthlyTeamRewardPayouts(guild, reward, db = sql) {
                     memberShare.discord_display_name ||
                     memberShare.discord_username ||
                     memberShare.discord_id,
-                recruiterShareAmount: shareAmount
+                recruiterRecruitCount: memberShare.recruit_count,
+                recruiterShareAmount: shareAmount,
+                recruiterShareBasisPoints: memberShare.share_basis_points,
+                recruitDiscordIds: parseJsonArray(memberShare.recruits)
+                    .map(recruit => recruit.discord_id || recruit.recruit_discord_id)
+                    .filter(Boolean)
             });
         }
     }
