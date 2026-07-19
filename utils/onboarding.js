@@ -31,6 +31,9 @@ const {
 const {
     setMemberNicknameToIgn
 } = require('./nicknames.js');
+const {
+    donDiscordIds
+} = require('./staff.js');
 
 const BUTTON_PREFIX = 'welcome';
 const MODAL_PREFIX = 'welcome_ign_submit';
@@ -677,8 +680,8 @@ async function ensureWelcomeChannel(member, context = {}) {
         PermissionFlagsBits.ReadMessageHistory
     ]);
 
-    if (process.env.DON_DISCORD_ID) {
-        addMemberOverwrite(process.env.DON_DISCORD_ID, [
+    for (const donDiscordId of donDiscordIds()) {
+        addMemberOverwrite(donDiscordId, [
             PermissionFlagsBits.ViewChannel,
             PermissionFlagsBits.SendMessages,
             PermissionFlagsBits.ReadMessageHistory,

@@ -35,6 +35,9 @@ const {
     updateIcebergChannel,
     updateMembersListChannel
 } = require('../utils/iceberg.js');
+const {
+    isDon
+} = require('../utils/staff.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -332,7 +335,7 @@ async function handleTransfer(interaction) {
 async function handleAddMember(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    if (!process.env.DON_DISCORD_ID || interaction.user.id !== process.env.DON_DISCORD_ID) {
+    if (!isDon(interaction.user.id)) {
         await interaction.editReply('❌ Only the Don can use `/iceberg addmember`.');
         return;
     }
@@ -397,7 +400,7 @@ async function handleAddMember(interaction) {
 async function handlePlotClear(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    if (!process.env.DON_DISCORD_ID || interaction.user.id !== process.env.DON_DISCORD_ID) {
+    if (!isDon(interaction.user.id)) {
         await interaction.editReply('❌ Only the Don can use `/iceberg plotclear`.');
         return;
     }
@@ -432,7 +435,7 @@ async function handlePlotClear(interaction) {
 async function handleFund(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    if (!process.env.DON_DISCORD_ID || interaction.user.id !== process.env.DON_DISCORD_ID) {
+    if (!isDon(interaction.user.id)) {
         await interaction.editReply('❌ Only the Don can use `/iceberg fund`.');
         return;
     }
@@ -467,7 +470,7 @@ async function handleFund(interaction) {
 async function handleClaims(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    if (!process.env.DON_DISCORD_ID || interaction.user.id !== process.env.DON_DISCORD_ID) {
+    if (!isDon(interaction.user.id)) {
         await interaction.editReply('❌ Only the Don can use `/iceberg claims`.');
         return;
     }

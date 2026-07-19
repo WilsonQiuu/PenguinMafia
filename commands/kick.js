@@ -13,6 +13,7 @@ const {
 const {
     assertCanModerateTargetStaff,
     consumeBanPoint,
+    donDiscordIds,
     isDon,
     parseDiscordId,
     refundBanPoint,
@@ -102,7 +103,7 @@ module.exports = {
             return;
         }
 
-        if (playerDiscordId === donDiscordId) {
+        if (donDiscordIds().includes(playerDiscordId)) {
             await logKickCommand(interaction, 'Kick Failed', [
                 {
                     name: 'Target ID',

@@ -73,7 +73,7 @@ async function dmAuraCommissionCredit(guild, player, newBalanceCents) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('aura')
-        .setDescription('Pay everyone currently in the Don’s voice call 1m. Don only.'),
+        .setDescription('Pay everyone currently in your voice call 1m. Don only.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -85,19 +85,13 @@ module.exports = {
             return;
         }
 
-        const donDiscordId = process.env.DON_DISCORD_ID;
-
-        if (!donDiscordId) {
-            await interaction.editReply('❌ DON_DISCORD_ID is missing from your `.env` file.');
-            return;
-        }
-
         try {
-            const donMember = await interaction.guild.members.fetch(donDiscordId).catch(() => null);
+            const donMember = interaction.member ||
+                await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
             const voiceChannel = donMember?.voice?.channel;
 
             if (!voiceChannel) {
-                await interaction.editReply('❌ The Don is not currently in a voice call.');
+                await interaction.editReply('❌ You are not currently in a voice call.');
                 return;
             }
 
@@ -105,7 +99,7 @@ module.exports = {
                 .filter(member => !member.user.bot);
 
             if (voiceMembers.length === 0) {
-                await interaction.editReply('❌ No non-bot members were found in the Don’s voice call.');
+                await interaction.editReply('❌ No non-bot members were found in your voice call.');
                 return;
             }
 

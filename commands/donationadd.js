@@ -17,6 +17,9 @@ const {
     formatDonationAmount,
     parseDonationAmount
 } = require('../utils/donations.js');
+const {
+    isDon
+} = require('../utils/staff.js');
 
 const DEFAULT_RANK_NAME = 'Penguin Soldier';
 
@@ -51,7 +54,7 @@ module.exports = {
             return;
         }
 
-        if (interaction.user.id !== donDiscordId) {
+        if (!isDon(interaction.user.id)) {
             await interaction.editReply(
                 '❌ Only the Don can use this command.'
             );

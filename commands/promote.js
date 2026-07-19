@@ -22,6 +22,9 @@ const {
     playerName,
     syncRankRole
 } = require('../utils/ranks.js');
+const {
+    isDon: hasDonAccess
+} = require('../utils/staff.js');
 
 async function getDirectChildren(playerDiscordId, db = sql) {
     return db`
@@ -163,7 +166,7 @@ module.exports = {
         const donDiscordId = process.env.DON_DISCORD_ID;
         const playerUser = interaction.options.getUser('player');
         const requestedRank = interaction.options.getString('rank');
-        const isDon = donDiscordId && interaction.user.id === donDiscordId;
+        const isDon = hasDonAccess(interaction.user.id);
 
         try {
             const playerRows = await sql`

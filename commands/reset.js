@@ -3,7 +3,6 @@ const {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
-    PermissionFlagsBits,
     MessageFlags
 } = require('discord.js');
 
@@ -28,6 +27,9 @@ const {
 const {
     startOnboardingForMember
 } = require('../utils/onboarding.js');
+const {
+    isDon: hasDonAccess
+} = require('../utils/staff.js');
 
 async function removeMemberStaffRoles(member, staffRoles) {
     const rolesToRemove = [...staffRoles.values()].filter(role => {
@@ -106,7 +108,6 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('reset')
         .setDescription('Reset Penguin Mafia data. Don only.')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('all')
@@ -132,7 +133,7 @@ module.exports = {
             return;
         }
 
-        if (interaction.user.id !== donDiscordId) {
+        if (!hasDonAccess(interaction.user.id)) {
             await interaction.editReply(
                 '❌ Only the Don can use `/reset`.'
             );
@@ -272,9 +273,7 @@ module.exports = {
                     continue;
                 }
 
-                const isDon =
-                    process.env.DON_DISCORD_ID &&
-                    member.user.id === process.env.DON_DISCORD_ID;
+                const isDon = hasDonAccess(member.user.id);
 
                 await sql`
                     insert into players (

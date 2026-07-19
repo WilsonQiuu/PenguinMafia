@@ -22,6 +22,9 @@ const {
     assignRecruitTreeToRecruiterTeam,
     postTeamTreeMoveAnnouncement
 } = require('../utils/teams.js');
+const {
+    isDon: hasDonAccess
+} = require('../utils/staff.js');
 
 const DEFAULT_RANK_NAME = 'Penguin Soldier';
 
@@ -58,7 +61,7 @@ module.exports = {
 
         const parentUser = interaction.options.getUser('recruiter');
         const childUser = interaction.options.getUser('recruit');
-        const isDon = interaction.user.id === donDiscordId;
+        const isDon = hasDonAccess(interaction.user.id);
 
         const parentMember = interaction.options.getMember('recruiter');
         const childMember = interaction.options.getMember('recruit');

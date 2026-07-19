@@ -10,6 +10,9 @@ const {
 const {
     ensureWelcomeCategory
 } = require('./bootstrap.js');
+const {
+    donDiscordIds
+} = require('./staff.js');
 
 const BUTTON_PREFIX = 'trialmod';
 
@@ -219,9 +222,9 @@ async function ensureTrialModOnboardingChannel(member, context = {}) {
         }
     ];
 
-    if (process.env.DON_DISCORD_ID) {
+    for (const donDiscordId of donDiscordIds()) {
         permissionOverwrites.push({
-            id: process.env.DON_DISCORD_ID,
+            id: donDiscordId,
             allow: [
                 PermissionFlagsBits.ViewChannel,
                 PermissionFlagsBits.SendMessages,

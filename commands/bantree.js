@@ -16,6 +16,7 @@ const {
     postModLog
 } = require('../utils/modlogs.js');
 const {
+    donDiscordIds,
     isDon,
     parseDiscordId
 } = require('../utils/staff.js');
@@ -490,7 +491,7 @@ module.exports = {
             return;
         }
 
-        if (targetDiscordId === process.env.DON_DISCORD_ID) {
+        if (donDiscordIds().includes(targetDiscordId)) {
             await interaction.editReply('❌ The Don cannot be banned or removed.');
             return;
         }
@@ -510,7 +511,7 @@ module.exports = {
 
             const playerIds = treeRows.map(row => row.discord_id);
 
-            if (playerIds.includes(process.env.DON_DISCORD_ID)) {
+            if (playerIds.some(playerId => donDiscordIds().includes(playerId))) {
                 await interaction.editReply('❌ This tree includes the Don, so `/bantree` is blocked.');
                 return;
             }

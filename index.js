@@ -116,6 +116,9 @@ const {
     postMinecraftBotLog
 } = require('./utils/minecraftBotLogs.js');
 const {
+    isDon: hasDonAccess
+} = require('./utils/staff.js');
+const {
     emitMinecraftEvent,
     minecraftEvents,
     startMinecraftBot,
@@ -851,9 +854,7 @@ async function syncGuildMembersOnStartup(startupContext) {
             member.user.globalName ||
             member.user.username;
 
-        const isDon =
-            process.env.DON_DISCORD_ID &&
-            member.user.id === process.env.DON_DISCORD_ID;
+        const isDon = hasDonAccess(member.user.id);
 
         if (shouldLogMemberSync) {
             logStartupMemberStep(guild, memberIndex, members.size, member, 'starting database upsert', memberStartedAt);
@@ -1075,9 +1076,7 @@ async function startOnboardingForMembersMissingRankRole(guild, rankRoles) {
             member.displayName ||
             member.user.globalName ||
             member.user.username;
-        const isDon =
-            process.env.DON_DISCORD_ID &&
-            member.user.id === process.env.DON_DISCORD_ID;
+        const isDon = hasDonAccess(member.user.id);
 
         const rows = await sql`
             insert into players (

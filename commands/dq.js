@@ -10,6 +10,9 @@ const {
 const {
     updateCaptainSpeedLeaderboardForGuild
 } = require('../utils/leaderboards.js');
+const {
+    isDon
+} = require('../utils/staff.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -27,7 +30,7 @@ module.exports = {
             flags: MessageFlags.Ephemeral
         });
 
-        if (!process.env.DON_DISCORD_ID || interaction.user.id !== process.env.DON_DISCORD_ID) {
+        if (!isDon(interaction.user.id)) {
             await interaction.editReply('❌ Only the Don can use `/dq`.');
             return;
         }

@@ -14,6 +14,8 @@ const {
     canRecruiterTakeRecruit
 } = require('../utils/ranks.js');
 const {
+    donDiscordIds,
+    isDon,
     parseDiscordId
 } = require('../utils/staff.js');
 
@@ -48,7 +50,7 @@ module.exports = {
             return;
         }
 
-        if (interaction.user.id !== donDiscordId) {
+        if (!isDon(interaction.user.id)) {
             await interaction.editReply(
                 '❌ Only the Don can use this command.'
             );
@@ -65,7 +67,7 @@ module.exports = {
             return;
         }
 
-        if (playerDiscordId === donDiscordId) {
+        if (donDiscordIds().includes(playerDiscordId)) {
             await interaction.editReply(
                 '❌ The Don cannot be removed from the database.'
             );

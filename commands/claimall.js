@@ -10,6 +10,9 @@ const {
 const {
     DEFAULT_RANK_NAME
 } = require('../utils/bootstrap.js');
+const {
+    isDon
+} = require('../utils/staff.js');
 
 function playerName(player) {
     return player.discord_display_name ||
@@ -36,7 +39,7 @@ module.exports = {
             return;
         }
 
-        if (interaction.user.id !== donDiscordId) {
+        if (!isDon(interaction.user.id)) {
             await interaction.editReply(
                 '❌ Only the Don can use `/claimall`.'
             );

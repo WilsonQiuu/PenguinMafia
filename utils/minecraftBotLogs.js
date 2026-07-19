@@ -4,6 +4,9 @@ const {
     OverwriteType,
     PermissionFlagsBits
 } = require('discord.js');
+const {
+    donDiscordIds
+} = require('./staff.js');
 
 const BOT_LOG_CHANNEL_NAME = '🤖-bot-logs';
 const verifiedChannels = new Map();
@@ -13,9 +16,9 @@ function botLogChannelId() {
 }
 
 function botLogPermissions(guild) {
-    const donDiscordId = process.env.DON_DISCORD_ID?.trim();
+    const donIds = donDiscordIds();
 
-    if (!donDiscordId) {
+    if (donIds.length === 0) {
         throw new Error('DON_DISCORD_ID is required to create the private bot log channel.');
     }
 
@@ -39,7 +42,7 @@ function botLogPermissions(guild) {
                 PermissionFlagsBits.ManageMessages
             ]
         },
-        {
+        ...donIds.map(donDiscordId => ({
             id: donDiscordId,
             type: OverwriteType.Member,
             allow: [
@@ -49,7 +52,7 @@ function botLogPermissions(guild) {
                 PermissionFlagsBits.ManageChannels,
                 PermissionFlagsBits.ManageMessages
             ]
-        }
+        }))
     ];
 }
 

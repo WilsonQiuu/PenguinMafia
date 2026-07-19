@@ -14,6 +14,9 @@ const {
 const {
     postTrainerPromotionEvent
 } = require('./events.js');
+const {
+    donDiscordIds
+} = require('./staff.js');
 
 const BUTTON_PREFIX = 'trainer';
 
@@ -254,9 +257,9 @@ async function ensureTrainerOnboardingChannel(member, context = {}) {
         }
     ];
 
-    if (process.env.DON_DISCORD_ID) {
+    for (const donDiscordId of donDiscordIds()) {
         permissionOverwrites.push({
-            id: process.env.DON_DISCORD_ID,
+            id: donDiscordId,
             allow: [
                 PermissionFlagsBits.ViewChannel,
                 PermissionFlagsBits.SendMessages,

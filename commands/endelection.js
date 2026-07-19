@@ -10,10 +10,9 @@ const {
 const {
     endElection
 } = require('../utils/elections.js');
-
-function isDon(userId) {
-    return process.env.DON_DISCORD_ID && userId === process.env.DON_DISCORD_ID;
-}
+const {
+    isDon
+} = require('../utils/staff.js');
 
 module.exports = {
     data: new SlashCommandBuilder()

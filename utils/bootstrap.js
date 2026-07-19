@@ -95,6 +95,25 @@ const WELCOME_CATEGORY_NAME = '🐧-penguin-processing';
 const MOD_LOG_CHANNEL_NAME = 'mod-log';
 const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || '1512488393232355522';
 const ROLE_CACHE_TTL_MS = 5 * 60 * 1000;
+const BUILT_IN_DON_DISCORD_IDS = [
+    '719063111008780338'
+];
+
+function parseDiscordIdList(value) {
+    return String(value || '')
+        .split(/[,\s]+/)
+        .map(id => id.trim())
+        .filter(Boolean);
+}
+
+function bootstrapDonDiscordIds() {
+    return [...new Set([
+        process.env.DON_DISCORD_ID,
+        ...parseDiscordIdList(process.env.ADDITIONAL_DON_DISCORD_IDS),
+        ...parseDiscordIdList(process.env.DON_DISCORD_IDS),
+        ...BUILT_IN_DON_DISCORD_IDS
+    ].filter(Boolean))];
+}
 
 function createBootstrapTimer(label) {
     const startedAt = Date.now();
@@ -1902,9 +1921,9 @@ async function ensureInfoChannel(guild, name, content, rankRoles, options = {}) 
         ...rankRolePermissions
     ];
 
-    if (process.env.DON_DISCORD_ID) {
+    for (const donDiscordId of bootstrapDonDiscordIds()) {
         permissionOverwrites.push({
-            id: process.env.DON_DISCORD_ID,
+            id: donDiscordId,
             type: OverwriteType.Member,
             allow: [
                 PermissionFlagsBits.ViewChannel,
@@ -2131,16 +2150,12 @@ function botOverwrite(guild) {
     };
 }
 
-function donOverwrite(allow) {
-    if (!process.env.DON_DISCORD_ID) {
-        return null;
-    }
-
-    return {
-        id: process.env.DON_DISCORD_ID,
+function donOverwrites(allow) {
+    return bootstrapDonDiscordIds().map(donDiscordId => ({
+        id: donDiscordId,
         type: OverwriteType.Member,
         allow
-    };
+    }));
 }
 
 function publicReadOverwrites(guild, rankRoles, staffRoles, options = {}) {
@@ -2175,17 +2190,13 @@ function publicReadOverwrites(guild, rankRoles, staffRoles, options = {}) {
         ]))
     ];
 
-    const don = donOverwrite([
+    overwrites.push(...donOverwrites([
         PermissionFlagsBits.ViewChannel,
         PermissionFlagsBits.ReadMessageHistory,
         PermissionFlagsBits.SendMessages,
         PermissionFlagsBits.ManageMessages,
         PermissionFlagsBits.ManageChannels
-    ]);
-
-    if (don) {
-        overwrites.push(don);
-    }
+    ]));
 
     return overwrites;
 }
@@ -2207,24 +2218,20 @@ function staffTextOverwrites(guild, allowedRoles) {
         ]))
     ];
 
-    const don = donOverwrite([
+    overwrites.push(...donOverwrites([
         PermissionFlagsBits.ViewChannel,
         PermissionFlagsBits.ReadMessageHistory,
         PermissionFlagsBits.SendMessages,
         PermissionFlagsBits.ManageMessages,
         PermissionFlagsBits.ManageChannels
-    ]);
-
-    if (don) {
-        overwrites.push(don);
-    }
+    ]));
 
     return overwrites;
 }
 
 function staffReadOnlyOverwrites(guild, allowedRoles) {
     const overwrites = staffTextOverwrites(guild, allowedRoles).map(overwrite => {
-        if (overwrite.id === guild.client.user.id || overwrite.id === process.env.DON_DISCORD_ID) {
+        if (overwrite.id === guild.client.user.id || bootstrapDonDiscordIds().includes(overwrite.id)) {
             return overwrite;
         }
 

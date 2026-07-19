@@ -8,6 +8,9 @@ const sql = require('../db.js');
 const {
     updateTeamWeeklyRecruitsLeaderboardForGuild
 } = require('./leaderboards.js');
+const {
+    isDon
+} = require('./staff.js');
 
 const TEAM_CREATE_APPROVE_PREFIX = 'team_create_approve:';
 const TEAM_CREATE_REJECT_PREFIX = 'team_create_reject:';
@@ -1272,7 +1275,7 @@ async function handleTeamApprovalButton(interaction, db = sql) {
         return false;
     }
 
-    if (!process.env.DON_DISCORD_ID || interaction.user.id !== process.env.DON_DISCORD_ID) {
+    if (!isDon(interaction.user.id)) {
         await interaction.reply({
             content: '❌ Only the Don can approve or reject team requests.'
         });

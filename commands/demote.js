@@ -19,6 +19,9 @@ const {
     playerName,
     syncRankRole
 } = require('../utils/ranks.js');
+const {
+    isDon
+} = require('../utils/staff.js');
 
 async function moveHigherRecruitsUpAfterDemotion(sql, playerDiscordId, demotedRank) {
     const demotedRankIndex = getRankIndex(demotedRank);
@@ -106,7 +109,7 @@ module.exports = {
             return;
         }
 
-        if (interaction.user.id !== donDiscordId) {
+        if (!isDon(interaction.user.id)) {
             await interaction.editReply(
                 '❌ Only the Don can use this command.'
             );

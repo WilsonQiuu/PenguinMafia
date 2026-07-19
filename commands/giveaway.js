@@ -29,6 +29,9 @@ const {
     formatDonationAmount,
     parseDonationAmount
 } = require('../utils/donations.js');
+const {
+    isDon
+} = require('../utils/staff.js');
 
 const MIN_GIVEAWAY_AMOUNT = 1_000_000n;
 
@@ -141,8 +144,7 @@ module.exports = {
                 return;
             }
 
-            const isDonHost = process.env.DON_DISCORD_ID &&
-                interaction.user.id === process.env.DON_DISCORD_ID;
+            const isDonHost = isDon(interaction.user.id);
             let balanceNote = '';
 
             if (isDonHost) {

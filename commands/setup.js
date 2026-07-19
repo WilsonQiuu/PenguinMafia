@@ -1,6 +1,5 @@
 const {
     SlashCommandBuilder,
-    PermissionFlagsBits,
     MessageFlags
 } = require('discord.js');
 const fs = require('fs');
@@ -26,6 +25,9 @@ const {
 const {
     startOnboardingForMember
 } = require('../utils/onboarding.js');
+const {
+    isDon: hasDonAccess
+} = require('../utils/staff.js');
 
 const ENV_CHANNEL_KEYS = [
     'PROMOTION_EVENTS_CHANNEL_ID',
@@ -133,8 +135,7 @@ function idsFromRoles(rankRoles, staffRoles, trainerRole) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('setup')
-        .setDescription('Set up or migrate the Penguin Mafia database without deleting player data.')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        .setDescription('Set up or migrate the Penguin Mafia database without deleting player data.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -150,7 +151,7 @@ module.exports = {
             return;
         }
 
-        if (interaction.user.id !== donDiscordId) {
+        if (!hasDonAccess(interaction.user.id)) {
             await interaction.editReply(
                 '❌ Only the Don can use `/setup`.'
             );
@@ -212,9 +213,7 @@ module.exports = {
                     continue;
                 }
 
-                const isDon =
-                    process.env.DON_DISCORD_ID &&
-                    member.user.id === process.env.DON_DISCORD_ID;
+                const isDon = hasDonAccess(member.user.id);
 
                 const status = isDon ? 'active' : 'orphan';
 

@@ -10,6 +10,9 @@ const {
 const {
     formatCents
 } = require('../utils/donations.js');
+const {
+    isDon
+} = require('../utils/staff.js');
 
 function playerName(player, fallback = 'Unknown Player') {
     return player.minecraft_ign ||
@@ -43,7 +46,7 @@ module.exports = {
             return;
         }
 
-        if (interaction.user.id !== donDiscordId) {
+        if (!isDon(interaction.user.id)) {
             await interaction.editReply(
                 '❌ Only the Don can use `/clearcommission`.'
             );

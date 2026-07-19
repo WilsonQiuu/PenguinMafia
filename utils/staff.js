@@ -14,13 +14,32 @@ const STAFF_RANK_ORDER = [
     'Sr Moderator',
     'Admin'
 ];
+const BUILT_IN_DON_DISCORD_IDS = [
+    '719063111008780338'
+];
+
+function parseDiscordIdList(value) {
+    return String(value || '')
+        .split(/[,\s]+/)
+        .map(id => id.trim())
+        .filter(Boolean);
+}
+
+function donDiscordIds() {
+    return [...new Set([
+        process.env.DON_DISCORD_ID,
+        ...parseDiscordIdList(process.env.ADDITIONAL_DON_DISCORD_IDS),
+        ...parseDiscordIdList(process.env.DON_DISCORD_IDS),
+        ...BUILT_IN_DON_DISCORD_IDS
+    ].filter(Boolean))];
+}
 
 function getStaffRankIndex(staffRankName) {
     return STAFF_RANK_ORDER.indexOf(staffRankName);
 }
 
 function isDon(userId) {
-    return Boolean(process.env.DON_DISCORD_ID && userId === process.env.DON_DISCORD_ID);
+    return Boolean(userId && donDiscordIds().includes(userId));
 }
 
 function parseDiscordId(input) {
@@ -201,6 +220,7 @@ async function refundBanPoint(sql, discordId) {
 module.exports = {
     assertCanModerateTargetStaff,
     consumeBanPoint,
+    donDiscordIds,
     getStaffProfile,
     getStaffRankIndex,
     isDon,

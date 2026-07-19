@@ -14,6 +14,9 @@ const {
     formatDonationAmount,
     parseDonationAmount
 } = require('../utils/donations.js');
+const {
+    isDon
+} = require('../utils/staff.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -46,7 +49,7 @@ module.exports = {
             return;
         }
 
-        if (interaction.user.id !== donDiscordId) {
+        if (!isDon(interaction.user.id)) {
             await interaction.editReply(
                 '❌ Only the Don can use this command.'
             );

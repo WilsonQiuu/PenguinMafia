@@ -17,6 +17,7 @@ const {
 } = require('./bootstrap.js');
 const sql = require('../db.js');
 const {
+    donDiscordIds,
     isDon
 } = require('./staff.js');
 const {
@@ -312,9 +313,13 @@ function baseTicketPermissions(guild, minimumStaffRankName, includeUserId = null
         });
     }
 
-    if (process.env.DON_DISCORD_ID && !permissions.some(overwrite => overwrite.id === process.env.DON_DISCORD_ID)) {
+    for (const donDiscordId of donDiscordIds()) {
+        if (permissions.some(overwrite => overwrite.id === donDiscordId)) {
+            continue;
+        }
+
         permissions.push({
-            id: process.env.DON_DISCORD_ID,
+            id: donDiscordId,
             type: OverwriteType.Member,
             allow: [
                 PermissionFlagsBits.ViewChannel,

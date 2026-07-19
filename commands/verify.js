@@ -1,6 +1,5 @@
 const {
     SlashCommandBuilder,
-    PermissionFlagsBits,
     MessageFlags
 } = require('discord.js');
 
@@ -10,6 +9,7 @@ const {
 } = require('../utils/logging.js');
 const {
     getStaffProfile,
+    isDon,
     syncInvokerStaffRank
 } = require('../utils/staff.js');
 
@@ -23,7 +23,6 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('verify')
         .setDescription('Refill Staff ban points. Don only.')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addUserOption(option =>
             option
                 .setName('staff')
@@ -45,7 +44,7 @@ module.exports = {
             return;
         }
 
-        if (interaction.user.id !== donDiscordId) {
+        if (!isDon(interaction.user.id)) {
             await interaction.editReply(
                 '❌ Only the Don can use `/verify`.'
             );

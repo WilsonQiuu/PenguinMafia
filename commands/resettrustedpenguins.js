@@ -1,6 +1,5 @@
 const {
     MessageFlags,
-    PermissionFlagsBits,
     SlashCommandBuilder
 } = require('discord.js');
 
@@ -31,7 +30,7 @@ async function fetchTrustedRole(guild) {
 function isAlwaysTrustedAdmin(member) {
     const adminRoleId = STAFF_ROLE_IDS.get('Admin');
 
-    return member.id === process.env.DON_DISCORD_ID ||
+    return isDon(member.id) ||
         Boolean(adminRoleId && member.roles.cache.has(adminRoleId));
 }
 
@@ -80,8 +79,7 @@ async function syncTrustedRolesAfterReset(guild, trustedRole) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('resettrustedpenguins')
-        .setDescription('Reset all vouches and Trusted Penguin roles. Vetos stay. Don only.')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        .setDescription('Reset all vouches and Trusted Penguin roles. Vetos stay. Don only.'),
 
     async execute(interaction) {
         await interaction.deferReply({

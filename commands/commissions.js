@@ -10,6 +10,9 @@ const {
 const {
     formatCents
 } = require('../utils/donations.js');
+const {
+    isDon
+} = require('../utils/staff.js');
 
 function playerName(player, fallback = 'Unknown Player') {
     return player.discord_display_name ||
@@ -33,12 +36,11 @@ module.exports = {
             flags: MessageFlags.Ephemeral
         });
 
-        const donDiscordId = process.env.DON_DISCORD_ID;
         const requestedUser = interaction.options.getUser('player') || interaction.user;
 
         if (
             requestedUser.id !== interaction.user.id &&
-            (!donDiscordId || interaction.user.id !== donDiscordId)
+            !isDon(interaction.user.id)
         ) {
             await interaction.editReply(
                 '❌ Only the Don can check another player’s unpaid commissions.'

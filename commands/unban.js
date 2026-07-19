@@ -6,6 +6,9 @@ const {
 const {
     logCommandError
 } = require('../utils/logging.js');
+const {
+    isDon
+} = require('../utils/staff.js');
 
 function parseDiscordId(input) {
     const match = input.trim().match(/^(?:<@!?)?(\d{17,20})>?$/);
@@ -28,16 +31,7 @@ module.exports = {
             flags: MessageFlags.Ephemeral
         });
 
-        const donDiscordId = process.env.DON_DISCORD_ID;
-
-        if (!donDiscordId) {
-            await interaction.editReply(
-                '❌ DON_DISCORD_ID is missing from your `.env` file.'
-            );
-            return;
-        }
-
-        if (interaction.user.id !== donDiscordId) {
+        if (!isDon(interaction.user.id)) {
             await interaction.editReply(
                 '❌ Only the Don can use this command.'
             );
