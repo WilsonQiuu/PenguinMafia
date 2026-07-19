@@ -34,7 +34,10 @@ module.exports = {
                 `Members checked: **${result.checked}**\n` +
                 `Roles added: **${result.added}**\n` +
                 `Roles removed: **${result.removed}**\n` +
-                `Failures: **${result.failed}**\n\n` +
+                `Failures: **${result.failed}**\n` +
+                `Old team chats deleted: **${result.legacyChannelsDeleted || 0}**\n` +
+                `Old team chat IDs cleared: **${result.legacyChannelIdsCleared || 0}**\n` +
+                `Old team chat cleanup failures: **${result.legacyChannelFailures?.length || 0}**\n\n` +
                 `The monthly team leaderboard was refreshed too.`
             );
         } catch (error) {

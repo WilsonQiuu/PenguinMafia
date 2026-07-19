@@ -30,7 +30,7 @@ function confirmationRow(interactionId) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('teamdelete')
-        .setDescription('Delete your active team, its private channel, and its team role.'),
+        .setDescription('Delete your active team and its team role.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -66,7 +66,7 @@ module.exports = {
                 content:
                     `⚠️ **Delete Team ${team.name}?**\n\n` +
                     `This will archive the team in the database, remove **${team.member_count}** player(s) from the team, ` +
-                    `delete the team role, delete the private team channel, and remove the team from the monthly team leaderboard.\n\n` +
+                    `delete the team role, clean up any old team chat, and remove the team from the monthly team leaderboard.\n\n` +
                     `This cannot be undone from Discord.`,
                 components: [confirmationRow(interaction.id)]
             });
@@ -111,7 +111,7 @@ module.exports = {
                     `Team: **${result.team.name}**\n` +
                     `Players removed from team: **${result.clearedPlayerIds.length}**\n` +
                     `Discord roles synced: **${result.synced}**\n` +
-                    `Channels deleted: **${result.cleanup.deletedChannels}**\n` +
+                    `Old team chats deleted: **${result.cleanup.deletedChannels}**\n` +
                     `Roles deleted: **${result.cleanup.deletedRoles}**${cleanupWarning}`,
                 components: []
             });

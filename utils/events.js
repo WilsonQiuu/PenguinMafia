@@ -25,6 +25,96 @@ function uniqueMentions(...ids) {
     return [...new Set(ids.filter(Boolean))];
 }
 
+async function fetchEffectiveTeamName(db, playerId, guildId) {
+    const rows = await db`
+        with recursive ancestors as (
+            select
+                player.discord_id,
+                player.discord_username,
+                player.discord_display_name,
+                player.minecraft_ign,
+                player.rank_name,
+                player.parent_discord_id,
+                player.team_id,
+                0 as depth
+            from players player
+            where player.discord_id = ${playerId}
+
+            union all
+
+            select
+                parent.discord_id,
+                parent.discord_username,
+                parent.discord_display_name,
+                parent.minecraft_ign,
+                parent.rank_name,
+                parent.parent_discord_id,
+                parent.team_id,
+                ancestors.depth + 1
+            from players parent
+            join ancestors
+                on parent.discord_id = ancestors.parent_discord_id
+            where ancestors.depth < 100
+        ),
+        recruiter as (
+            select *
+            from ancestors
+            where depth = 0
+            limit 1
+        ),
+        nearest_emperor as (
+            select *
+            from ancestors
+            where rank_name = 'Emperor Penguin'
+            order by depth asc
+            limit 1
+        )
+        select coalesce(
+            owned_team.name,
+            case
+                when emperor.discord_id is not null then concat(
+                    'team-',
+                    coalesce(
+                        nullif(
+                            trim(both '-' from regexp_replace(
+                                lower(coalesce(
+                                    nullif(emperor.minecraft_ign, ''),
+                                    nullif(emperor.discord_display_name, ''),
+                                    nullif(emperor.discord_username, ''),
+                                    emperor.discord_id,
+                                    'player'
+                                )),
+                                '[^a-z0-9]+',
+                                '-',
+                                'g'
+                            )),
+                            ''
+                        ),
+                        'player'
+                    )
+                )
+                else null
+            end,
+            assigned_team.name
+        ) as team_name
+        from recruiter
+        left join nearest_emperor emperor
+            on true
+        left join teams owned_team
+            on owned_team.owner_discord_id = emperor.discord_id
+            and owned_team.guild_id = ${guildId}
+            and owned_team.status = 'active'
+        left join teams assigned_team
+            on assigned_team.id = recruiter.team_id
+            and assigned_team.guild_id = ${guildId}
+            and assigned_team.status = 'active'
+            and emperor.discord_id is null
+        limit 1
+    `;
+
+    return rows[0]?.team_name || null;
+}
+
 async function postPromotionEvent(guild, {
     playerId,
     promoterId,
@@ -131,12 +221,8 @@ async function postFirstRecruitEvent(guild, db, {
             minecraft_ign,
             rank_name,
             direct_recruits_count,
-            captain_direct_recruits_count,
-            team.name as team_name
+            captain_direct_recruits_count
         from players
-        left join teams team
-            on team.id = players.team_id
-            and team.status = 'active'
         where discord_id = ${recruiterId}
         limit 1
     `;
@@ -177,8 +263,13 @@ async function postFirstRecruitEvent(guild, db, {
                 captainDirectRecruitsCount: Number(recruiter.captain_direct_recruits_count || 0)
             }).requirements.join('\n')}`
         : `They are already at the highest Penguin rank. Keep building the tree.`;
-    const teamLine = recruiter.team_name
-        ? `Team: **${recruiter.team_name}**\n`
+    const teamName = await fetchEffectiveTeamName(db, recruiterId, guild.id).catch(error => {
+        console.error('Could not fetch effective team name for first recruit event:');
+        console.error(error);
+        return null;
+    });
+    const teamLine = teamName
+        ? `Team: **${teamName}**\n`
         : '';
 
     await channel.send({

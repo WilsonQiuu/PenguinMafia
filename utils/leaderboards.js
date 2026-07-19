@@ -408,30 +408,134 @@ async function updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql) {
                 (date_trunc('month', now() at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) as started_at,
                 (date_trunc('month', now() at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) + interval '1 month' as ended_at
         ),
+        recruiter_buckets as (
+            select
+                recruiter.discord_id,
+                bucket.team_key,
+                bucket.team_id,
+                bucket.team_name,
+                bucket.owner_discord_id
+            from players recruiter
+            cross join lateral (
+                with recursive ancestors as (
+                    select
+                        player.discord_id,
+                        player.discord_username,
+                        player.discord_display_name,
+                        player.minecraft_ign,
+                        player.rank_name,
+                        player.parent_discord_id,
+                        player.team_id,
+                        0 as depth
+                    from players player
+                    where player.discord_id = recruiter.discord_id
+
+                    union all
+
+                    select
+                        parent.discord_id,
+                        parent.discord_username,
+                        parent.discord_display_name,
+                        parent.minecraft_ign,
+                        parent.rank_name,
+                        parent.parent_discord_id,
+                        parent.team_id,
+                        ancestors.depth + 1
+                    from players parent
+                    join ancestors
+                        on parent.discord_id = ancestors.parent_discord_id
+                    where ancestors.depth < 100
+                ),
+                nearest_emperor as (
+                    select *
+                    from ancestors
+                    where rank_name = 'Emperor Penguin'
+                    order by depth asc
+                    limit 1
+                )
+                select
+                    case
+                        when owned_team.id is not null then concat('team:', owned_team.id::text)
+                        when emperor.discord_id is not null then concat('emperor:', emperor.discord_id)
+                        when assigned_team.id is not null then concat('team:', assigned_team.id::text)
+                        else null
+                    end as team_key,
+                    case
+                        when owned_team.id is not null then owned_team.id::text
+                        when assigned_team.id is not null then assigned_team.id::text
+                        else null
+                    end as team_id,
+                    coalesce(
+                        owned_team.name,
+                        case
+                            when emperor.discord_id is not null then concat(
+                                'team-',
+                                coalesce(
+                                    nullif(
+                                        trim(both '-' from regexp_replace(
+                                            lower(coalesce(
+                                                nullif(emperor.minecraft_ign, ''),
+                                                nullif(emperor.discord_display_name, ''),
+                                                nullif(emperor.discord_username, ''),
+                                                emperor.discord_id,
+                                                'player'
+                                            )),
+                                            '[^a-z0-9]+',
+                                            '-',
+                                            'g'
+                                        )),
+                                        ''
+                                    ),
+                                    'player'
+                                )
+                            )
+                            else null
+                        end,
+                        assigned_team.name
+                    ) as team_name,
+                    coalesce(
+                        owned_team.owner_discord_id,
+                        emperor.discord_id,
+                        assigned_team.owner_discord_id
+                    ) as owner_discord_id
+                from (select 1 as seed) seed
+                left join nearest_emperor emperor
+                    on true
+                left join teams owned_team
+                    on owned_team.owner_discord_id = emperor.discord_id
+                    and owned_team.guild_id = ${guild.id}
+                    and owned_team.status = 'active'
+                left join teams assigned_team
+                    on assigned_team.id = recruiter.team_id
+                    and assigned_team.guild_id = ${guild.id}
+                    and assigned_team.status = 'active'
+                    and emperor.discord_id is null
+            ) bucket
+            where bucket.team_key is not null
+        ),
         team_totals as (
             select
-                team.id,
-                team.name,
-                team.owner_discord_id,
+                bucket.team_key,
+                bucket.team_id,
+                bucket.team_name as name,
+                bucket.owner_discord_id,
                 count(history.recruit_discord_id)::int as recruit_count
-            from teams team
-            join players player
-                on player.team_id = team.id
-            join recruit_history history
-                on history.recruiter_discord_id = player.discord_id
+            from recruit_history history
+            join recruiter_buckets bucket
+                on bucket.discord_id = history.recruiter_discord_id
             cross join month_window
-            where team.status = 'active'
-                and team.guild_id = ${guild.id}
-                and history.recruited_at >= month_window.started_at
+            where history.recruited_at >= month_window.started_at
                 and history.recruited_at < month_window.ended_at
                 and history.counts_for_hourly = true
             group by
-                team.id,
-                team.name,
-                team.owner_discord_id
+                bucket.team_key,
+                bucket.team_id,
+                bucket.team_name,
+                bucket.owner_discord_id
         )
         select
-            team_totals.id::text as id,
+            team_totals.team_key as id,
+            team_totals.team_id,
             team_totals.name,
             team_totals.owner_discord_id,
             team_totals.recruit_count
@@ -446,9 +550,9 @@ async function updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql) {
                         order by history.recruited_at asc, history.recruit_discord_id asc
                     ) as recruit_number
                 from recruit_history history
-                join players recruiter
-                    on recruiter.discord_id = history.recruiter_discord_id
-                where recruiter.team_id = team_totals.id
+                join recruiter_buckets bucket
+                    on bucket.discord_id = history.recruiter_discord_id
+                where bucket.team_key = team_totals.team_key
                     and history.recruited_at >= month_window.started_at
                     and history.recruited_at < month_window.ended_at
                     and history.counts_for_hourly = true
@@ -500,7 +604,8 @@ async function updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql) {
             'Penguin Mafia Weekly Team Recruit Leaderboard'
         ],
         `🏆🐧 **Penguin Mafia Monthly Team Recruit Leaderboard** 🐧🏆\n\n` +
-        `Top 10 teams by adding up each current team member’s **personal monthly direct recruits**.\n` +
+        `Top 10 teams by adding up each effective team member’s **personal monthly direct recruits**.\n` +
+        `Emperor Penguin branches count as their own team branch. If an Emperor has not created a custom team yet, their default branch name is **team-player** style, like **team-rainbowbeltzz**.\n` +
         `Tie-breaker: if teams have the same recruit count, whichever team reached that count first ranks higher.\n` +
         `This board resets on the **1st of every month at 12:00 AM Eastern Time**.\n` +
         `Top team prize pool: **${formatDonationAmount(rewardAmount)}**. It is split by each member’s share of the winning team’s monthly recruits, then each share pays through the normal commission structure.\n` +

@@ -176,47 +176,130 @@ async function fetchPreviousMonthTopTeam(guildId, db = sql) {
                 (date_trunc('month', now() at time zone ${EASTERN_TIME_ZONE}) at time zone ${EASTERN_TIME_ZONE}) - interval '1 month' as started_at,
                 (date_trunc('month', now() at time zone ${EASTERN_TIME_ZONE}) at time zone ${EASTERN_TIME_ZONE}) as ended_at
         ),
-        member_counts as (
+        recruiter_buckets as (
             select
-                team.id as team_id,
-                team.name as team_name,
-                team.owner_discord_id,
-                player.discord_id,
-                player.discord_username,
-                player.discord_display_name,
-                player.minecraft_ign,
-                count(history.recruit_discord_id)::int as recruit_count
-            from teams team
-            join players player
-                on player.team_id = team.id
-            join recruit_history history
-                on history.recruiter_discord_id = player.discord_id
-            cross join month_window
-            where team.guild_id = ${guildId}
-                and team.status = 'active'
-                and history.recruited_at >= month_window.started_at
-                and history.recruited_at < month_window.ended_at
-                and history.counts_for_hourly = true
-            group by
-                team.id,
-                team.name,
-                team.owner_discord_id,
-                player.discord_id,
-                player.discord_username,
-                player.discord_display_name,
-                player.minecraft_ign
+                recruiter.discord_id,
+                bucket.team_key,
+                bucket.team_id,
+                bucket.team_name,
+                bucket.owner_discord_id
+            from players recruiter
+            cross join lateral (
+                with recursive ancestors as (
+                    select
+                        player.discord_id,
+                        player.discord_username,
+                        player.discord_display_name,
+                        player.minecraft_ign,
+                        player.rank_name,
+                        player.parent_discord_id,
+                        player.team_id,
+                        0 as depth
+                    from players player
+                    where player.discord_id = recruiter.discord_id
+
+                    union all
+
+                    select
+                        parent.discord_id,
+                        parent.discord_username,
+                        parent.discord_display_name,
+                        parent.minecraft_ign,
+                        parent.rank_name,
+                        parent.parent_discord_id,
+                        parent.team_id,
+                        ancestors.depth + 1
+                    from players parent
+                    join ancestors
+                        on parent.discord_id = ancestors.parent_discord_id
+                    where ancestors.depth < 100
+                ),
+                nearest_emperor as (
+                    select *
+                    from ancestors
+                    where rank_name = 'Emperor Penguin'
+                    order by depth asc
+                    limit 1
+                )
+                select
+                    case
+                        when owned_team.id is not null then concat('team:', owned_team.id::text)
+                        when emperor.discord_id is not null then concat('emperor:', emperor.discord_id)
+                        when assigned_team.id is not null then concat('team:', assigned_team.id::text)
+                        else null
+                    end as team_key,
+                    case
+                        when owned_team.id is not null then owned_team.id::text
+                        when assigned_team.id is not null then assigned_team.id::text
+                        else null
+                    end as team_id,
+                    coalesce(
+                        owned_team.name,
+                        case
+                            when emperor.discord_id is not null then concat(
+                                'team-',
+                                coalesce(
+                                    nullif(
+                                        trim(both '-' from regexp_replace(
+                                            lower(coalesce(
+                                                nullif(emperor.minecraft_ign, ''),
+                                                nullif(emperor.discord_display_name, ''),
+                                                nullif(emperor.discord_username, ''),
+                                                emperor.discord_id,
+                                                'player'
+                                            )),
+                                            '[^a-z0-9]+',
+                                            '-',
+                                            'g'
+                                        )),
+                                        ''
+                                    ),
+                                    'player'
+                                )
+                            )
+                            else null
+                        end,
+                        assigned_team.name
+                    ) as team_name,
+                    coalesce(
+                        owned_team.owner_discord_id,
+                        emperor.discord_id,
+                        assigned_team.owner_discord_id
+                    ) as owner_discord_id
+                from (select 1 as seed) seed
+                left join nearest_emperor emperor
+                    on true
+                left join teams owned_team
+                    on owned_team.owner_discord_id = emperor.discord_id
+                    and owned_team.guild_id = ${guildId}
+                    and owned_team.status = 'active'
+                left join teams assigned_team
+                    on assigned_team.id = recruiter.team_id
+                    and assigned_team.guild_id = ${guildId}
+                    and assigned_team.status = 'active'
+                    and emperor.discord_id is null
+            ) bucket
+            where bucket.team_key is not null
         ),
         team_totals as (
             select
-                member_counts.team_id,
-                member_counts.team_name,
-                member_counts.owner_discord_id,
-                sum(member_counts.recruit_count)::int as recruit_count
-            from member_counts
+                bucket.team_key,
+                bucket.team_id,
+                bucket.team_name,
+                bucket.owner_discord_id,
+                count(history.recruit_discord_id)::int as recruit_count
+            from recruit_history history
+            join recruiter_buckets bucket
+                on bucket.discord_id = history.recruiter_discord_id
+            cross join month_window
+            where history.recruited_at >= month_window.started_at
+                and history.recruited_at < month_window.ended_at
+                and history.counts_for_hourly = true
             group by
-                member_counts.team_id,
-                member_counts.team_name,
-                member_counts.owner_discord_id
+                bucket.team_key,
+                bucket.team_id,
+                bucket.team_name,
+                bucket.owner_discord_id
         ),
         ranked_teams as (
             select
@@ -234,9 +317,9 @@ async function fetchPreviousMonthTopTeam(guildId, db = sql) {
                             order by history.recruited_at asc, history.recruit_discord_id asc
                         ) as recruit_number
                     from recruit_history history
-                    join players recruiter
-                        on recruiter.discord_id = history.recruiter_discord_id
-                    where recruiter.team_id = team_totals.team_id
+                    join recruiter_buckets bucket
+                        on bucket.discord_id = history.recruiter_discord_id
+                    where bucket.team_key = team_totals.team_key
                         and history.recruited_at >= month_window.started_at
                         and history.recruited_at < month_window.ended_at
                         and history.counts_for_hourly = true
@@ -246,7 +329,8 @@ async function fetchPreviousMonthTopTeam(guildId, db = sql) {
             ) team_progress on true
         )
         select
-            ranked_teams.team_id::text as team_id,
+            ranked_teams.team_key,
+            ranked_teams.team_id,
             ranked_teams.team_name,
             ranked_teams.owner_discord_id,
             ranked_teams.recruit_count,
@@ -271,6 +355,111 @@ async function fetchPreviousMonthTopTeam(guildId, db = sql) {
                 ${safeDate(topTeam.reward_month)}::timestamptz as started_at,
                 ${safeDate(topTeam.reward_month)}::timestamptz + interval '1 month' as ended_at
         ),
+        recruiter_buckets as (
+            select
+                recruiter.discord_id,
+                bucket.team_key,
+                bucket.team_id,
+                bucket.team_name,
+                bucket.owner_discord_id
+            from players recruiter
+            cross join lateral (
+                with recursive ancestors as (
+                    select
+                        player.discord_id,
+                        player.discord_username,
+                        player.discord_display_name,
+                        player.minecraft_ign,
+                        player.rank_name,
+                        player.parent_discord_id,
+                        player.team_id,
+                        0 as depth
+                    from players player
+                    where player.discord_id = recruiter.discord_id
+
+                    union all
+
+                    select
+                        parent.discord_id,
+                        parent.discord_username,
+                        parent.discord_display_name,
+                        parent.minecraft_ign,
+                        parent.rank_name,
+                        parent.parent_discord_id,
+                        parent.team_id,
+                        ancestors.depth + 1
+                    from players parent
+                    join ancestors
+                        on parent.discord_id = ancestors.parent_discord_id
+                    where ancestors.depth < 100
+                ),
+                nearest_emperor as (
+                    select *
+                    from ancestors
+                    where rank_name = 'Emperor Penguin'
+                    order by depth asc
+                    limit 1
+                )
+                select
+                    case
+                        when owned_team.id is not null then concat('team:', owned_team.id::text)
+                        when emperor.discord_id is not null then concat('emperor:', emperor.discord_id)
+                        when assigned_team.id is not null then concat('team:', assigned_team.id::text)
+                        else null
+                    end as team_key,
+                    case
+                        when owned_team.id is not null then owned_team.id::text
+                        when assigned_team.id is not null then assigned_team.id::text
+                        else null
+                    end as team_id,
+                    coalesce(
+                        owned_team.name,
+                        case
+                            when emperor.discord_id is not null then concat(
+                                'team-',
+                                coalesce(
+                                    nullif(
+                                        trim(both '-' from regexp_replace(
+                                            lower(coalesce(
+                                                nullif(emperor.minecraft_ign, ''),
+                                                nullif(emperor.discord_display_name, ''),
+                                                nullif(emperor.discord_username, ''),
+                                                emperor.discord_id,
+                                                'player'
+                                            )),
+                                            '[^a-z0-9]+',
+                                            '-',
+                                            'g'
+                                        )),
+                                        ''
+                                    ),
+                                    'player'
+                                )
+                            )
+                            else null
+                        end,
+                        assigned_team.name
+                    ) as team_name,
+                    coalesce(
+                        owned_team.owner_discord_id,
+                        emperor.discord_id,
+                        assigned_team.owner_discord_id
+                    ) as owner_discord_id
+                from (select 1 as seed) seed
+                left join nearest_emperor emperor
+                    on true
+                left join teams owned_team
+                    on owned_team.owner_discord_id = emperor.discord_id
+                    and owned_team.guild_id = ${guildId}
+                    and owned_team.status = 'active'
+                left join teams assigned_team
+                    on assigned_team.id = recruiter.team_id
+                    and assigned_team.guild_id = ${guildId}
+                    and assigned_team.status = 'active'
+                    and emperor.discord_id is null
+            ) bucket
+            where bucket.team_key is not null
+        ),
         member_counts as (
             select
                 player.discord_id,
@@ -280,12 +469,18 @@ async function fetchPreviousMonthTopTeam(guildId, db = sql) {
                 player.minecraft_edition,
                 player.rank_name,
                 player.team_id::text as team_id,
+                bucket.team_key as effective_team_key,
+                bucket.team_id as effective_team_id,
+                bucket.team_name as effective_team_name,
+                bucket.owner_discord_id as effective_team_owner_discord_id,
                 count(history.recruit_discord_id)::int as recruit_count
             from players player
             join recruit_history history
                 on history.recruiter_discord_id = player.discord_id
+            join recruiter_buckets bucket
+                on bucket.discord_id = player.discord_id
             cross join month_window
-            where player.team_id = ${topTeam.team_id}::bigint
+            where bucket.team_key = ${topTeam.team_key}
                 and history.recruited_at >= month_window.started_at
                 and history.recruited_at < month_window.ended_at
                 and history.counts_for_hourly = true
@@ -296,7 +491,11 @@ async function fetchPreviousMonthTopTeam(guildId, db = sql) {
                 player.minecraft_ign,
                 player.minecraft_edition,
                 player.rank_name,
-                player.team_id
+                player.team_id,
+                bucket.team_key,
+                bucket.team_id,
+                bucket.team_name,
+                bucket.owner_discord_id
         )
         select
             member_counts.*,
@@ -416,6 +615,10 @@ function calculateMemberPrizeShares(members, prizeAmount, totalRecruitCount) {
             minecraft_edition: row.minecraft_edition || null,
             rank_name: row.rank_name || null,
             team_id: row.team_id ? String(row.team_id) : null,
+            effective_team_key: row.effective_team_key || null,
+            effective_team_id: row.effective_team_id ? String(row.effective_team_id) : null,
+            effective_team_name: row.effective_team_name || null,
+            effective_team_owner_discord_id: row.effective_team_owner_discord_id || null,
             recruit_count: Number(row.recruit_count || 0),
             reached_at: isoOrNull(row.reached_at),
             recruits: parseJsonArray(row.recruits).map(recruit => ({
@@ -467,7 +670,7 @@ async function ensureMonthlyTeamRewardForGuild(guild, db = sql) {
         values (
             ${guild.id},
             ${safeDate(topTeam.reward_month)},
-            ${topTeam.team_id}::bigint,
+            ${topTeam.team_id ? BigInt(topTeam.team_id).toString() : null}::bigint,
             ${topTeam.team_name},
             ${topTeam.recruit_count},
             ${prizeAmount.toString()}::bigint,

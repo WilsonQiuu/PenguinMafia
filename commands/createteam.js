@@ -14,7 +14,7 @@ const {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('createteam')
-        .setDescription('Request a private team for your recruit tree. Emperor Penguins only.')
+        .setDescription('Request a team role for your recruit tree. Emperor Penguins only.')
         .addStringOption(option =>
             option
                 .setName('name')
@@ -61,7 +61,7 @@ module.exports = {
             await interaction.editReply(
                 `✅ **Team request sent to the Don.**\n\n` +
                 `Team: **${request.name}**\n` +
-                `The team role, private team channel, and DB team assignment will be created if the Don approves it.`
+                `The team role and DB team assignment will be created if the Don approves it.`
             );
         } catch (error) {
             logCommandError(interaction, '/createteam', error);

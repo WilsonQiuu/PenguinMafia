@@ -50,8 +50,7 @@ module.exports = {
             await interaction.editReply(
                 `✅ **Team renamed.**\n\n` +
                 `Team: **${result.team.name}**\n` +
-                `Color: **${formatTeamColor(result.team.color)}**\n` +
-                `Channel: ${result.team.channel_id ? `<#${result.team.channel_id}>` : 'not set'}${warningLine}`
+                `Color: **${formatTeamColor(result.team.color)}**${warningLine}`
             );
         } catch (error) {
             logCommandError(interaction, '/teamrename', error);

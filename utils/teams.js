@@ -1,15 +1,10 @@
 const {
     ActionRowBuilder,
     ButtonBuilder,
-    ButtonStyle,
-    ChannelType,
-    PermissionFlagsBits
+    ButtonStyle
 } = require('discord.js');
 
 const sql = require('../db.js');
-const {
-    TEAM_CHANNEL_CATEGORY_ID
-} = require('./bootstrap.js');
 const {
     updateTeamWeeklyRecruitsLeaderboardForGuild
 } = require('./leaderboards.js');
@@ -88,14 +83,21 @@ function formatTeamColor(color) {
     return `#${Number(color || 0).toString(16).padStart(6, '0').toUpperCase()}`;
 }
 
-function teamChannelName(name) {
-    const slug = String(name || 'team')
+function defaultTeamNameForPlayer(player) {
+    const slug = String(
+        player?.minecraft_ign ||
+        player?.discord_display_name ||
+        player?.discord_username ||
+        player?.discord_id ||
+        'player'
+    )
+        .trim()
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '')
-        .slice(0, 84);
+        .slice(0, 44);
 
-    return `team-${slug || 'chat'}`;
+    return `team-${slug || 'player'}`;
 }
 
 function approvalRow(requestId) {
@@ -131,8 +133,132 @@ async function fetchPlayerTeam(db, playerDiscordId) {
     return rows[0] || null;
 }
 
-async function teamLineForRecruiter(db, recruiterId) {
-    const team = await fetchPlayerTeam(db, recruiterId);
+async function fetchEffectiveTeamBucket(db, playerDiscordId, guildId = null) {
+    const rows = await db`
+        with recursive ancestors as (
+            select
+                player.discord_id,
+                player.discord_username,
+                player.discord_display_name,
+                player.minecraft_ign,
+                player.rank_name,
+                player.parent_discord_id,
+                player.team_id,
+                0 as depth
+            from players player
+            where player.discord_id = ${playerDiscordId}
+
+            union all
+
+            select
+                parent.discord_id,
+                parent.discord_username,
+                parent.discord_display_name,
+                parent.minecraft_ign,
+                parent.rank_name,
+                parent.parent_discord_id,
+                parent.team_id,
+                ancestors.depth + 1
+            from players parent
+            join ancestors
+                on parent.discord_id = ancestors.parent_discord_id
+            where ancestors.depth < 100
+        ),
+        recruiter as (
+            select *
+            from ancestors
+            where depth = 0
+            limit 1
+        ),
+        nearest_emperor as (
+            select *
+            from ancestors
+            where rank_name = 'Emperor Penguin'
+            order by depth asc
+            limit 1
+        )
+        select
+            recruiter.discord_id,
+            assigned_team.id::text as assigned_team_id,
+            assigned_team.name as assigned_team_name,
+            assigned_team.role_id as assigned_team_role_id,
+            assigned_team.channel_id as assigned_team_channel_id,
+            assigned_team.owner_discord_id as assigned_team_owner_discord_id,
+            emperor.discord_id as emperor_discord_id,
+            emperor.discord_username as emperor_discord_username,
+            emperor.discord_display_name as emperor_discord_display_name,
+            emperor.minecraft_ign as emperor_minecraft_ign,
+            owned_team.id::text as owned_team_id,
+            owned_team.name as owned_team_name,
+            owned_team.role_id as owned_team_role_id,
+            owned_team.channel_id as owned_team_channel_id,
+            owned_team.owner_discord_id as owned_team_owner_discord_id
+        from recruiter
+        left join nearest_emperor emperor
+            on true
+        left join teams owned_team
+            on owned_team.owner_discord_id = emperor.discord_id
+            and owned_team.status = 'active'
+            and (${guildId}::text is null or owned_team.guild_id = ${guildId})
+        left join teams assigned_team
+            on assigned_team.id = recruiter.team_id
+            and assigned_team.status = 'active'
+            and emperor.discord_id is null
+            and (${guildId}::text is null or assigned_team.guild_id = ${guildId})
+        limit 1
+    `;
+    const row = rows[0];
+
+    if (!row) {
+        return null;
+    }
+
+    if (row.owned_team_id) {
+        return {
+            id: row.owned_team_id,
+            key: `team:${row.owned_team_id}`,
+            name: row.owned_team_name,
+            role_id: row.owned_team_role_id,
+            channel_id: row.owned_team_channel_id,
+            owner_discord_id: row.owned_team_owner_discord_id,
+            is_virtual: false
+        };
+    }
+
+    if (row.emperor_discord_id) {
+        return {
+            id: null,
+            key: `emperor:${row.emperor_discord_id}`,
+            name: defaultTeamNameForPlayer({
+                discord_id: row.emperor_discord_id,
+                discord_username: row.emperor_discord_username,
+                discord_display_name: row.emperor_discord_display_name,
+                minecraft_ign: row.emperor_minecraft_ign
+            }),
+            role_id: null,
+            channel_id: null,
+            owner_discord_id: row.emperor_discord_id,
+            is_virtual: true
+        };
+    }
+
+    if (row.assigned_team_id) {
+        return {
+            id: row.assigned_team_id,
+            key: `team:${row.assigned_team_id}`,
+            name: row.assigned_team_name,
+            role_id: row.assigned_team_role_id,
+            channel_id: row.assigned_team_channel_id,
+            owner_discord_id: row.assigned_team_owner_discord_id,
+            is_virtual: false
+        };
+    }
+
+    return null;
+}
+
+async function teamLineForRecruiter(db, recruiterId, guildId = null) {
+    const team = await fetchEffectiveTeamBucket(db, recruiterId, guildId);
 
     return team ? `Team: **${team.name}**\n` : '';
 }
@@ -250,7 +376,7 @@ async function requestTeamCreation(interaction, options, db = sql) {
                 `Name: **${request.name}**\n` +
                 `Color: **${formatTeamColor(request.color)}**\n` +
                 `Rank: **${owner.rank_name || 'Unknown'}**${replacementLine}\n\n` +
-                `Approve this to create the Discord role, private team channel, and move their eligible tree into the team.`,
+                `Approve this to create the Discord team role, keep the team ping, and move their eligible tree into the team.`,
             components: [approvalRow(request.id)]
         });
     } catch (error) {
@@ -330,6 +456,51 @@ async function deleteArchivedTeamResources(guild, teams, reason = 'Penguin Mafia
     return cleanup;
 }
 
+async function cleanupLegacyTeamChannelsForGuild(guild, db = sql, reason = 'Penguin Mafia team chats removed') {
+    const rows = await db`
+        select id::text as id, name, channel_id
+        from teams
+        where guild_id = ${guild.id}
+            and status = 'active'
+            and channel_id is not null
+    `;
+    const result = {
+        deletedChannels: 0,
+        clearedChannelIds: 0,
+        failures: []
+    };
+
+    for (const team of rows) {
+        try {
+            const channel = guild.channels.cache.get(team.channel_id) ||
+                (await guild.channels.fetch(team.channel_id).catch(() => null));
+
+            if (channel) {
+                await channel.delete(reason);
+                result.deletedChannels++;
+            }
+
+            const clearedRows = await db`
+                update teams
+                set
+                    channel_id = null,
+                    updated_at = now()
+                where id = ${team.id}::bigint
+                    and channel_id = ${team.channel_id}
+                returning id
+            `;
+
+            if (clearedRows.length > 0) {
+                result.clearedChannelIds++;
+            }
+        } catch (error) {
+            result.failures.push(`Team ${team.name} (${team.channel_id}): ${error.message}`);
+        }
+    }
+
+    return result;
+}
+
 async function renameTeam(guild, ownerDiscordId, name, color, db = sql) {
     const teamName = validateTeamName(name);
     const normalizedName = normalizeTeamName(teamName);
@@ -395,28 +566,6 @@ async function renameTeam(guild, ownerDiscordId, name, color, db = sql) {
             });
         } else {
             syncFailures.push(`Role ${updatedTeam.role_id} was not found`);
-        }
-    }
-
-    if (updatedTeam.channel_id) {
-        const channel = guild.channels.cache.get(updatedTeam.channel_id) ||
-            (await guild.channels.fetch(updatedTeam.channel_id).catch(() => null));
-
-        if (channel) {
-            await channel.edit({
-                name: teamChannelName(updatedTeam.name),
-                reason: `Penguin Mafia team renamed by ${ownerDiscordId}`
-            }).catch(error => {
-                syncFailures.push(`Channel name: ${error.message}`);
-            });
-
-            await channel.permissionOverwrites.edit(updatedTeam.role_id, {
-                MentionEveryone: true
-            }).catch(error => {
-                syncFailures.push(`Channel permissions: ${error.message}`);
-            });
-        } else {
-            syncFailures.push(`Channel ${updatedTeam.channel_id} was not found`);
         }
     }
 
@@ -490,62 +639,18 @@ async function deleteOwnedTeam(guild, ownerDiscordId, db = sql) {
     };
 }
 
-async function createTeamRoleAndChannel(guild, request) {
+async function createTeamRole(guild, request) {
     const role = await guild.roles.create({
         name: request.name,
         color: Number(request.color),
         mentionable: true,
         reason: `Penguin Mafia team approved for ${request.owner_discord_id}`
     });
-    let channel = null;
 
-    try {
-        const permissionOverwrites = [
-            {
-                id: guild.roles.everyone.id,
-                deny: [PermissionFlagsBits.ViewChannel]
-            },
-            {
-                id: role.id,
-                allow: [
-                    PermissionFlagsBits.ViewChannel,
-                    PermissionFlagsBits.SendMessages,
-                    PermissionFlagsBits.ReadMessageHistory,
-                    PermissionFlagsBits.MentionEveryone
-                ]
-            },
-            {
-                id: guild.client.user.id,
-                allow: [
-                    PermissionFlagsBits.ViewChannel,
-                    PermissionFlagsBits.SendMessages,
-                    PermissionFlagsBits.ReadMessageHistory,
-                    PermissionFlagsBits.ManageChannels
-                ]
-            }
-        ];
-
-        const createdChannel = await guild.channels.create({
-            name: teamChannelName(request.name),
-            type: ChannelType.GuildText,
-            parent: TEAM_CHANNEL_CATEGORY_ID,
-            permissionOverwrites,
-            reason: `Penguin Mafia team channel for ${request.name}`
-        });
-        channel = await guild.channels.fetch(createdChannel.id).catch(() => createdChannel);
-
-        if (!channel?.id || !channel.isTextBased?.()) {
-            throw new Error('Team channel was created, but I could not verify the created text channel ID.');
-        }
-
-        return {
-            role,
-            channel
-        };
-    } catch (error) {
-        await role.delete('Team channel creation failed').catch(() => null);
-        throw error;
-    }
+    return {
+        role,
+        channel: null
+    };
 }
 
 async function fetchTeamRoles(db, guildId) {
@@ -564,20 +669,16 @@ async function fetchTeamRoles(db, guildId) {
 }
 
 async function syncPlayerTeamRole(guild, playerDiscordId, db = sql) {
-    const [teamRoles, playerRows] = await Promise.all([
+    const [teamRoles, playerRows, effectiveTeam] = await Promise.all([
         fetchTeamRoles(db, guild.id),
         db`
             select
-                player.discord_id,
-                team.id::text as team_id,
-                team.role_id
+                player.discord_id
             from players player
-            left join teams team
-                on team.id = player.team_id
-                and team.status = 'active'
             where player.discord_id = ${playerDiscordId}
             limit 1
-        `
+        `,
+        fetchEffectiveTeamBucket(db, playerDiscordId, guild.id)
     ]);
     const player = playerRows[0];
 
@@ -591,7 +692,7 @@ async function syncPlayerTeamRole(guild, playerDiscordId, db = sql) {
         return false;
     }
 
-    const targetRoleId = player.role_id || null;
+    const targetRoleId = effectiveTeam?.role_id || null;
     const roleIdsToRemove = teamRoles
         .map(team => team.role_id)
         .filter(roleId => roleId && roleId !== targetRoleId && member.roles.cache.has(roleId));
@@ -630,14 +731,61 @@ async function syncAllTeamRoles(guild, db = sql) {
         fetchTeamRoles(db, guild.id),
         db`
             select
-                player.discord_id,
-                team.role_id
-            from players player
-            join teams team
-                on team.id = player.team_id
-                and team.status = 'active'
-            where team.guild_id = ${guild.id}
-                and team.role_id is not null
+                base_player.discord_id,
+                bucket.role_id
+            from players base_player
+            cross join lateral (
+                with recursive ancestors as (
+                    select
+                        player.discord_id,
+                        player.discord_username,
+                        player.discord_display_name,
+                        player.minecraft_ign,
+                        player.rank_name,
+                        player.parent_discord_id,
+                        player.team_id,
+                        0 as depth
+                    from players player
+                    where player.discord_id = base_player.discord_id
+
+                    union all
+
+                    select
+                        parent.discord_id,
+                        parent.discord_username,
+                        parent.discord_display_name,
+                        parent.minecraft_ign,
+                        parent.rank_name,
+                        parent.parent_discord_id,
+                        parent.team_id,
+                        ancestors.depth + 1
+                    from players parent
+                    join ancestors
+                        on parent.discord_id = ancestors.parent_discord_id
+                    where ancestors.depth < 100
+                ),
+                nearest_emperor as (
+                    select *
+                    from ancestors
+                    where rank_name = 'Emperor Penguin'
+                    order by depth asc
+                    limit 1
+                )
+                select coalesce(owned_team.role_id, assigned_team.role_id) as role_id
+                from (select 1 as seed) seed
+                left join nearest_emperor emperor
+                    on true
+                left join teams owned_team
+                    on owned_team.owner_discord_id = emperor.discord_id
+                    and owned_team.guild_id = ${guild.id}
+                    and owned_team.status = 'active'
+                left join teams assigned_team
+                    on assigned_team.id = base_player.team_id
+                    and assigned_team.guild_id = ${guild.id}
+                    and assigned_team.status = 'active'
+                    and emperor.discord_id is null
+            ) bucket
+            where bucket.role_id is not null
         `,
         guild.members.fetch()
     ]);
@@ -647,7 +795,10 @@ async function syncAllTeamRoles(guild, db = sql) {
         checked: 0,
         added: 0,
         removed: 0,
-        failed: 0
+        failed: 0,
+        legacyChannelsDeleted: 0,
+        legacyChannelIdsCleared: 0,
+        legacyChannelFailures: []
     };
 
     for (const [, member] of members) {
@@ -685,23 +836,11 @@ async function syncAllTeamRoles(guild, db = sql) {
         return false;
     });
 
-    for (const team of teamRows) {
-        if (!team.channel_id || !team.role_id) continue;
+    const channelCleanup = await cleanupLegacyTeamChannelsForGuild(guild, db);
 
-        const channel = guild.channels.cache.get(team.channel_id) ||
-            (await guild.channels.fetch(team.channel_id).catch(() => null));
-
-        if (!channel?.isTextBased?.()) continue;
-
-        try {
-            await channel.permissionOverwrites.edit(team.role_id, {
-                MentionEveryone: true
-            });
-        } catch (error) {
-            console.error(`Could not update channel permissions for team ${team.name}:`);
-            console.error(error);
-        }
-    }
+    result.legacyChannelsDeleted = channelCleanup.deletedChannels;
+    result.legacyChannelIdsCleared = channelCleanup.clearedChannelIds;
+    result.legacyChannelFailures = channelCleanup.failures;
 
     return result;
 }
@@ -716,16 +855,6 @@ async function assignPlayerTreeToTeam(guild, rootDiscordId, targetTeamId, db = s
                 (
                     ${protectRootOwnedTeam}
                     and player.rank_name = 'Emperor Penguin'
-                    and exists (
-                        select 1
-                        from teams owned_team
-                        where owned_team.owner_discord_id = player.discord_id
-                            and owned_team.status = 'active'
-                            and (
-                                ${normalizedTeamId}::bigint is null
-                                or owned_team.id <> ${normalizedTeamId}::bigint
-                            )
-                    )
                 ) as blocked
             from players player
             where player.discord_id = ${rootDiscordId}
@@ -736,16 +865,7 @@ async function assignPlayerTreeToTeam(guild, rootDiscordId, targetTeamId, db = s
                 child.discord_id,
                 (
                     child.rank_name = 'Emperor Penguin'
-                    and exists (
-                        select 1
-                        from teams owned_team
-                        where owned_team.owner_discord_id = child.discord_id
-                            and owned_team.status = 'active'
-                            and (
-                                ${normalizedTeamId}::bigint is null
-                                or owned_team.id <> ${normalizedTeamId}::bigint
-                            )
-                    )
+                    and child.discord_id <> ${rootDiscordId}
                 ) as blocked
             from players child
             join team_tree parent
@@ -784,8 +904,8 @@ async function assignPlayerTreeToTeam(guild, rootDiscordId, targetTeamId, db = s
 }
 
 async function assignRecruitTreeToRecruiterTeam(guild, rootDiscordId, recruiterId, db = sql) {
-    const team = await fetchPlayerTeam(db, recruiterId);
-    const assignment = await assignPlayerTreeToTeam(guild, rootDiscordId, team?.id || null, db, {
+    const team = await fetchEffectiveTeamBucket(db, recruiterId, guild.id);
+    const assignment = await assignPlayerTreeToTeam(guild, rootDiscordId, team && !team.is_virtual ? team.id : null, db, {
         protectRootOwnedTeam: true
     });
 
@@ -796,72 +916,33 @@ async function assignRecruitTreeToRecruiterTeam(guild, rootDiscordId, recruiterI
 }
 
 async function postTeamRecruitWelcome(guild, recruiterId, recruitId, db = sql, teamOverride = null) {
-    const team = teamOverride || await fetchPlayerTeam(db, recruiterId);
-
-    if (!team?.channel_id) {
-        return false;
-    }
-
-    const recruitTeamRows = await db`
-        select team_id::text as team_id
-        from players
-        where discord_id = ${recruitId}
-        limit 1
-    `;
-
-    if (recruitTeamRows[0]?.team_id !== team.id) {
-        return false;
-    }
-
-    const channel = guild.channels.cache.get(team.channel_id) ||
-        (await guild.channels.fetch(team.channel_id).catch(() => null));
-
-    if (!channel?.isTextBased?.()) {
-        return false;
-    }
-
-    await channel.send({
-        content:
-            `🐧 Welcome <@${recruitId}> to **Team ${team.name}**!\n` +
-            `Recruited by <@${recruiterId}>.`,
-        allowedMentions: {
-            users: [recruitId, recruiterId],
-            parse: []
-        }
-    });
-
+    void guild;
+    void recruiterId;
+    void recruitId;
+    void db;
+    void teamOverride;
     return true;
 }
 
 async function postTeamTreeMoveAnnouncement(guild, team, rootDiscordId, recruiterId, affectedCount) {
-    if (!team?.channel_id || !affectedCount) {
-        return false;
-    }
-
-    const channel = guild.channels.cache.get(team.channel_id) ||
-        (await guild.channels.fetch(team.channel_id).catch(() => null));
-
-    if (!channel?.isTextBased?.()) {
-        return false;
-    }
-
-    await channel.send({
-        content:
-            `🐧 **Team Update**\n\n` +
-            `<@${rootDiscordId}>${affectedCount > 1 ? ` and **${affectedCount - 1}** player(s) in their tree` : ''} ` +
-            `joined **Team ${team.name}** under <@${recruiterId}>.`,
-        allowedMentions: {
-            users: [rootDiscordId, recruiterId],
-            parse: []
-        }
-    });
-
+    void guild;
+    void team;
+    void rootDiscordId;
+    void recruiterId;
+    void affectedCount;
     return true;
 }
 
-async function pingTeamRole(guild, team) {
-    if (!team?.channel_id || !team?.role_id) {
-        return { sent: false, reason: 'Team has no channel or role configured.' };
+async function pingTeamRole(guild, team, channel = null) {
+    if (team?.is_virtual) {
+        return {
+            sent: false,
+            reason: `**${team.name}** is a default Emperor branch and does not have a custom team role yet. Use \`/createteam\` to request a team role.`
+        };
+    }
+
+    if (!team?.role_id) {
+        return { sent: false, reason: 'Team has no role configured.' };
     }
 
     const cooldown = canTeamPing(team.id);
@@ -869,16 +950,17 @@ async function pingTeamRole(guild, team) {
         return { sent: false, reason: `Team ping is on cooldown. Try again in **${cooldown}** seconds.` };
     }
 
-    const channel = guild.channels.cache.get(team.channel_id) ||
-        (await guild.channels.fetch(team.channel_id).catch(() => null));
+    const targetChannel = channel?.isTextBased?.()
+        ? channel
+        : null;
 
-    if (!channel?.isTextBased?.()) {
-        return { sent: false, reason: 'Team channel could not be found.' };
+    if (!targetChannel) {
+        return { sent: false, reason: 'Use this command in a text channel so I know where to send the team ping.' };
     }
 
     consumeTeamPing(team.id);
 
-    await channel.send({
+    await targetChannel.send({
         content: `<@&${team.role_id}>`,
         allowedMentions: {
             roles: [team.role_id],
@@ -964,7 +1046,7 @@ async function approveTeamRequest(interaction, requestId, db = sql) {
     let channel = null;
 
     try {
-        const created = await createTeamRoleAndChannel(guild, request);
+        const created = await createTeamRole(guild, request);
         role = created.role;
         channel = created.channel;
 
@@ -1014,7 +1096,7 @@ async function approveTeamRequest(interaction, requestId, db = sql) {
                     ${request.color},
                     ${request.owner_discord_id},
                     ${role.id},
-                    ${channel.id},
+                    ${channel?.id || null},
                     'active'
                 )
                 returning id::text as id, name, role_id, channel_id
@@ -1037,13 +1119,7 @@ async function approveTeamRequest(interaction, requestId, db = sql) {
                         child.parent_discord_id,
                         (
                             child.rank_name = 'Emperor Penguin'
-                            and exists (
-                                select 1
-                                from teams owned_team
-                                where owned_team.owner_discord_id = child.discord_id
-                                    and owned_team.status = 'active'
-                                    and owned_team.id <> ${team.id}::bigint
-                            )
+                            and child.discord_id <> ${request.owner_discord_id}
                         ) as blocked
                     from players child
                     join team_tree parent
@@ -1112,22 +1188,11 @@ async function approveTeamRequest(interaction, requestId, db = sql) {
             return false;
         });
 
-        await channel.send({
-            content:
-                `🐧 **Welcome to Team ${result.team.name}!**\n\n` +
-                `<@${request.owner_discord_id}> is the team owner.\n` +
-                `Only members with the team role can see this chat.`,
-            allowedMentions: {
-                users: [request.owner_discord_id],
-                parse: []
-            }
-        }).catch(() => null);
-
         const ownerUser = await interaction.client.users.fetch(request.owner_discord_id).catch(() => null);
 
         await ownerUser?.send(
             `✅ The Don approved **Team ${request.name}**.\n` +
-            `Your eligible recruit tree has been moved into the team, and your private team chat is ready in **${guild.name}**.`
+            `Your eligible recruit tree has been moved into the team in **${guild.name}**. Your team role can still be pinged with \`/teamping\`.`
         ).catch(() => null);
 
         return {
@@ -1137,7 +1202,6 @@ async function approveTeamRequest(interaction, requestId, db = sql) {
                 `Team: **${request.name}**\n` +
                 `Owner: <@${request.owner_discord_id}>\n` +
                 `Role: <@&${role.id}>\n` +
-                `Channel: <#${result.team.channel_id}>\n` +
                 `Players synced: **${synced}**\n` +
                 `Previous owner teams archived: **${result.archivedCount}**\n` +
                 `Old team channels deleted: **${cleanup.deletedChannels}**\n` +
@@ -1243,7 +1307,9 @@ async function handleTeamApprovalButton(interaction, db = sql) {
 module.exports = {
     assignPlayerTreeToTeam,
     assignRecruitTreeToRecruiterTeam,
+    cleanupLegacyTeamChannelsForGuild,
     deleteOwnedTeam,
+    fetchEffectiveTeamBucket,
     fetchPlayerTeam,
     formatTeamColor,
     handleTeamApprovalButton,

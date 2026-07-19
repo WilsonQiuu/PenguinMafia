@@ -92,6 +92,8 @@ const {
     handleTicketModal
 } = require('./utils/tickets.js');
 const {
+    assignRecruitTreeToRecruiterTeam,
+    cleanupLegacyTeamChannelsForGuild,
     handleTeamApprovalButton,
     postTeamRecruitWelcome,
     syncPlayerTeamRole,
@@ -1430,7 +1432,7 @@ async function processJoinBatch(guild) {
             }
 
             const safeInviterDisplayName = escapeDiscordMarkdown(inviterDisplayName);
-            const recruiterTeamLine = await teamLineForRecruiter(sql, inviter.id).catch(error => {
+            const recruiterTeamLine = await teamLineForRecruiter(sql, inviter.id, guild.id).catch(error => {
                 console.error('Could not fetch recruiter team for welcome message:');
                 console.error(error);
                 return '';
@@ -1460,6 +1462,14 @@ async function processJoinBatch(guild) {
                     }
                 }
             );
+
+            await assignRecruitTreeToRecruiterTeam(guild, member.user.id, inviter.id, sql).catch(error => {
+                console.error('Team sync failed after invite join:');
+                console.error(error);
+                return {
+                    error
+                };
+            });
 
             await syncPlayerTeamRole(guild, member.user.id, sql).catch(error => {
                 console.error('Team role sync failed after invite join:');
@@ -2330,6 +2340,19 @@ client.once(Events.ClientReady, async () => {
             await processPendingDailyRecruitRewardPayoutsForGuild(guild, sql);
             await checkDailyRecruitRewardBalanceForGuild(guild, sql);
             await ensureMonthlyTeamRewardForGuild(guild, sql);
+            const teamChannelCleanup = await cleanupLegacyTeamChannelsForGuild(guild, sql);
+            if (
+                teamChannelCleanup.deletedChannels > 0 ||
+                teamChannelCleanup.clearedChannelIds > 0 ||
+                teamChannelCleanup.failures.length > 0
+            ) {
+                console.log(
+                    `Team chat cleanup for ${guild.name}: ` +
+                    `deleted=${teamChannelCleanup.deletedChannels}, ` +
+                    `cleared=${teamChannelCleanup.clearedChannelIds}, ` +
+                    `failures=${teamChannelCleanup.failures.length}.`
+                );
+            }
             await updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql);
             await checkPendingStaffApplicationApprovalsForGuild(guild, sql);
             await processPendingCommissionPayoutsForGuild(guild, sql, {

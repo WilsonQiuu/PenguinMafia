@@ -19,6 +19,7 @@ const {
     canRecruiterTakeRecruit
 } = require('../utils/ranks.js');
 const {
+    assignRecruitTreeToRecruiterTeam,
     postTeamRecruitWelcome,
     syncPlayerTeamRole,
     teamLineForRecruiter
@@ -177,28 +178,23 @@ module.exports = {
                     update players
                     set
                         parent_discord_id = ${parentUser.id},
-                        team_id = case
-                            when exists (
-                                select 1
-                                from teams owned_team
-                                where owned_team.owner_discord_id = ${childUser.id}
-                                    and owned_team.status = 'active'
-                                    and owned_team.id is distinct from (
-                                        select recruiter.team_id
-                                        from players recruiter
-                                        where recruiter.discord_id = ${parentUser.id}
-                                    )
-                            ) then players.team_id
-                            else (
-                                select recruiter.team_id
-                                from players recruiter
-                                where recruiter.discord_id = ${parentUser.id}
-                            )
-                        end,
                         status = 'active',
                         updated_at = now()
                     where discord_id = ${childUser.id}
                 `;
+            });
+
+            const teamSyncResult = await assignRecruitTreeToRecruiterTeam(
+                interaction.guild,
+                childUser.id,
+                parentUser.id,
+                sql
+            ).catch(error => {
+                console.error('Team sync failed after /join:');
+                console.error(error);
+                return {
+                    error
+                };
             });
 
             await postAutoPromotionEventIfDue(interaction.guild, sql, parentUser.id, oldRank).catch(error => {
@@ -206,7 +202,7 @@ module.exports = {
                 console.error(error);
             });
 
-            const recruiterTeamLine = await teamLineForRecruiter(sql, parentUser.id).catch(error => {
+            const recruiterTeamLine = await teamLineForRecruiter(sql, parentUser.id, interaction.guild.id).catch(error => {
                 console.error('Could not fetch recruiter team after /join:');
                 console.error(error);
                 return '';
@@ -223,6 +219,10 @@ module.exports = {
                 console.error(error);
                 return false;
             });
+
+            if (teamSyncResult?.error) {
+                console.error(`Team sync warning after /join: ${teamSyncResult.error.message}`);
+            }
 
             await postTeamRecruitWelcome(interaction.guild, parentUser.id, childUser.id, sql).catch(error => {
                 console.error('Team recruit welcome failed after /join:');
