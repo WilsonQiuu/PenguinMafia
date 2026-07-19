@@ -9,6 +9,9 @@ const {
     postModLog
 } = require('./modlogs.js');
 const {
+    STAFF_ROLE_IDS
+} = require('./bootstrap.js');
+const {
     getStaffProfile,
     isDon,
     syncInvokerStaffRank
@@ -219,7 +222,8 @@ async function getTrustProfile(db, playerId) {
             vouches,
             admin_vouches,
             vetoes,
-            admin_vetoes
+            admin_vetoes,
+            staff_rank_name
         from players
         where discord_id = ${playerId}
         limit 1
@@ -250,9 +254,16 @@ async function syncTrustedPenguinRole(guild, profile, reason) {
         };
     }
 
+    const adminRoleId = STAFF_ROLE_IDS.get('Admin');
+    const isAdmin =
+        profile.staff_rank_name === 'Admin' ||
+        (adminRoleId && member.roles.cache.has(adminRoleId));
     const shouldHaveRole =
-        Number(profile.admin_vouches || 0) >= TRUSTED_ADMIN_VOUCHES_REQUIRED &&
-        Number(profile.admin_vetoes || 0) === 0;
+        isAdmin ||
+        (
+            Number(profile.admin_vouches || 0) >= TRUSTED_ADMIN_VOUCHES_REQUIRED &&
+            Number(profile.admin_vetoes || 0) === 0
+        );
     const hasRole = member.roles.cache.has(role.id);
 
     if (shouldHaveRole && !hasRole) {

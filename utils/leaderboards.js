@@ -676,8 +676,9 @@ async function updateDailyRecruitsLeaderboardForGuild(guild, sql) {
         'daily-recruits',
         'Penguin Mafia Daily Recruit Leaderboard',
         `🏆🐧 **Penguin Mafia Daily Recruit Leaderboard** 🐧🏆\n\n` +
-        `Rewards are paid every day after **12:00 AM Eastern Time** using the last completed Eastern day.\n` +
+        `Rewards are automatically paid every day after **12:00 AM Eastern Time** using the last completed Eastern day.\n` +
         `Prize pools: ${prizeLine}.\n` +
+        `Each prize pays like \`/pay\`: the winner receives their commission share, and recruiter overrides receive the rest.\n` +
         `Tie-breaker: if players have the same recruit count, whoever reached that count first ranks higher.\n\n` +
         `## Today’s Top Recruiters\n${currentDayLines}\n\n` +
         `## Yesterday’s Winners\n${previousWinnerLines}\n\n`

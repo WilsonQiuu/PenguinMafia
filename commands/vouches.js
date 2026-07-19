@@ -101,12 +101,14 @@ module.exports = {
                 `
             ]);
 
-            const trustedStatus = Number(target.admin_vouches || 0) >= TRUSTED_ADMIN_VOUCHES_REQUIRED &&
-                Number(target.admin_vetoes || 0) === 0
-                ? 'Eligible / should have Trusted Penguin'
-                : Number(target.admin_vetoes || 0) > 0
-                    ? 'Blocked by active Admin veto'
-                    : `Needs ${TRUSTED_ADMIN_VOUCHES_REQUIRED - Number(target.admin_vouches || 0)} more Admin vouch${TRUSTED_ADMIN_VOUCHES_REQUIRED - Number(target.admin_vouches || 0) === 1 ? '' : 'es'}`;
+            const trustedStatus = target.staff_rank_name === 'Admin'
+                ? 'Staff Admin — always Trusted Penguin'
+                : Number(target.admin_vouches || 0) >= TRUSTED_ADMIN_VOUCHES_REQUIRED &&
+                    Number(target.admin_vetoes || 0) === 0
+                    ? 'Eligible / should have Trusted Penguin'
+                    : Number(target.admin_vetoes || 0) > 0
+                        ? 'Blocked by active Admin veto'
+                        : `Needs ${TRUSTED_ADMIN_VOUCHES_REQUIRED - Number(target.admin_vouches || 0)} more Admin vouch${TRUSTED_ADMIN_VOUCHES_REQUIRED - Number(target.admin_vouches || 0) === 1 ? '' : 'es'}`;
 
             await interaction.editReply(
                 `**Vouches for ${playerName(target, targetUser.username)}** ${targetUser}\n\n` +
