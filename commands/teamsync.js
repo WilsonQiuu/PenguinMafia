@@ -35,7 +35,7 @@ module.exports = {
                 `Roles added: **${result.added}**\n` +
                 `Roles removed: **${result.removed}**\n` +
                 `Failures: **${result.failed}**\n\n` +
-                `The weekly team leaderboard was refreshed too.`
+                `The monthly team leaderboard was refreshed too.`
             );
         } catch (error) {
             logCommandError(interaction, '/teamsync', error);

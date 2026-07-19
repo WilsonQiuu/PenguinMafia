@@ -12,13 +12,17 @@ const {
     parseDonationAmount
 } = require('./donations.js');
 const {
-    formatEasternHourRange
+    formatEasternDate
 } = require('./time.js');
+const {
+    teamMonthlyRewardAmount,
+    teamMonthlyRewardPayer
+} = require('./teamMonthlyRewards.js');
 
 const PREVIOUS_WEEKLY_RECRUITS_STATE_KEY = 'previous_weekly_recruits_top_three';
 const WEEKLY_RECRUITS_LAST_RESET_STATE_KEY = 'weekly_recruits_last_reset_at';
 const WEEKLY_RECRUITS_TIME_ZONE = 'America/Toronto';
-const DEFAULT_HOURLY_RECRUIT_REWARD_AMOUNT = '2m';
+const DEFAULT_DAILY_RECRUIT_REWARD_PRIZES = ['30m', '20m', '10m'];
 const LEADERBOARD_REFRESH_DELAY_MS = 2_000;
 const leaderboardRefreshes = new Map();
 
@@ -41,11 +45,16 @@ function teamLeaderboardLine(index, team) {
     const marker = medals[index] || `**${index + 1}.**`;
     const ownerLine = team.owner_discord_id ? ` — Owner: <@${team.owner_discord_id}>` : '';
 
-    return `${marker} **${team.name}** - **${team.recruit_count}** weekly team recruits${ownerLine}`;
+    return `${marker} **${team.name}** - **${team.recruit_count}** monthly team recruits${ownerLine}`;
 }
 
-function hourlyRecruitRewardAmount() {
-    return parseDonationAmount(process.env.HOURLY_RECRUIT_REWARD_AMOUNT || DEFAULT_HOURLY_RECRUIT_REWARD_AMOUNT);
+function dailyRecruitRewardPrizeAmounts() {
+    const configured = process.env.DAILY_RECRUIT_REWARD_PRIZES;
+    const prizeTexts = configured
+        ? configured.split(',').map(value => value.trim()).filter(Boolean)
+        : DEFAULT_DAILY_RECRUIT_REWARD_PRIZES;
+
+    return prizeTexts.slice(0, 3).map(parseDonationAmount);
 }
 
 function formatDuration(seconds) {
@@ -62,13 +71,6 @@ function formatDuration(seconds) {
     return parts.join(' ');
 }
 
-function previousCompletedHourStart() {
-    const date = new Date();
-    date.setMinutes(0, 0, 0);
-    date.setHours(date.getHours() - 1);
-    return date;
-}
-
 async function updateLeaderboardChannel(guild, channelId, channelName, marker, content) {
     const channel = guild.channels.cache.get(channelId) ||
         (await guild.channels.fetch(channelId).catch(() => null));
@@ -78,9 +80,11 @@ async function updateLeaderboardChannel(guild, channelId, channelName, marker, c
         return false;
     }
 
+    const markers = Array.isArray(marker) ? marker : [marker];
     const recentMessages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
     const matchingMessages = [...(recentMessages?.filter(message => {
-        return message.author.id === guild.client.user.id && message.content.includes(marker);
+        return message.author.id === guild.client.user.id &&
+            markers.some(searchMarker => message.content.includes(searchMarker));
     }).values() || [])];
     const existingMessage = matchingMessages[0];
 
@@ -396,22 +400,31 @@ async function updateDonationLeaderboardForGuild(guild, sql) {
     );
 }
 
-async function updateTeamWeeklyRecruitsLeaderboardForGuild(guild, sql) {
-    const teamRows = await sql`
-        with active_week as (
-            select current_weekly_recruit_started_at() as started_at
+async function updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql) {
+    const [teamRows, previousRewardRows] = await Promise.all([
+        sql`
+        with month_window as (
+            select
+                (date_trunc('month', now() at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) as started_at,
+                (date_trunc('month', now() at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) + interval '1 month' as ended_at
         ),
         team_totals as (
             select
                 team.id,
                 team.name,
                 team.owner_discord_id,
-                sum(player.weekly_direct_recruits_count)::int as recruit_count
+                count(history.recruit_discord_id)::int as recruit_count
             from teams team
             join players player
                 on player.team_id = team.id
+            join recruit_history history
+                on history.recruiter_discord_id = player.discord_id
+            cross join month_window
             where team.status = 'active'
-                and player.weekly_direct_recruits_count > 0
+                and team.guild_id = ${guild.id}
+                and history.recruited_at >= month_window.started_at
+                and history.recruited_at < month_window.ended_at
+                and history.counts_for_hourly = true
             group by
                 team.id,
                 team.name,
@@ -423,7 +436,7 @@ async function updateTeamWeeklyRecruitsLeaderboardForGuild(guild, sql) {
             team_totals.owner_discord_id,
             team_totals.recruit_count
         from team_totals
-        cross join active_week
+        cross join month_window
         left join lateral (
             select ranked.recruited_at as reached_at
             from (
@@ -436,7 +449,8 @@ async function updateTeamWeeklyRecruitsLeaderboardForGuild(guild, sql) {
                 join players recruiter
                     on recruiter.discord_id = history.recruiter_discord_id
                 where recruiter.team_id = team_totals.id
-                    and history.recruited_at >= active_week.started_at
+                    and history.recruited_at >= month_window.started_at
+                    and history.recruited_at < month_window.ended_at
                     and history.counts_for_hourly = true
             ) ranked
             where ranked.recruit_number = team_totals.recruit_count
@@ -447,31 +461,66 @@ async function updateTeamWeeklyRecruitsLeaderboardForGuild(guild, sql) {
             team_progress.reached_at asc nulls last,
             team_totals.name asc
         limit 10
-    `;
+        `,
+        sql`
+            with previous_month as (
+                select (date_trunc('month', now() at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) - interval '1 month' as reward_month
+            )
+            select reward.*
+            from team_monthly_rewards reward
+            join previous_month
+                on reward.reward_month = previous_month.reward_month
+            where reward.guild_id = ${guild.id}
+            limit 1
+        `
+    ]);
 
     const teamLines = teamRows.length > 0
         ? teamRows.map((row, i) => teamLeaderboardLine(i, row)).join('\n')
-        : 'No team recruits yet this week.';
+        : 'No team recruits yet this month.';
+    const previousReward = previousRewardRows[0] || null;
+    const rewardAmount = teamMonthlyRewardAmount();
+    const payer = teamMonthlyRewardPayer();
+    const previousRewardLine = previousReward
+        ? (
+            `Last month’s winner: **${previousReward.team_name}** with **${previousReward.recruit_count}** recruits.\n` +
+            `Reward status: **${String(previousReward.status).replace(/_/g, ' ')}**` +
+            (previousReward.status === 'pending_payment'
+                ? ` — waiting for **${payer}** to pay **${formatDonationAmount(previousReward.prize_amount)}** to the bot.`
+                : '.')
+        )
+        : 'No previous monthly team reward has been created yet.';
 
     return updateLeaderboardChannel(
         guild,
         TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID,
-        'team-weekly-leaderboard',
-        'Penguin Mafia Weekly Team Recruit Leaderboard',
-        `🏆🐧 **Penguin Mafia Weekly Team Recruit Leaderboard** 🐧🏆\n\n` +
-        `Top 10 teams by adding up each current team member’s **personal weekly direct recruits**.\n` +
+        'team-monthly-leaderboard',
+        [
+            'Penguin Mafia Monthly Team Recruit Leaderboard',
+            'Penguin Mafia Weekly Team Recruit Leaderboard'
+        ],
+        `🏆🐧 **Penguin Mafia Monthly Team Recruit Leaderboard** 🐧🏆\n\n` +
+        `Top 10 teams by adding up each current team member’s **personal monthly direct recruits**.\n` +
         `Tie-breaker: if teams have the same recruit count, whichever team reached that count first ranks higher.\n` +
-        `This board resets every **Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time).\n\n` +
-        `${teamLines}\n\n`
+        `This board resets on the **1st of every month at 12:00 AM Eastern Time**.\n` +
+        `Top team prize pool: **${formatDonationAmount(rewardAmount)}**. It is split by each member’s share of the winning team’s monthly recruits, then each share pays through the normal commission structure.\n` +
+        `If needed, **${payer}** can authorize the payout by paying the bot after the month ends.\n\n` +
+        `## Current Month\n` +
+        `${teamLines}\n\n` +
+        `## Previous Month Reward\n${previousRewardLine}\n\n`
     );
 }
 
-async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
-    const currentHourRows = await sql`
-        with hour_window as (
+async function updateTeamWeeklyRecruitsLeaderboardForGuild(guild, sql) {
+    return updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql);
+}
+
+async function updateDailyRecruitsLeaderboardForGuild(guild, sql) {
+    const currentDayRows = await sql`
+        with day_window as (
             select
-                date_trunc('hour', now()) as started_at,
-                date_trunc('hour', now()) + interval '1 hour' as ended_at
+                (date_trunc('day', now() at time zone 'America/Toronto') at time zone 'America/Toronto') as started_at,
+                (date_trunc('day', now() at time zone 'America/Toronto') at time zone 'America/Toronto') + interval '1 day' as ended_at
         ),
         recruiter_totals as (
             select
@@ -481,11 +530,11 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
                 recruiter.minecraft_ign,
                 count(*)::int as recruit_count
             from recruit_history history
-            cross join hour_window
+            cross join day_window
             left join players recruiter
                 on recruiter.discord_id = history.recruiter_discord_id
-            where history.recruited_at >= hour_window.started_at
-                and history.recruited_at < hour_window.ended_at
+            where history.recruited_at >= day_window.started_at
+                and history.recruited_at < day_window.ended_at
                 and history.counts_for_hourly = true
             group by
                 history.recruiter_discord_id,
@@ -499,9 +548,9 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
             recruiter_totals.discord_display_name,
             recruiter_totals.minecraft_ign,
             recruiter_totals.recruit_count,
-            hour_window.started_at as reward_hour
+            day_window.started_at as reward_day
         from recruiter_totals
-        cross join hour_window
+        cross join day_window
         left join lateral (
             select ranked.recruited_at as reached_at
             from (
@@ -512,25 +561,25 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
                     ) as recruit_number
                 from recruit_history history
                 where history.recruiter_discord_id = recruiter_totals.discord_id
-                    and history.recruited_at >= hour_window.started_at
-                    and history.recruited_at < hour_window.ended_at
+                    and history.recruited_at >= day_window.started_at
+                    and history.recruited_at < day_window.ended_at
                     and history.counts_for_hourly = true
             ) ranked
             where ranked.recruit_number = recruiter_totals.recruit_count
             limit 1
-        ) hourly_progress on true
+        ) daily_progress on true
         order by
             recruiter_totals.recruit_count desc,
-            hourly_progress.reached_at asc nulls last,
+            daily_progress.reached_at asc nulls last,
             recruiter_totals.discord_display_name asc nulls last,
             recruiter_totals.discord_username asc nulls last
         limit 10
     `;
-    const previousHourWinnerRows = await sql`
-        with hour_window as (
+    const previousDayRows = await sql`
+        with day_window as (
             select
-                date_trunc('hour', now()) - interval '1 hour' as started_at,
-                date_trunc('hour', now()) as ended_at
+                (date_trunc('day', now() at time zone 'America/Toronto') at time zone 'America/Toronto') - interval '1 day' as started_at,
+                (date_trunc('day', now() at time zone 'America/Toronto') at time zone 'America/Toronto') as ended_at
         ),
         recruiter_totals as (
             select
@@ -540,11 +589,11 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
                 recruiter.minecraft_ign,
                 count(*)::int as recruit_count
             from recruit_history history
-            cross join hour_window
+            cross join day_window
             left join players recruiter
                 on recruiter.discord_id = history.recruiter_discord_id
-            where history.recruited_at >= hour_window.started_at
-                and history.recruited_at < hour_window.ended_at
+            where history.recruited_at >= day_window.started_at
+                and history.recruited_at < day_window.ended_at
                 and history.counts_for_hourly = true
             group by
                 history.recruiter_discord_id,
@@ -558,9 +607,16 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
             recruiter_totals.discord_display_name,
             recruiter_totals.minecraft_ign,
             recruiter_totals.recruit_count,
-            hour_window.started_at as reward_hour
+            day_window.started_at as reward_day,
+            (row_number() over (
+                order by
+                    recruiter_totals.recruit_count desc,
+                    daily_progress.reached_at asc nulls last,
+                    recruiter_totals.discord_display_name asc nulls last,
+                    recruiter_totals.discord_username asc nulls last
+            ))::int as placement
         from recruiter_totals
-        cross join hour_window
+        cross join day_window
         left join lateral (
             select ranked.recruited_at as reached_at
             from (
@@ -571,50 +627,60 @@ async function updateHourlyRecruitsLeaderboardForGuild(guild, sql) {
                     ) as recruit_number
                 from recruit_history history
                 where history.recruiter_discord_id = recruiter_totals.discord_id
-                    and history.recruited_at >= hour_window.started_at
-                    and history.recruited_at < hour_window.ended_at
+                    and history.recruited_at >= day_window.started_at
+                    and history.recruited_at < day_window.ended_at
                     and history.counts_for_hourly = true
             ) ranked
             where ranked.recruit_number = recruiter_totals.recruit_count
             limit 1
-        ) hourly_progress on true
+        ) daily_progress on true
         order by
             recruiter_totals.recruit_count desc,
-            hourly_progress.reached_at asc nulls last,
+            daily_progress.reached_at asc nulls last,
             recruiter_totals.discord_display_name asc nulls last,
             recruiter_totals.discord_username asc nulls last
-        limit 1
+        limit 3
     `;
-    const previousHourWinner = previousHourWinnerRows[0];
-    const previousTopCount = previousHourWinner?.recruit_count || 0;
-    const previousHourRange = previousHourWinner
-        ? formatEasternHourRange(previousHourWinner.reward_hour)
-        : formatEasternHourRange(previousCompletedHourStart());
-    const winnerLine = !previousHourWinner
-        ? `No one had a recruit during the last completed EDT hour (**${previousHourRange}**).`
-        : `🏆 **Last Hour’s Winner:** **${leaderboardName(previousHourWinner)}** with **${previousTopCount}** recruit${previousTopCount === 1 ? '' : 's'} during **${previousHourRange}**`;
-    const currentHourLines = currentHourRows.length > 0
-        ? currentHourRows.map((player, index) => {
+    const prizeAmounts = dailyRecruitRewardPrizeAmounts();
+    const prizeLine = prizeAmounts
+        .map((amount, index) => `${index + 1}${index === 0 ? 'st' : index === 1 ? 'nd' : 'rd'}: **${formatDonationAmount(amount)}**`)
+        .join(' • ');
+    const previousDayLabel = previousDayRows[0]
+        ? formatEasternDate(previousDayRows[0].reward_day)
+        : 'yesterday';
+    const previousWinnerLines = previousDayRows.length > 0
+        ? previousDayRows.map((player, index) => {
+            const prize = prizeAmounts[index] || 0n;
             return leaderboardLine(
                 index,
                 player,
                 player.recruit_count,
-                'hourly direct recruits'
+                `daily direct recruits — prize pool ${formatDonationAmount(prize)}`
             );
         }).join('\n')
-        : 'No one has a recruit this hour yet.';
+        : `No one had a recruit during the last completed Eastern day (**${previousDayLabel}**).`;
+    const currentDayLines = currentDayRows.length > 0
+        ? currentDayRows.map((player, index) => {
+            return leaderboardLine(
+                index,
+                player,
+                player.recruit_count,
+                'daily direct recruits'
+            );
+        }).join('\n')
+        : 'No one has a recruit today yet.';
 
     return updateLeaderboardChannel(
         guild,
         HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
-        'hourly-recruits',
-        'Penguin Mafia Hourly Recruit Leaderboard',
-        `🏆🐧 **Penguin Mafia Hourly Recruit Leaderboard** 🐧🏆\n\n` +
-        `Reward: the top recruiter every hour earns a **${formatDonationAmount(hourlyRecruitRewardAmount())} prize pool** paid like \`/pay\`; ` +
-        `they receive the prize multiplied by their commission rate, and recruiter overrides receive the rest.\n` +
+        'daily-recruits',
+        'Penguin Mafia Daily Recruit Leaderboard',
+        `🏆🐧 **Penguin Mafia Daily Recruit Leaderboard** 🐧🏆\n\n` +
+        `Rewards are paid every day after **12:00 AM Eastern Time** using the last completed Eastern day.\n` +
+        `Prize pools: ${prizeLine}.\n` +
         `Tie-breaker: if players have the same recruit count, whoever reached that count first ranks higher.\n\n` +
-        `## This Hour’s Top Recruiters\n${currentHourLines}\n\n` +
-        `## Last Hour’s Result\n${winnerLine}\n\n`
+        `## Today’s Top Recruiters\n${currentDayLines}\n\n` +
+        `## Yesterday’s Winners\n${previousWinnerLines}\n\n`
     );
 }
 
@@ -671,7 +737,7 @@ async function updateLeaderboardsForGuild(guild, sql) {
     await updateWeeklyRecruitsLeaderboardForGuild(guild, sql);
     await updateTeamWeeklyRecruitsLeaderboardForGuild(guild, sql);
     await updateDonationLeaderboardForGuild(guild, sql);
-    await updateHourlyRecruitsLeaderboardForGuild(guild, sql);
+    await updateDailyRecruitsLeaderboardForGuild(guild, sql);
     await updateCaptainSpeedLeaderboardForGuild(guild, sql);
 }
 
@@ -741,8 +807,9 @@ module.exports = {
     resetWeeklyRecruitsAndSaveTopThree,
     scheduleLeaderboardsRefreshForGuild,
     updateCaptainSpeedLeaderboardForGuild,
+    updateDailyRecruitsLeaderboardForGuild,
     updateDonationLeaderboardForGuild,
-    updateHourlyRecruitsLeaderboardForGuild,
+    updateTeamMonthlyRecruitsLeaderboardForGuild,
     updateTeamWeeklyRecruitsLeaderboardForGuild,
     updateWeeklyRecruitsLeaderboardForGuild,
     updateLeaderboardsForGuild

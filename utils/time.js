@@ -12,6 +12,14 @@ const easternTimeZoneNameFormatter = new Intl.DateTimeFormat('en-US', {
     timeZoneName: 'short'
 });
 
+const easternDateFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: EASTERN_TIME_ZONE,
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+});
+
 function easternTimeZoneName(date) {
     return easternTimeZoneNameFormatter
         .formatToParts(date)
@@ -41,7 +49,13 @@ function formatEasternHourRange(start, fallback = new Date()) {
     return `${easternHourFormatter.format(startDate)}–${easternHourFormatter.format(endDate)} ${easternTimeZoneName(startDate)}`;
 }
 
+function formatEasternDate(value, fallback = new Date()) {
+    const date = validDateOrFallback(value, fallback);
+    return `${easternDateFormatter.format(date)} ${easternTimeZoneName(date)}`;
+}
+
 module.exports = {
     EASTERN_TIME_ZONE,
+    formatEasternDate,
     formatEasternHourRange
 };

@@ -478,7 +478,7 @@ function whyTeamMessage(userId, isTest = false) {
             `# 5️⃣ Why do we want a large team?\n\n` +
             `If any teammate under you:\n\n` +
             `• Wins a **giveaway**\n` +
-            `• Earns the **hourly recruit bonus**\n` +
+            `• Earns the **daily recruit bonus**\n` +
             `• Earns money from **spawner trading**\n\n` +
             `You can earn a portion through your commission chain.\n\n` +
             `That is the point of building a strong tree: when your team wins, the whole branch can eat.`,

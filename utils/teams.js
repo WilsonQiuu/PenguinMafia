@@ -421,7 +421,7 @@ async function renameTeam(guild, ownerDiscordId, name, color, db = sql) {
     }
 
     await updateTeamWeeklyRecruitsLeaderboardForGuild(guild, db).catch(error => {
-        console.error(`Could not refresh team weekly leaderboard for ${guild.name}:`);
+        console.error(`Could not refresh team monthly leaderboard for ${guild.name}:`);
         console.error(error);
         return false;
     });
@@ -478,7 +478,7 @@ async function deleteOwnedTeam(guild, ownerDiscordId, db = sql) {
     );
 
     await updateTeamWeeklyRecruitsLeaderboardForGuild(guild, db).catch(error => {
-        console.error(`Could not refresh team weekly leaderboard for ${guild.name}:`);
+        console.error(`Could not refresh team monthly leaderboard for ${guild.name}:`);
         console.error(error);
         return false;
     });
@@ -680,7 +680,7 @@ async function syncAllTeamRoles(guild, db = sql) {
     }
 
     await updateTeamWeeklyRecruitsLeaderboardForGuild(guild, db).catch(error => {
-        console.error(`Could not refresh team weekly leaderboard for ${guild.name}:`);
+        console.error(`Could not refresh team monthly leaderboard for ${guild.name}:`);
         console.error(error);
         return false;
     });
@@ -771,7 +771,7 @@ async function assignPlayerTreeToTeam(guild, rootDiscordId, targetTeamId, db = s
 
     if (options.refreshLeaderboard !== false) {
         await updateTeamWeeklyRecruitsLeaderboardForGuild(guild, db).catch(error => {
-            console.error(`Could not refresh team weekly leaderboard for ${guild.name}:`);
+            console.error(`Could not refresh team monthly leaderboard for ${guild.name}:`);
             console.error(error);
             return false;
         });
@@ -1107,7 +1107,7 @@ async function approveTeamRequest(interaction, requestId, db = sql) {
         );
 
         await updateTeamWeeklyRecruitsLeaderboardForGuild(guild, db).catch(error => {
-            console.error(`Could not refresh team weekly leaderboard for ${guild.name}:`);
+            console.error(`Could not refresh team monthly leaderboard for ${guild.name}:`);
             console.error(error);
             return false;
         });

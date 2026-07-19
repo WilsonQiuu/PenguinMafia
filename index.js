@@ -18,7 +18,9 @@ const {
 } = require('./utils/bootstrap.js');
 const {
     scheduleLeaderboardsRefreshForGuild,
-    updateHourlyRecruitsLeaderboardForGuild,
+    updateDailyRecruitsLeaderboardForGuild,
+    updateDonationLeaderboardForGuild,
+    updateTeamMonthlyRecruitsLeaderboardForGuild,
     updateLeaderboardsForGuild
 } = require('./utils/leaderboards.js');
 const {
@@ -75,15 +77,16 @@ const {
     processPendingGiveawayPayoutsForGuild
 } = require('./utils/commissionPayments.js');
 const {
-    checkHourlyRecruitRewardBalanceForGuild,
-    ensureHourlyRecruitRewardForGuild,
-    processPendingHourlyRecruitRewardPayoutsForGuild
+    checkDailyRecruitRewardBalanceForGuild,
+    ensureDailyRecruitRewardsForGuild,
+    processPendingDailyRecruitRewardPayoutsForGuild
 } = require('./utils/hourlyRecruitRewards.js');
 const {
     ensureReactionRolesMessage,
     handleReactionRole
 } = require('./utils/reactionRoles.js');
 const {
+    checkPendingStaffApplicationApprovalsForGuild,
     ensureTicketPanel,
     handleTicketButton,
     handleTicketModal
@@ -94,6 +97,10 @@ const {
     syncPlayerTeamRole,
     teamLineForRecruiter
 } = require('./utils/teams.js');
+const {
+    ensureMonthlyTeamRewardForGuild,
+    processIncomingTeamMonthlyRewardPayment
+} = require('./utils/teamMonthlyRewards.js');
 const {
     editModLog,
     findModLogChannel,
@@ -205,6 +212,138 @@ function autoStartMinecraftBot() {
     }
 }
 
+function monthlyTeamPaymentHandled(result) {
+    return ['payouts_queued', 'too_low', 'already_processing'].includes(result?.status);
+}
+
+function logMonthlyTeamPaymentResult(guild, payment, result) {
+    if (result.status === 'payouts_queued') {
+        const payoutCount = result.payoutResult?.payouts?.length || 0;
+
+        emitMinecraftEvent(
+            'Monthly Team Reward Authorized',
+            `${payment.player} authorized the monthly team reward payout.`,
+            'success',
+            {
+                Team: result.reward.team_name,
+                'Team recruits': String(result.reward.recruit_count),
+                'Prize pool': formatDonationAmount(result.reward.prize_amount),
+                'Paid amount': formatDonationAmount(result.paidAmount),
+                'Donation credited to': result.donationCredit
+                    ? `<@${result.donationCredit.playerId}>`
+                    : 'Not credited — payer not linked',
+                'Payout recipients': String(payoutCount)
+            }
+        );
+        updateDonationLeaderboardForGuild(guild, sql).catch(error => {
+            console.error(`Donation leaderboard refresh failed for ${guild.name}:`);
+            console.error(error);
+        });
+        updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql).catch(error => {
+            console.error(`Monthly team leaderboard refresh failed for ${guild.name}:`);
+            console.error(error);
+        });
+        return;
+    }
+
+    if (result.status === 'too_low') {
+        emitMinecraftEvent(
+            'Monthly Team Reward Payment Too Low',
+            `${payment.player} paid less than the pending monthly team reward prize pool.`,
+            'warning',
+            {
+                Team: result.reward.team_name,
+                'Required amount': formatDonationAmount(result.reward.prize_amount),
+                'Paid amount': formatDonationAmount(result.paidAmount)
+            }
+        );
+    }
+}
+
+function logGiveawayOrDonationPaymentResult(payment, result) {
+    if (result.status === 'hosted') {
+        emitMinecraftEvent(
+            'Paid Giveaway Hosted',
+            `${result.request.host_minecraft_ign} funded a giveaway.`,
+            'success',
+            {
+                Host: `<@${result.request.host_discord_id}>`,
+                'Minecraft IGN': result.request.host_minecraft_ign,
+                'Required amount': formatDonationAmount(result.request.amount),
+                'Paid amount': formatDonationAmount(result.paidAmount),
+                'Accepted shortfall': result.acceptedShortfallAmount > 0n
+                    ? formatDonationAmount(result.acceptedShortfallAmount)
+                    : 'None',
+                'Extra donation': result.overpaidAmount > 0n
+                    ? formatDonationAmount(result.overpaidAmount)
+                    : 'None',
+                Giveaway: result.message?.url || 'Board message unavailable'
+            }
+        );
+    } else if (result.status === 'too_low') {
+        emitMinecraftEvent(
+            'Giveaway Payment Too Low',
+            `${result.request.host_minecraft_ign} paid less than their pending giveaway amount.`,
+            'warning',
+            {
+                Host: `<@${result.request.host_discord_id}>`,
+                'Minecraft IGN': result.request.host_minecraft_ign,
+                'Required amount': formatDonationAmount(result.request.amount),
+                'Paid amount': formatDonationAmount(result.paidAmount)
+            }
+        );
+    } else if (result.status === 'donation_recorded') {
+        emitMinecraftEvent(
+            'Minecraft Donation Recorded',
+            `${result.request.donor_minecraft_ign || payment.player} completed a donation request through the Minecraft bot.`,
+            'success',
+            {
+                Player: `<@${result.request.donor_discord_id}>`,
+                'Minecraft IGN': result.request.donor_minecraft_ign || payment.player,
+                'Requested amount': formatDonationAmount(result.request.amount),
+                'Paid amount': formatDonationAmount(result.paidAmount),
+                Amount: formatDonationAmount(result.donation.amount),
+                'New donation total': formatDonationAmount(result.donation.newTotal)
+            }
+        );
+    } else if (result.status === 'donation_too_low') {
+        emitMinecraftEvent(
+            'Donation Payment Too Low',
+            `${result.request.donor_minecraft_ign} paid less than their pending donation amount.`,
+            'warning',
+            {
+                Player: `<@${result.request.donor_discord_id}>`,
+                'Minecraft IGN': result.request.donor_minecraft_ign,
+                'Required amount': formatDonationAmount(result.request.amount),
+                'Paid amount': formatDonationAmount(result.paidAmount)
+            }
+        );
+    } else if (result.status === 'donation_unmatched') {
+        emitMinecraftEvent(
+            'Unmatched Minecraft Payment',
+            'A Minecraft payment was received, but it did not match a pending /donate or /giveaway request. It was not counted as a donation.',
+            'warning',
+            {
+                'Minecraft IGN': result.minecraftName || payment.player || 'Unknown',
+                Amount: formatDonationAmount(result.paidAmount),
+                Counted: 'No'
+            }
+        );
+    }
+}
+
+async function processIncomingPaymentForGuild(guild, payment) {
+    const teamRewardResult = await processIncomingTeamMonthlyRewardPayment(guild, payment, sql);
+
+    if (monthlyTeamPaymentHandled(teamRewardResult)) {
+        logMonthlyTeamPaymentResult(guild, payment, teamRewardResult);
+        return;
+    }
+
+    const giveawayResult = await processIncomingGiveawayPayment(guild, payment, sql);
+    logGiveawayOrDonationPaymentResult(payment, giveawayResult);
+}
+
 minecraftEvents.on('log', event => {
     for (const [, guild] of client.guilds.cache) {
         postMinecraftBotLog(guild, event).catch(error => {
@@ -219,78 +358,7 @@ minecraftEvents.on('log', event => {
                 message: event.details?.['Server response']
             };
 
-            processIncomingGiveawayPayment(guild, payment, sql)
-                .then(result => {
-                    if (result.status === 'hosted') {
-                        emitMinecraftEvent(
-                            'Paid Giveaway Hosted',
-                            `${result.request.host_minecraft_ign} funded a giveaway.`,
-                            'success',
-                            {
-                                Host: `<@${result.request.host_discord_id}>`,
-                                'Minecraft IGN': result.request.host_minecraft_ign,
-                                'Required amount': formatDonationAmount(result.request.amount),
-                                'Paid amount': formatDonationAmount(result.paidAmount),
-                                'Accepted shortfall': result.acceptedShortfallAmount > 0n
-                                    ? formatDonationAmount(result.acceptedShortfallAmount)
-                                    : 'None',
-                                'Extra donation': result.overpaidAmount > 0n
-                                    ? formatDonationAmount(result.overpaidAmount)
-                                    : 'None',
-                                Giveaway: result.message?.url || 'Board message unavailable'
-                            }
-                        );
-                    } else if (result.status === 'too_low') {
-                        emitMinecraftEvent(
-                            'Giveaway Payment Too Low',
-                            `${result.request.host_minecraft_ign} paid less than their pending giveaway amount.`,
-                            'warning',
-                            {
-                                Host: `<@${result.request.host_discord_id}>`,
-                                'Minecraft IGN': result.request.host_minecraft_ign,
-                                'Required amount': formatDonationAmount(result.request.amount),
-                                'Paid amount': formatDonationAmount(result.paidAmount)
-                            }
-                        );
-                    } else if (result.status === 'donation_recorded') {
-                        emitMinecraftEvent(
-                            'Minecraft Donation Recorded',
-                            `${result.request.donor_minecraft_ign || payment.player} completed a donation request through the Minecraft bot.`,
-                            'success',
-                            {
-                                Player: `<@${result.request.donor_discord_id}>`,
-                                'Minecraft IGN': result.request.donor_minecraft_ign || payment.player,
-                                'Requested amount': formatDonationAmount(result.request.amount),
-                                'Paid amount': formatDonationAmount(result.paidAmount),
-                                Amount: formatDonationAmount(result.donation.amount),
-                                'New donation total': formatDonationAmount(result.donation.newTotal)
-                            }
-                        );
-                    } else if (result.status === 'donation_too_low') {
-                        emitMinecraftEvent(
-                            'Donation Payment Too Low',
-                            `${result.request.donor_minecraft_ign} paid less than their pending donation amount.`,
-                            'warning',
-                            {
-                                Player: `<@${result.request.donor_discord_id}>`,
-                                'Minecraft IGN': result.request.donor_minecraft_ign,
-                                'Required amount': formatDonationAmount(result.request.amount),
-                                'Paid amount': formatDonationAmount(result.paidAmount)
-                            }
-                        );
-                    } else if (result.status === 'donation_unmatched') {
-                        emitMinecraftEvent(
-                            'Unmatched Minecraft Payment',
-                            'A Minecraft payment was received, but it did not match a pending /donate or /giveaway request. It was not counted as a donation.',
-                            'warning',
-                            {
-                                'Minecraft IGN': result.minecraftName || payment.player || 'Unknown',
-                                Amount: formatDonationAmount(result.paidAmount),
-                                Counted: 'No'
-                            }
-                        );
-                    }
-                })
+            processIncomingPaymentForGuild(guild, payment)
                 .catch(error => {
                     emitMinecraftEvent(
                         'Incoming Payment Processing Failed',
@@ -632,7 +700,7 @@ async function deactivateMissingRecruitCredits(guild, members) {
 
         console.log(
             `Removed recruit leaderboard credit for ${rows.length} missing member${rows.length === 1 ? '' : 's'} ` +
-            `in ${guild.name}: hourly=${rows.length}, weekly=${weeklyRows.length}.`
+            `in ${guild.name}: reward=${rows.length}, weekly=${weeklyRows.length}.`
         );
     }
 
@@ -689,7 +757,7 @@ async function deactivateRecruitCreditForLeavingMember(guild, member) {
 
     console.log(
         `Removed recruit leaderboard credit for leaving member ${member.user.tag} in ${guild.name}: ` +
-        `hourly=${rows.length}, weekly=${weeklyRows.length}.`
+        `reward=${rows.length}, weekly=${weeklyRows.length}.`
     );
 
     return true;
@@ -2258,9 +2326,12 @@ client.once(Events.ClientReady, async () => {
             await resetExpiredElectionResultBoardForGuild(guild, sql);
             await finishExpiredGiveawaysForGuild(guild, sql);
             await processPendingGiveawayPayoutsForGuild(guild, sql);
-            await ensureHourlyRecruitRewardForGuild(guild, sql);
-            await processPendingHourlyRecruitRewardPayoutsForGuild(guild, sql);
-            await checkHourlyRecruitRewardBalanceForGuild(guild, sql);
+            await ensureDailyRecruitRewardsForGuild(guild, sql);
+            await processPendingDailyRecruitRewardPayoutsForGuild(guild, sql);
+            await checkDailyRecruitRewardBalanceForGuild(guild, sql);
+            await ensureMonthlyTeamRewardForGuild(guild, sql);
+            await updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql);
+            await checkPendingStaffApplicationApprovalsForGuild(guild, sql);
             await processPendingCommissionPayoutsForGuild(guild, sql, {
                 guild,
                 source: 'Startup commission payout recovery'
@@ -2372,21 +2443,40 @@ client.once(Events.ClientReady, async () => {
 
     setInterval(runAccountLinkReminderScan, 24 * 60 * 60 * 1000);
 
-    const runHourlyRecruitRefresh = createNonOverlappingRunner('Hourly recruit refresh', async () => {
+    const runDailyRecruitRefresh = createNonOverlappingRunner('Daily recruit refresh', async () => {
         for (const [, guild] of client.guilds.cache) {
             try {
-                await updateHourlyRecruitsLeaderboardForGuild(guild, sql);
-                await ensureHourlyRecruitRewardForGuild(guild, sql);
-                await processPendingHourlyRecruitRewardPayoutsForGuild(guild, sql);
-                await checkHourlyRecruitRewardBalanceForGuild(guild, sql);
+                await updateDailyRecruitsLeaderboardForGuild(guild, sql);
+                await ensureDailyRecruitRewardsForGuild(guild, sql);
+                await processPendingDailyRecruitRewardPayoutsForGuild(guild, sql);
+                await checkDailyRecruitRewardBalanceForGuild(guild, sql);
+                await ensureMonthlyTeamRewardForGuild(guild, sql);
+                await updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql);
             } catch (error) {
-                console.error(`Hourly recruits leaderboard/reward refresh failed for ${guild.name}:`);
+                console.error(`Daily recruits leaderboard/reward refresh failed for ${guild.name}:`);
                 console.error(error);
             }
         }
     });
 
-    setInterval(runHourlyRecruitRefresh, 60_000);
+    setInterval(runDailyRecruitRefresh, 60_000);
+
+    const runStaffApplicationReviewScan = createNonOverlappingRunner('Staff application review scan', async () => {
+        for (const [, guild] of client.guilds.cache) {
+            try {
+                const result = await checkPendingStaffApplicationApprovalsForGuild(guild, sql);
+
+                if (result.notified > 0) {
+                    console.log(`Staff application approval notices sent for ${guild.name}: ${result.notified}.`);
+                }
+            } catch (error) {
+                console.error(`Staff application review scan failed for ${guild.name}:`);
+                console.error(error);
+            }
+        }
+    });
+
+    setInterval(runStaffApplicationReviewScan, 5 * 60 * 1000);
 
     let giveawayTimerCheckRunning = false;
     async function runGiveawayTimerCheck() {
@@ -2426,7 +2516,7 @@ client.once(Events.ClientReady, async () => {
         for (const [, guild] of client.guilds.cache) {
             try {
                 await processPendingGiveawayPayoutsForGuild(guild, sql);
-                await processPendingHourlyRecruitRewardPayoutsForGuild(guild, sql);
+                await processPendingDailyRecruitRewardPayoutsForGuild(guild, sql);
                 await processPendingCommissionPayoutsForGuild(guild, sql, {
                     guild,
                     source: 'Scheduled commission payout recovery'

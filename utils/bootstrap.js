@@ -653,6 +653,100 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        create table if not exists staff_application_review_status (
+            channel_id text primary key,
+            guild_id text not null,
+            applicant_discord_id text not null,
+            opened_at timestamptz not null default now(),
+            approved_notified_at timestamptz,
+            vetoed_at timestamptz,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        )
+    `;
+
+    await sql`
+        create table if not exists staff_application_reviews (
+            id bigserial primary key,
+            guild_id text not null,
+            channel_id text not null references staff_application_review_status(channel_id) on delete cascade,
+            applicant_discord_id text not null,
+            reviewer_discord_id text not null,
+            action text not null check (action in ('accept', 'veto')),
+            reason text not null,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            unique (channel_id, reviewer_discord_id)
+        )
+    `;
+
+    await sql`
+        alter table staff_application_reviews
+        drop constraint if exists staff_application_reviews_action_check
+    `;
+
+    await sql`
+        alter table staff_application_reviews
+        add constraint staff_application_reviews_action_check check (action in ('accept', 'veto'))
+    `;
+
+    await sql`
+        create index if not exists idx_staff_application_reviews_channel_action
+        on staff_application_reviews(channel_id, action)
+    `;
+
+    await sql`
+        create index if not exists idx_staff_application_review_status_pending
+        on staff_application_review_status(guild_id, opened_at)
+        where approved_notified_at is null
+            and vetoed_at is null
+    `;
+
+    await sql`
+        create table if not exists team_monthly_rewards (
+            id bigserial primary key,
+            guild_id text not null,
+            reward_month timestamptz not null,
+            team_id bigint references teams(id) on delete set null,
+            team_name text not null,
+            recruit_count int not null default 0 check (recruit_count >= 0),
+            prize_amount bigint not null check (prize_amount > 0),
+            payer_minecraft_ign text not null default 'rainbowbeltzz',
+            member_recruits jsonb not null default '[]'::jsonb,
+            payout_summary jsonb not null default '{}'::jsonb,
+            status text not null default 'pending_payment' check (
+                status in ('pending_payment', 'processing', 'payouts_queued', 'finished', 'failed', 'cancelled')
+            ),
+            paid_amount bigint,
+            payment_message text,
+            paid_at timestamptz,
+            payout_enqueued_at timestamptz,
+            finished_at timestamptz,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            unique (guild_id, reward_month)
+        )
+    `;
+
+    await sql`
+        alter table team_monthly_rewards
+        drop constraint if exists team_monthly_rewards_status_check
+    `;
+
+    await sql`
+        alter table team_monthly_rewards
+        add constraint team_monthly_rewards_status_check check (
+            status in ('pending_payment', 'processing', 'payouts_queued', 'finished', 'failed', 'cancelled')
+        )
+    `;
+
+    await sql`
+        create index if not exists idx_team_monthly_rewards_pending_payment
+        on team_monthly_rewards(guild_id, lower(payer_minecraft_ign), reward_month)
+        where status = 'pending_payment'
+    `;
+
+    await sql`
         create table if not exists player_vouches (
             target_discord_id text not null references players(discord_id) on delete cascade,
             voucher_discord_id text not null references players(discord_id) on delete cascade,
@@ -860,7 +954,9 @@ async function ensureDatabaseSchema(sql) {
         create table if not exists hourly_recruit_rewards (
             id bigserial primary key,
             guild_id text not null,
+            reward_type text not null default 'hourly',
             reward_hour timestamptz not null,
+            placement int not null default 1 check (placement > 0),
             winner_discord_id text references players(discord_id) on delete set null,
             recruit_count int not null default 0 check (recruit_count >= 0),
             prize_amount bigint not null check (prize_amount > 0),
@@ -874,6 +970,26 @@ async function ensureDatabaseSchema(sql) {
             log_sent_at timestamptz,
             unique (guild_id, reward_hour)
         )
+    `;
+
+    await sql`
+        alter table hourly_recruit_rewards
+        add column if not exists reward_type text not null default 'hourly'
+    `;
+
+    await sql`
+        alter table hourly_recruit_rewards
+        add column if not exists placement int not null default 1 check (placement > 0)
+    `;
+
+    await sql`
+        alter table hourly_recruit_rewards
+        drop constraint if exists hourly_recruit_rewards_guild_id_reward_hour_key
+    `;
+
+    await sql`
+        create unique index if not exists idx_hourly_recruit_rewards_type_period_place
+        on hourly_recruit_rewards(guild_id, reward_type, reward_hour, placement)
     `;
 
     await sql`
@@ -1506,6 +1622,11 @@ async function ensureDatabaseSchema(sql) {
             created_at timestamptz not null default now(),
             primary key (player_discord_id, ticket_type)
         )
+    `;
+
+    await sql`
+        alter table ticket_cooldowns
+        drop constraint if exists ticket_cooldowns_player_discord_id_fkey
     `;
 
     await sql`

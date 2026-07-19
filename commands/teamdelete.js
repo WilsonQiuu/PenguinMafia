@@ -66,7 +66,7 @@ module.exports = {
                 content:
                     `⚠️ **Delete Team ${team.name}?**\n\n` +
                     `This will archive the team in the database, remove **${team.member_count}** player(s) from the team, ` +
-                    `delete the team role, delete the private team channel, and remove the team from the weekly team leaderboard.\n\n` +
+                    `delete the team role, delete the private team channel, and remove the team from the monthly team leaderboard.\n\n` +
                     `This cannot be undone from Discord.`,
                 components: [confirmationRow(interaction.id)]
             });

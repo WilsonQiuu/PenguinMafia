@@ -41,7 +41,7 @@ function countLine(count, singular, plural = `${singular}s`) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('giveawayearnings')
-        .setDescription('Check total money earned from giveaways and hourly recruiter rewards.')
+        .setDescription('Check total money earned from giveaways and daily recruiter rewards.')
         .addUserOption(option =>
             option
                 .setName('player')
@@ -117,24 +117,24 @@ module.exports = {
             const earnings = rows[0] || {};
 
             await interaction.editReply(
-                `🎁 **Giveaway + Hourly Reward Earnings**\n\n` +
+                `🎁 **Giveaway + Daily Reward Earnings**\n\n` +
                 `Player: **${playerName(player, requestedUser.username)}**\n` +
                 `${minecraftAccountLine(player)}\n\n` +
                 `Direct earnings: **${formatCents(earnings.direct_cents || 0)}** ` +
                 `(${countLine(earnings.direct_payouts || 0, 'payout')})\n` +
                 `- Giveaway wins: **${formatCents(earnings.giveaway_direct_cents || 0)}** ` +
                 `(${countLine(earnings.giveaway_direct_payouts || 0, 'payout')})\n` +
-                `- Hourly recruiter wins: **${formatCents(earnings.hourly_direct_cents || 0)}** ` +
+                `- Daily recruiter wins: **${formatCents(earnings.hourly_direct_cents || 0)}** ` +
                 `(${countLine(earnings.hourly_direct_payouts || 0, 'payout')})\n` +
                 `Commission earnings: **${formatCents(earnings.commission_cents || 0)}** ` +
                 `(${countLine(earnings.commission_payouts || 0, 'payout')})\n` +
                 `- Giveaway commissions: **${formatCents(earnings.giveaway_commission_cents || 0)}** ` +
                 `(${countLine(earnings.giveaway_commission_payouts || 0, 'payout')})\n` +
-                `- Hourly reward commissions: **${formatCents(earnings.hourly_commission_cents || 0)}** ` +
+                `- Daily reward commissions: **${formatCents(earnings.hourly_commission_cents || 0)}** ` +
                 `(${countLine(earnings.hourly_commission_payouts || 0, 'payout')})\n` +
                 `Total earnings: **${formatCents(earnings.total_cents || 0)}** ` +
                 `(${countLine(earnings.total_payouts || 0, 'payout')})\n\n` +
-                `Hourly top-recruiter winners count as direct earnings. Recruiter-chain payouts count as commissions.`
+                `Daily top-recruiter winners count as direct earnings. Recruiter-chain payouts count as commissions.`
             );
         } catch (error) {
             logCommandError(interaction, '/giveawayearnings', error);

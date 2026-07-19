@@ -21,6 +21,8 @@ const {
 } = require('./staff.js');
 const {
     formatUser,
+    findModLogChannel,
+    postModLog,
     truncateValue
 } = require('./modlogs.js');
 
@@ -30,6 +32,10 @@ const TICKET_PANEL_MARKER = 'Penguin Mafia Tickets';
 const TICKET_BUTTON_PREFIX = 'ticket_open';
 const TICKET_MODAL_PREFIX = 'ticket_modal';
 const TICKET_CLOSE_PREFIX = 'ticket_close';
+const STAFF_REVIEW_BUTTON_PREFIX = 'staff_app_review';
+const STAFF_REVIEW_MODAL_PREFIX = 'staff_app_review_modal';
+const STAFF_APPLICATION_REQUIRED_ACCEPTS = 3;
+const STAFF_APPLICATION_MIN_REVIEW_MS = 24 * 60 * 60 * 1000;
 const STAFF_RANK_ORDER = [
     'Trial Mod',
     'Moderator',
@@ -45,17 +51,21 @@ async function checkTicketCooldown(userId, type) {
     if (type !== 'media' && type !== 'staff') return null;
 
     const rows = await sql`
-        select created_at
+        select ticket_type, created_at
         from ticket_cooldowns
         where player_discord_id = ${userId}
-            and ticket_type = ${type}
+            and ticket_type in ('media', 'staff')
             and created_at > now() - make_interval(days => ${TICKET_COOLDOWN_DAYS})
+        order by created_at desc
         limit 1
     `;
 
     if (rows[0]) {
         const daysLeft = Math.ceil((rows[0].created_at.getTime() + TICKET_COOLDOWN_DAYS * 86400000 - Date.now()) / 86400000);
-        return daysLeft;
+        return {
+            daysLeft,
+            ticketType: rows[0].ticket_type
+        };
     }
 
     return null;
@@ -191,6 +201,17 @@ function ticketTypeLabel(type) {
     return 'ticket';
 }
 
+function cooldownMessage(type, cooldown) {
+    const previousType = cooldown.ticketType && cooldown.ticketType !== type
+        ? ` Your last application was a **${ticketTypeLabel(cooldown.ticketType)}**.`
+        : '';
+
+    return (
+        `⏳ You can only submit one staff/media application every **${TICKET_COOLDOWN_DAYS} days**.` +
+        `${previousType} Please wait **${cooldown.daysLeft}** day${cooldown.daysLeft === 1 ? '' : 's'} before submitting another.`
+    );
+}
+
 async function findOpenTicketChannel(guild, type, userId) {
     const topic = ticketTopic(type, userId);
     const cachedChannel = guild.channels.cache.find(channel => {
@@ -314,6 +335,22 @@ function closeButton(type, ownerId) {
         .setStyle(ButtonStyle.Danger);
 }
 
+function staffReviewComponents(ownerId) {
+    return [
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`${STAFF_REVIEW_BUTTON_PREFIX}:accept:${ownerId}`)
+                .setLabel('Accept')
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId(`${STAFF_REVIEW_BUTTON_PREFIX}:veto:${ownerId}`)
+                .setLabel('Veto')
+                .setStyle(ButtonStyle.Danger),
+            closeButton('staff', ownerId)
+        )
+    ];
+}
+
 function modalTextInput(customId, label, style = TextInputStyle.Short, required = true) {
     return new TextInputBuilder()
         .setCustomId(customId)
@@ -395,8 +432,14 @@ function getModalBuilder(type, userId) {
 
 async function handleTicketButton(interaction) {
     if (!interaction.customId.startsWith(`${TICKET_BUTTON_PREFIX}:`) &&
-        !interaction.customId.startsWith(`${TICKET_CLOSE_PREFIX}:`)) {
+        !interaction.customId.startsWith(`${TICKET_CLOSE_PREFIX}:`) &&
+        !interaction.customId.startsWith(`${STAFF_REVIEW_BUTTON_PREFIX}:`)) {
         return false;
+    }
+
+    if (interaction.customId.startsWith(`${STAFF_REVIEW_BUTTON_PREFIX}:`)) {
+        await handleStaffReviewButton(interaction);
+        return true;
     }
 
     if (interaction.customId.startsWith(`${TICKET_CLOSE_PREFIX}:`)) {
@@ -425,11 +468,11 @@ async function handleTicketButton(interaction) {
         return true;
     }
 
-    const cooldownDays = await checkTicketCooldown(interaction.user.id, type);
+    const cooldown = await checkTicketCooldown(interaction.user.id, type);
 
-    if (cooldownDays !== null) {
+    if (cooldown !== null) {
         await interaction.reply({
-            content: `⏳ You can only submit one ${ticketTypeLabel(type)} every **${TICKET_COOLDOWN_DAYS} days**. Please wait **${cooldownDays}** day${cooldownDays === 1 ? '' : 's'} before submitting another.`,
+            content: cooldownMessage(type, cooldown),
             flags: MessageFlags.Ephemeral
         });
         return true;
@@ -440,6 +483,11 @@ async function handleTicketButton(interaction) {
 }
 
 async function handleTicketModal(interaction) {
+    if (interaction.customId.startsWith(`${STAFF_REVIEW_MODAL_PREFIX}:`)) {
+        await handleStaffReviewModal(interaction);
+        return true;
+    }
+
     if (!interaction.customId.startsWith(`${TICKET_MODAL_PREFIX}:`)) {
         return false;
     }
@@ -474,11 +522,11 @@ async function handleTicketModal(interaction) {
         return true;
     }
 
-    const cooldownDays = await checkTicketCooldown(interaction.user.id, type);
+    const cooldown = await checkTicketCooldown(interaction.user.id, type);
 
-    if (cooldownDays !== null) {
+    if (cooldown !== null) {
         await interaction.reply({
-            content: `⏳ You can only submit one ${ticketTypeLabel(type)} every **${TICKET_COOLDOWN_DAYS} days**. Please wait **${cooldownDays}** day${cooldownDays === 1 ? '' : 's'} before submitting another.`,
+            content: cooldownMessage(type, cooldown),
             flags: MessageFlags.Ephemeral
         });
         return true;
@@ -638,7 +686,35 @@ async function createStaffApplication(interaction) {
     const spamResponse = interaction.fields.getTextInputValue('spam_response').trim();
     const channel = await createTicketChannel(interaction, 'staff', 'Sr Moderator', false);
 
+    await sql`
+        insert into staff_application_review_status (
+            channel_id,
+            guild_id,
+            applicant_discord_id,
+            opened_at,
+            updated_at
+        )
+        values (
+            ${channel.id},
+            ${interaction.guild.id},
+            ${interaction.user.id},
+            now(),
+            now()
+        )
+        on conflict (channel_id) do update
+        set
+            guild_id = excluded.guild_id,
+            applicant_discord_id = excluded.applicant_discord_id,
+            updated_at = now()
+    `;
+
     await channel.send({
+        content:
+            `🔒 **Staff review panel**\n` +
+            `The applicant cannot see this ticket channel.\n\n` +
+            `Sr Mod+ can **Accept** or **Veto** with a required reason. ` +
+            `If this reaches **${STAFF_APPLICATION_REQUIRED_ACCEPTS} accepts** after **24 hours** with **0 vetos**, the admin chat will be notified. ` +
+            `No role is given automatically.`,
         embeds: [
             ticketEmbed('Staff Application', interaction, [
                 {
@@ -663,15 +739,397 @@ async function createStaffApplication(interaction) {
                 }
             ])
         ],
-        components: [
-            new ActionRowBuilder().addComponents(closeButton('staff', interaction.user.id))
-        ],
+        components: staffReviewComponents(interaction.user.id),
         allowedMentions: {
             parse: []
         }
     });
 
     await interaction.editReply('✅ Your staff application was submitted to Sr Mod+.');
+}
+
+function buildStaffReviewModal(action, ownerId, channelId) {
+    const label = action === 'veto'
+        ? 'Why are you vetoing this application?'
+        : 'Why are you accepting this application?';
+
+    return new ModalBuilder()
+        .setCustomId(`${STAFF_REVIEW_MODAL_PREFIX}:${action}:${ownerId}:${channelId}`)
+        .setTitle(action === 'veto' ? 'Veto Staff Application' : 'Accept Staff Application')
+        .addComponents(
+            new ActionRowBuilder().addComponents(
+                modalTextInput('reason', label, TextInputStyle.Paragraph)
+            )
+        );
+}
+
+async function handleStaffReviewButton(interaction) {
+    const [, action, ownerId] = interaction.customId.split(':');
+
+    if (!['accept', 'veto'].includes(action)) {
+        await interaction.reply({
+            content: '❌ Unknown staff application review action.',
+            flags: MessageFlags.Ephemeral
+        });
+        return;
+    }
+
+    if (!memberHasStaffRankAtOrAbove(interaction.member, 'Sr Moderator')) {
+        await interaction.reply({
+            content: '❌ Only Sr Mod+ can review staff applications.',
+            flags: MessageFlags.Ephemeral
+        });
+        return;
+    }
+
+    if (!interaction.channelId) {
+        await interaction.reply({
+            content: '❌ This review button must be used inside the staff application ticket.',
+            flags: MessageFlags.Ephemeral
+        });
+        return;
+    }
+
+    await interaction.showModal(buildStaffReviewModal(action, ownerId, interaction.channelId));
+}
+
+async function fetchStaffApplicationReviewStatus(channelId, db = sql) {
+    const rows = await db`
+        select *
+        from staff_application_review_status
+        where channel_id = ${channelId}
+        limit 1
+    `;
+
+    return rows[0] || null;
+}
+
+async function staffApplicationReviewCounts(channelId, db = sql) {
+    const rows = await db`
+        select
+            count(*) filter (where action = 'accept')::int as accepts,
+            count(*) filter (where action = 'veto')::int as vetos
+        from staff_application_reviews
+        where channel_id = ${channelId}
+    `;
+
+    return {
+        accepts: rows[0]?.accepts || 0,
+        vetos: rows[0]?.vetos || 0
+    };
+}
+
+function staffApplicationReviewReady(status, counts, now = Date.now()) {
+    if (!status || status.approved_notified_at || status.vetoed_at || counts.vetos > 0) {
+        return false;
+    }
+
+    const openedAt = status.opened_at instanceof Date
+        ? status.opened_at.getTime()
+        : new Date(status.opened_at).getTime();
+
+    return counts.accepts >= STAFF_APPLICATION_REQUIRED_ACCEPTS &&
+        Number.isFinite(openedAt) &&
+        now - openedAt >= STAFF_APPLICATION_MIN_REVIEW_MS;
+}
+
+async function findAdminChatChannel(guild) {
+    const configuredId = process.env.ADMIN_CHAT_CHANNEL_ID;
+
+    if (configuredId) {
+        const channel = guild.channels.cache.get(configuredId) ||
+            (await guild.channels.fetch(configuredId).catch(() => null));
+
+        if (channel?.isTextBased?.()) {
+            return channel;
+        }
+
+        console.warn(`ADMIN_CHAT_CHANNEL_ID ${configuredId} was not found for ${guild.name}. Falling back to mod logs.`);
+    }
+
+    return findModLogChannel(guild);
+}
+
+async function notifyStaffApplicationApproval(guild, status, counts, db = sql) {
+    const updatedRows = await db`
+        update staff_application_review_status
+        set
+            approved_notified_at = now(),
+            updated_at = now()
+        where channel_id = ${status.channel_id}
+            and approved_notified_at is null
+            and vetoed_at is null
+        returning *
+    `;
+
+    if (!updatedRows[0]) {
+        return false;
+    }
+
+    const channel = await findAdminChatChannel(guild);
+
+    if (!channel?.isTextBased?.()) {
+        return false;
+    }
+
+    await channel.send({
+        content:
+            `✅ **Staff Application Ready for Manual Review**\n\n` +
+            `<@${status.applicant_discord_id}> has **${counts.accepts} Sr Staff accepts**, the ticket has been open for at least **24 hours**, and there are **0 vetos**.\n\n` +
+            `Ticket: <#${status.channel_id}>\n` +
+            `No role was given automatically — this is ready for the Don/admin team to handle manually.`,
+        allowedMentions: {
+            users: [status.applicant_discord_id],
+            parse: []
+        }
+    });
+
+    return true;
+}
+
+async function maybeNotifyStaffApplicationApproval(guild, channelId, db = sql) {
+    const [status, counts] = await Promise.all([
+        fetchStaffApplicationReviewStatus(channelId, db),
+        staffApplicationReviewCounts(channelId, db)
+    ]);
+
+    if (!staffApplicationReviewReady(status, counts)) {
+        return false;
+    }
+
+    return notifyStaffApplicationApproval(guild, status, counts, db);
+}
+
+async function handleStaffReviewModal(interaction) {
+    const [, action, ownerId, channelId] = interaction.customId.split(':');
+
+    if (!['accept', 'veto'].includes(action)) {
+        await interaction.reply({
+            content: '❌ Unknown staff application review action.',
+            flags: MessageFlags.Ephemeral
+        });
+        return;
+    }
+
+    if (!memberHasStaffRankAtOrAbove(interaction.member, 'Sr Moderator')) {
+        await interaction.reply({
+            content: '❌ Only Sr Mod+ can review staff applications.',
+            flags: MessageFlags.Ephemeral
+        });
+        return;
+    }
+
+    const reason = interaction.fields.getTextInputValue('reason').trim();
+    const status = await fetchStaffApplicationReviewStatus(channelId);
+
+    if (!status) {
+        await interaction.reply({
+            content: '❌ I could not find the staff application review record for this ticket.',
+            flags: MessageFlags.Ephemeral
+        });
+        return;
+    }
+
+    if (ownerId !== status.applicant_discord_id) {
+        await interaction.reply({
+            content: '❌ This review button no longer matches the staff application record.',
+            flags: MessageFlags.Ephemeral
+        });
+        return;
+    }
+
+    const resultRows = await sql.begin(async transaction => {
+        const lockedStatusRows = await transaction`
+            select *
+            from staff_application_review_status
+            where channel_id = ${channelId}
+            for update
+        `;
+        const lockedStatus = lockedStatusRows[0];
+
+        if (!lockedStatus) {
+            return [{
+                ok: false,
+                message: '❌ Staff application review record is missing.'
+            }];
+        }
+
+        const existingRows = await transaction`
+            select action
+            from staff_application_reviews
+            where channel_id = ${channelId}
+                and reviewer_discord_id = ${interaction.user.id}
+            limit 1
+        `;
+        const existing = existingRows[0];
+
+        if (lockedStatus.vetoed_at || existing?.action === 'veto') {
+            return [{
+                ok: false,
+                message: '❌ This application has already been vetoed and cannot be accepted.'
+            }];
+        }
+
+        if (action === 'accept' && existing?.action === 'accept') {
+            return [{
+                ok: false,
+                message: 'You already accepted this staff application.'
+            }];
+        }
+
+        await transaction`
+            insert into staff_application_reviews (
+                guild_id,
+                channel_id,
+                applicant_discord_id,
+                reviewer_discord_id,
+                action,
+                reason,
+                updated_at
+            )
+            values (
+                ${interaction.guild.id},
+                ${channelId},
+                ${lockedStatus.applicant_discord_id},
+                ${interaction.user.id},
+                ${action},
+                ${reason},
+                now()
+            )
+            on conflict (channel_id, reviewer_discord_id) do update
+            set
+                action = excluded.action,
+                reason = excluded.reason,
+                updated_at = now()
+        `;
+
+        if (action === 'veto') {
+            await transaction`
+                update staff_application_review_status
+                set
+                    vetoed_at = coalesce(vetoed_at, now()),
+                    updated_at = now()
+                where channel_id = ${channelId}
+            `;
+        }
+
+        const counts = await staffApplicationReviewCounts(channelId, transaction);
+        const remainingAccepts = Math.max(0, STAFF_APPLICATION_REQUIRED_ACCEPTS - counts.accepts);
+
+        return [{
+            ok: true,
+            status: lockedStatus,
+            counts,
+            remainingAccepts
+        }];
+    });
+    const result = resultRows[0];
+
+    if (!result?.ok) {
+        await interaction.reply({
+            content: result?.message || '❌ Staff application review could not be recorded.',
+            flags: MessageFlags.Ephemeral
+        });
+        return;
+    }
+
+    await postModLog(interaction.guild, 'Staff Application Review', [
+        {
+            name: 'Applicant',
+            value: `<@${result.status.applicant_discord_id}> (${result.status.applicant_discord_id})`
+        },
+        {
+            name: 'Reviewer',
+            value: formatUser(interaction.user)
+        },
+        {
+            name: 'Action',
+            value: action === 'veto' ? 'Veto' : 'Accept'
+        },
+        {
+            name: 'Reason',
+            value: reason
+        },
+        {
+            name: 'Remaining Required Accepts',
+            value: String(result.remainingAccepts)
+        },
+        {
+            name: 'Vetos',
+            value: String(result.counts.vetos)
+        },
+        {
+            name: 'Ticket',
+            value: `<#${channelId}> (${channelId})`
+        }
+    ]).catch(error => {
+        console.error('Could not log staff application review:');
+        console.error(error);
+    });
+
+    const waitLine = result.counts.accepts >= STAFF_APPLICATION_REQUIRED_ACCEPTS && result.counts.vetos === 0
+        ? '\nIf the ticket has not been open for 24 hours yet, the admin notification will be sent automatically after the 24-hour mark.'
+        : '';
+
+    await interaction.reply({
+        content:
+            `✅ Review recorded: **${action === 'veto' ? 'Veto' : 'Accept'}**.\n` +
+            `Accepts: **${result.counts.accepts}/${STAFF_APPLICATION_REQUIRED_ACCEPTS}**\n` +
+            `Vetos: **${result.counts.vetos}**\n` +
+            `Remaining required accepts: **${result.remainingAccepts}**${waitLine}`,
+        flags: MessageFlags.Ephemeral
+    });
+
+    await interaction.channel?.send({
+        content:
+            `📝 <@${interaction.user.id}> recorded a staff application **${action === 'veto' ? 'veto' : 'accept'}**.\n` +
+            `Accepts: **${result.counts.accepts}/${STAFF_APPLICATION_REQUIRED_ACCEPTS}** | Vetos: **${result.counts.vetos}** | Remaining accepts: **${result.remainingAccepts}**`,
+        allowedMentions: {
+            users: [interaction.user.id],
+            parse: []
+        }
+    }).catch(() => null);
+
+    await maybeNotifyStaffApplicationApproval(interaction.guild, channelId);
+}
+
+async function checkPendingStaffApplicationApprovalsForGuild(guild, db = sql) {
+    const rows = await db`
+        select status.*
+        from staff_application_review_status status
+        where status.guild_id = ${guild.id}
+            and status.approved_notified_at is null
+            and status.vetoed_at is null
+            and status.opened_at <= now() - interval '24 hours'
+            and (
+                select count(*)::int
+                from staff_application_reviews review
+                where review.channel_id = status.channel_id
+                    and review.action = 'accept'
+            ) >= ${STAFF_APPLICATION_REQUIRED_ACCEPTS}
+            and not exists (
+                select 1
+                from staff_application_reviews review
+                where review.channel_id = status.channel_id
+                    and review.action = 'veto'
+            )
+        order by status.opened_at asc
+        limit 25
+    `;
+    let notified = 0;
+
+    for (const status of rows) {
+        const counts = await staffApplicationReviewCounts(status.channel_id, db);
+
+        if (await notifyStaffApplicationApproval(guild, status, counts, db)) {
+            notified++;
+        }
+    }
+
+    return {
+        checked: rows.length,
+        notified
+    };
 }
 
 async function handleTicketClose(interaction) {
@@ -730,6 +1188,7 @@ async function handleTicketClose(interaction) {
 }
 
 module.exports = {
+    checkPendingStaffApplicationApprovalsForGuild,
     ensureTicketPanel,
     handleTicketButton,
     handleTicketModal,

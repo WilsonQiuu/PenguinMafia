@@ -26,11 +26,12 @@ const {
     payoutMinecraftTarget
 } = require('./commissionPayments.js');
 const {
-    formatEasternHourRange
+    formatEasternDate
 } = require('./time.js');
 
-const DEFAULT_HOURLY_RECRUIT_REWARD_AMOUNT = '2m';
-const DEFAULT_HOURLY_RECRUIT_BALANCE_RESERVE = '48m';
+const DAILY_RECRUIT_REWARD_TYPE = 'daily';
+const DEFAULT_DAILY_RECRUIT_REWARD_PRIZES = ['30m', '20m', '10m'];
+const DEFAULT_DAILY_RECRUIT_BALANCE_RESERVE = '60m';
 const TERMINAL_HOURLY_REWARD_PAYOUT_STATUSES = [
     'paid',
     'credited',
@@ -41,12 +42,21 @@ const TERMINAL_HOURLY_REWARD_PAYOUT_STATUSES = [
 ];
 const activeHourlyRewardPayoutProcessors = new Set();
 
-function hourlyRecruitRewardAmount() {
-    return parseDonationAmount(process.env.HOURLY_RECRUIT_REWARD_AMOUNT || DEFAULT_HOURLY_RECRUIT_REWARD_AMOUNT);
+function dailyRecruitRewardPrizeAmounts() {
+    const configured = process.env.DAILY_RECRUIT_REWARD_PRIZES;
+    const prizeTexts = configured
+        ? configured.split(',').map(value => value.trim()).filter(Boolean)
+        : DEFAULT_DAILY_RECRUIT_REWARD_PRIZES;
+
+    return prizeTexts.slice(0, 3).map(parseDonationAmount);
 }
 
-function hourlyRecruitBalanceReserveAmount() {
-    return parseDonationAmount(process.env.HOURLY_RECRUIT_BALANCE_RESERVE || DEFAULT_HOURLY_RECRUIT_BALANCE_RESERVE);
+function dailyRecruitRewardPrizeAmount(placement) {
+    return dailyRecruitRewardPrizeAmounts()[placement - 1] || 0n;
+}
+
+function dailyRecruitBalanceReserveAmount() {
+    return parseDonationAmount(process.env.DAILY_RECRUIT_BALANCE_RESERVE || DEFAULT_DAILY_RECRUIT_BALANCE_RESERVE);
 }
 
 function jsonb(value) {
@@ -193,7 +203,9 @@ function hourlyRewardSettlementLogDetails(reward, payoutResult, results, paidTot
 
     return {
         Reward: String(reward.id),
-        Hour: new Date(reward.reward_hour).toISOString(),
+        Type: reward.reward_type || 'daily',
+        Day: formatEasternDate(reward.reward_hour),
+        Placement: String(reward.placement || 1),
         Winner: payoutResult?.player?.discord_id
             ? `<@${payoutResult.player.discord_id}>`
             : playerName(payoutResult?.player || {}, 'Unknown winner'),
@@ -207,12 +219,12 @@ function hourlyRewardSettlementLogDetails(reward, payoutResult, results, paidTot
     };
 }
 
-async function fetchPreviousHourTopRecruiter(db = sql) {
+async function fetchPreviousDayTopRecruiters(db = sql) {
     const rows = await db`
-        with hour_window as (
+        with day_window as (
             select
-                date_trunc('hour', now()) - interval '1 hour' as started_at,
-                date_trunc('hour', now()) as ended_at
+                (date_trunc('day', now() at time zone 'America/Toronto') at time zone 'America/Toronto') - interval '1 day' as started_at,
+                (date_trunc('day', now() at time zone 'America/Toronto') at time zone 'America/Toronto') as ended_at
         ),
         recruiter_totals as (
             select
@@ -222,11 +234,11 @@ async function fetchPreviousHourTopRecruiter(db = sql) {
                 recruiter.minecraft_ign,
                 count(*)::int as recruit_count
             from recruit_history history
-            cross join hour_window
+            cross join day_window
             left join players recruiter
                 on recruiter.discord_id = history.recruiter_discord_id
-            where history.recruited_at >= hour_window.started_at
-                and history.recruited_at < hour_window.ended_at
+            where history.recruited_at >= day_window.started_at
+                and history.recruited_at < day_window.ended_at
                 and history.counts_for_hourly = true
             group by
                 history.recruiter_discord_id,
@@ -240,10 +252,17 @@ async function fetchPreviousHourTopRecruiter(db = sql) {
             recruiter_totals.discord_display_name,
             recruiter_totals.minecraft_ign,
             recruiter_totals.recruit_count,
-            hour_window.started_at as reward_hour,
-            hour_window.ended_at as reward_ended_at
+            day_window.started_at as reward_hour,
+            day_window.ended_at as reward_ended_at,
+            (row_number() over (
+                order by
+                    recruiter_totals.recruit_count desc,
+                    daily_progress.reached_at asc nulls last,
+                    recruiter_totals.discord_display_name asc nulls last,
+                    recruiter_totals.discord_username asc nulls last
+            ))::int as placement
         from recruiter_totals
-        cross join hour_window
+        cross join day_window
         left join lateral (
             select ranked.recruited_at as reached_at
             from (
@@ -254,22 +273,22 @@ async function fetchPreviousHourTopRecruiter(db = sql) {
                     ) as recruit_number
                 from recruit_history history
                 where history.recruiter_discord_id = recruiter_totals.discord_id
-                    and history.recruited_at >= hour_window.started_at
-                    and history.recruited_at < hour_window.ended_at
+                    and history.recruited_at >= day_window.started_at
+                    and history.recruited_at < day_window.ended_at
                     and history.counts_for_hourly = true
             ) ranked
             where ranked.recruit_number = recruiter_totals.recruit_count
             limit 1
-        ) hourly_progress on true
+        ) daily_progress on true
         order by
             recruiter_totals.recruit_count desc,
-            hourly_progress.reached_at asc nulls last,
+            daily_progress.reached_at asc nulls last,
             recruiter_totals.discord_display_name asc nulls last,
             recruiter_totals.discord_username asc nulls last
-        limit 1
+        limit 3
     `;
 
-    return rows[0] || null;
+    return rows;
 }
 
 async function fetchGiveawayWinnerChannel(guild) {
@@ -283,7 +302,7 @@ async function fetchGiveawayWinnerChannel(guild) {
     return channel;
 }
 
-async function postHourlyRewardAnnouncement(guild, reward, winner, payoutResult) {
+async function postDailyRewardAnnouncement(guild, reward, winner, payoutResult) {
     const channel = await fetchGiveawayWinnerChannel(guild);
 
     if (!channel) {
@@ -291,16 +310,18 @@ async function postHourlyRewardAnnouncement(guild, reward, winner, payoutResult)
     }
 
     const prizeAmount = BigInt(reward.prize_amount);
+    const placement = Number(reward.placement || winner.placement || 1);
+    const placementNames = ['1st', '2nd', '3rd'];
     const payoutLines = (payoutResult.payouts || [])
         .map((payout, index) => formatPayoutLine(payout, index, {
             includeDiscordMention: true
         }));
     let content =
-        `🏆🐧 **Hourly Top Recruiter Reward** 🐧🏆\n\n` +
-        `<@${winner.discord_id}> is the **top recruiter this hour** with **${winner.recruit_count}** direct recruit${winner.recruit_count === 1 ? '' : 's'}.\n` +
-        `EDT Hour: **${formatEasternHourRange(reward.reward_hour)}**\n` +
+        `🏆🐧 **Daily Recruit Leaderboard Reward** 🐧🏆\n\n` +
+        `<@${winner.discord_id}> placed **${placementNames[placement - 1] || `${placement}th`}** yesterday with **${winner.recruit_count}** direct recruit${winner.recruit_count === 1 ? '' : 's'}.\n` +
+        `Eastern Day: **${formatEasternDate(reward.reward_hour)}**\n` +
         `Prize Pool: **${formatDonationAmount(prizeAmount)}**\n\n` +
-        `This pays out like \`/pay\`: the top recruiter receives their rank commission, and the rest follows their recruiter chain.\n\n` +
+        `This pays out like \`/pay\`: the winner receives their rank commission, and the rest follows their recruiter chain.\n\n` +
         `**Payouts**\n${payoutLines.join('\n')}`;
 
     if (content.length > 1900) {
@@ -316,14 +337,16 @@ async function postHourlyRewardAnnouncement(guild, reward, winner, payoutResult)
     });
 }
 
-async function enqueueHourlyRecruitReward(guild, winner, payoutResult, db = sql) {
-    const prizeAmount = hourlyRecruitRewardAmount();
+async function enqueueDailyRecruitReward(guild, winner, prizeAmount, payoutResult, db = sql) {
+    const placement = Number(winner.placement || 1);
 
     return db.begin(async tx => {
         const rewardRows = await tx`
             insert into hourly_recruit_rewards (
                 guild_id,
+                reward_type,
                 reward_hour,
+                placement,
                 winner_discord_id,
                 recruit_count,
                 prize_amount,
@@ -333,7 +356,9 @@ async function enqueueHourlyRecruitReward(guild, winner, payoutResult, db = sql)
             )
             values (
                 ${guild.id},
+                ${DAILY_RECRUIT_REWARD_TYPE},
                 ${winner.reward_hour},
+                ${placement},
                 ${winner.discord_id},
                 ${winner.recruit_count},
                 ${prizeAmount.toString()}::bigint,
@@ -341,7 +366,7 @@ async function enqueueHourlyRecruitReward(guild, winner, payoutResult, db = sql)
                 'pending',
                 now()
             )
-            on conflict (guild_id, reward_hour) do nothing
+            on conflict (guild_id, reward_type, reward_hour, placement) do nothing
             returning *
         `;
 
@@ -397,66 +422,79 @@ async function enqueueHourlyRecruitReward(guild, winner, payoutResult, db = sql)
     });
 }
 
-async function ensureHourlyRecruitRewardForGuild(guild, db = sql) {
-    const winner = await fetchPreviousHourTopRecruiter(db);
+async function ensureDailyRecruitRewardsForGuild(guild, db = sql) {
+    const winners = await fetchPreviousDayTopRecruiters(db);
 
-    if (!winner) {
+    if (winners.length === 0) {
         return {
-            status: 'no_winner'
+            status: 'no_winners'
         };
     }
 
-    const prizeAmount = hourlyRecruitRewardAmount();
-    const payoutResult = await calculatePayout(
-        winner.discord_id,
-        prizeAmount,
-        process.env.DON_DISCORD_ID,
-        db
-    );
+    const createdRewards = [];
+    const prizeAmounts = dailyRecruitRewardPrizeAmounts();
 
-    if (!payoutResult) {
-        return {
-            status: 'missing_winner'
-        };
+    for (const winner of winners) {
+        const prizeAmount = prizeAmounts[Number(winner.placement || 1) - 1];
+
+        if (!prizeAmount || prizeAmount <= 0n) {
+            continue;
+        }
+
+        const payoutResult = await calculatePayout(
+            winner.discord_id,
+            prizeAmount,
+            process.env.DON_DISCORD_ID,
+            db
+        );
+
+        if (!payoutResult) {
+            continue;
+        }
+
+        const enqueueResult = await enqueueDailyRecruitReward(guild, winner, prizeAmount, payoutResult, db);
+
+        if (!enqueueResult.created) {
+            continue;
+        }
+
+        const message = await postDailyRewardAnnouncement(guild, enqueueResult.reward, winner, payoutResult);
+
+        if (message) {
+            await db`
+                update hourly_recruit_rewards
+                set
+                    channel_id = ${message.channel.id},
+                    message_id = ${message.id},
+                    updated_at = now()
+                where id = ${enqueueResult.reward.id}
+            `;
+        }
+
+        emitMinecraftEvent(
+            'Daily Recruit Reward Created',
+            `${playerName(winner)} placed #${winner.placement} on the daily recruit leaderboard.`,
+            'success',
+            {
+                Placement: String(winner.placement),
+                Winner: `<@${winner.discord_id}>`,
+                Recruits: String(winner.recruit_count),
+                'Prize pool': formatDonationAmount(prizeAmount),
+                Channel: message?.url || `<#${GIVEAWAY_WINNER_CHANNEL_ID}>`
+            }
+        );
+
+        createdRewards.push(enqueueResult.reward);
     }
 
-    const enqueueResult = await enqueueHourlyRecruitReward(guild, winner, payoutResult, db);
-
-    if (!enqueueResult.created) {
-        return {
+    return createdRewards.length > 0
+        ? {
+            status: 'created',
+            rewards: createdRewards
+        }
+        : {
             status: 'already_exists'
         };
-    }
-
-    const message = await postHourlyRewardAnnouncement(guild, enqueueResult.reward, winner, payoutResult);
-
-    if (message) {
-        await db`
-            update hourly_recruit_rewards
-            set
-                channel_id = ${message.channel.id},
-                message_id = ${message.id},
-                updated_at = now()
-            where id = ${enqueueResult.reward.id}
-        `;
-    }
-
-    emitMinecraftEvent(
-        'Hourly Recruit Reward Created',
-        `${playerName(winner)} was the top recruiter for the hour.`,
-        'success',
-        {
-            Winner: `<@${winner.discord_id}>`,
-            Recruits: String(winner.recruit_count),
-            'Prize pool': formatDonationAmount(prizeAmount),
-            Channel: message?.url || `<#${GIVEAWAY_WINNER_CHANNEL_ID}>`
-        }
-    );
-
-    return {
-        status: 'created',
-        reward: enqueueResult.reward
-    };
 }
 
 async function claimNextHourlyRewardPayoutJob(guildId, db = sql) {
@@ -553,7 +591,7 @@ async function markHourlyRewardPayoutJobCredited(job, reason, db = sql) {
             tx,
             {
                 suppressCommissionLog: true,
-                'Hourly reward': String(lockedJob.reward_id)
+                'Daily recruit reward': String(lockedJob.reward_id)
             }
         );
         const status = credited.status === 'credited' ? 'credited' : credited.status;
@@ -678,6 +716,7 @@ async function sendHourlyRewardPayoutNotification(guild, job, db = sql) {
         select
             job.*,
             reward.prize_amount,
+            reward.placement,
             reward.recruit_count,
             winner.discord_username as winner_username,
             winner.discord_display_name as winner_display_name,
@@ -710,14 +749,14 @@ async function sendHourlyRewardPayoutNotification(guild, job, db = sql) {
     );
     const verb = record.status === 'paid' ? 'received' : 'earned';
     const sourceLine = record.is_winner
-        ? `from being the **top recruiter for the hour** with **${record.recruit_count}** recruit${record.recruit_count === 1 ? '' : 's'}.`
-        : `because your recruit **${winnerName}** was the **top recruiter for the hour** with **${record.recruit_count}** recruit${record.recruit_count === 1 ? '' : 's'}.`;
+        ? `from placing **#${record.placement || 1}** on the **daily recruit leaderboard** with **${record.recruit_count}** recruit${record.recruit_count === 1 ? '' : 's'}.`
+        : `because your recruit **${winnerName}** placed **#${record.placement || 1}** on the **daily recruit leaderboard** with **${record.recruit_count}** recruit${record.recruit_count === 1 ? '' : 's'}.`;
     const creditedLine = record.status === 'credited'
         ? `\n\nIt was added to your unpaid commissions because ${record.reason || record.error || 'the Minecraft payment could not be sent'}.`
         : '';
     const message =
         `You ${verb} **${formatCents(amountCents)}** ${sourceLine}\n\n` +
-        `Hourly prize pool: **${formatDonationAmount(record.prize_amount)}**.` +
+        `Daily prize pool: **${formatDonationAmount(record.prize_amount)}**.` +
         `${creditedLine}\n\n` +
         'Use `/payoutnotifications off` if you do not want these DMs.';
 
@@ -731,7 +770,7 @@ async function sendHourlyRewardPayoutNotification(guild, job, db = sql) {
                 parse: []
             }
         }).catch(error => {
-            console.log(`Could not DM hourly reward notification to ${record.recipient_discord_id}: ${error.message}`);
+            console.log(`Could not DM daily recruit reward notification to ${record.recipient_discord_id}: ${error.message}`);
         });
     }
 
@@ -764,7 +803,7 @@ async function processHourlyRewardPayoutJob(guild, job, db = sql) {
     const amount = formatMinecraftPaymentAmountFromCents(amountCents);
     const context = {
         actorTag: 'Commission payout',
-        source: `Hourly recruit reward ${job.reward_id}`,
+        source: `Daily recruit reward ${job.reward_id}`,
         suppressPaymentLog: true,
         actorId: job.recipient_discord_id,
         onPaymentStage: (stage, details) => updateHourlyRewardPayoutJobStage(job.id, stage, details, db)
@@ -825,7 +864,7 @@ async function recoverStaleHourlyRewardPayoutJobs(guild, db = sql) {
 
         await markHourlyRewardPayoutJobManualReview(
             job,
-            'Recovered after restart after the payment command was sent. Manual review is required to avoid a duplicate hourly reward payment.',
+            'Recovered after restart after the payment command was sent. Manual review is required to avoid a duplicate daily recruit reward payment.',
             db
         );
     }
@@ -864,8 +903,8 @@ async function finalizeCompletedHourlyRecruitRewards(guild, db = sql) {
             results.some(result => ['credit_failed', 'failed', 'manual_review'].includes(result.status));
 
         emitMinecraftEvent(
-            'Hourly Recruit Reward Settlement Finished',
-            'Hourly recruiter reward payout settlement finished.',
+            'Daily Recruit Reward Settlement Finished',
+            'Daily recruiter reward payout settlement finished.',
             hasPayoutIssue ? 'warning' : 'success',
             hourlyRewardSettlementLogDetails(
                 reward,
@@ -930,12 +969,12 @@ async function processPendingHourlyRecruitRewardPayoutsForGuild(guild, db = sql)
     }
 }
 
-async function claimHourlyBalanceCheck(guildId, db = sql) {
-    const hourRows = await db`
-        select date_trunc('hour', now()) as checked_hour
+async function claimDailyBalanceCheck(guildId, db = sql) {
+    const dayRows = await db`
+        select (date_trunc('day', now() at time zone 'America/Toronto') at time zone 'America/Toronto') as checked_day
     `;
-    const checkedHour = new Date(hourRows[0].checked_hour).toISOString();
-    const stateKey = `hourly_recruit_balance_check:${guildId}:${checkedHour}`;
+    const checkedDay = new Date(dayRows[0].checked_day).toISOString();
+    const stateKey = `daily_recruit_balance_check:${guildId}:${checkedDay}`;
     const rows = await db`
         insert into bot_state (
             key,
@@ -952,8 +991,8 @@ async function claimHourlyBalanceCheck(guildId, db = sql) {
     return rows.length > 0;
 }
 
-async function checkHourlyRecruitRewardBalanceForGuild(guild, db = sql) {
-    const shouldCheck = await claimHourlyBalanceCheck(guild.id, db);
+async function checkDailyRecruitRewardBalanceForGuild(guild, db = sql) {
+    const shouldCheck = await claimDailyBalanceCheck(guild.id, db);
 
     if (!shouldCheck) {
         return {
@@ -961,11 +1000,11 @@ async function checkHourlyRecruitRewardBalanceForGuild(guild, db = sql) {
         };
     }
 
-    const reserveAmount = hourlyRecruitBalanceReserveAmount();
+    const reserveAmount = dailyRecruitBalanceReserveAmount();
     const activeGiveawayAmount = await activeGiveawayTotalAmount(guild.id, db);
     const context = {
-        actorTag: 'Hourly reward balance check',
-        source: 'Hourly recruit reward reserve check'
+        actorTag: 'Daily reward balance check',
+        source: 'Daily recruit reward reserve check'
     };
 
     try {
@@ -988,11 +1027,11 @@ async function checkHourlyRecruitRewardBalanceForGuild(guild, db = sql) {
             `Bot balance: ${formatDonationAmount(balance.amount)}\n` +
             `Active giveaway money reserved: ${formatDonationAmount(activeGiveawayAmount)}\n` +
             `Available after giveaways: ${formatDonationAmount(availableAfterGiveaways)}\n` +
-            `Hourly reward reserve target: ${formatDonationAmount(reserveAmount)}`;
+            `Daily reward reserve target: ${formatDonationAmount(reserveAmount)}`;
 
         emitMinecraftEvent(
-            'Low Hourly Reward Balance',
-            'Bot balance is below 24 hours of hourly recruiter rewards after active giveaway money is reserved.',
+            'Low Daily Reward Balance',
+            'Bot balance is below the daily recruit reward reserve after active giveaway money is reserved.',
             'warning',
             {
                 'Bot balance': formatDonationAmount(balance.amount),
@@ -1005,7 +1044,7 @@ async function checkHourlyRecruitRewardBalanceForGuild(guild, db = sql) {
         await sendTwilioSms(message).catch(error => {
             emitMinecraftEvent(
                 'Low Balance SMS Failed',
-                'Could not send the low hourly reward balance SMS.',
+                'Could not send the low daily reward balance SMS.',
                 'error',
                 {
                     Error: error.message
@@ -1022,8 +1061,8 @@ async function checkHourlyRecruitRewardBalanceForGuild(guild, db = sql) {
         };
     } catch (error) {
         emitMinecraftEvent(
-            'Hourly Reward Balance Check Failed',
-            'Could not check the Minecraft bot balance for hourly recruiter rewards.',
+            'Daily Reward Balance Check Failed',
+            'Could not check the Minecraft bot balance for daily recruiter rewards.',
             'warning',
             {
                 Error: error.message
@@ -1038,10 +1077,15 @@ async function checkHourlyRecruitRewardBalanceForGuild(guild, db = sql) {
     }
 }
 
+async function processPendingDailyRecruitRewardPayoutsForGuild(guild, db = sql) {
+    return processPendingHourlyRecruitRewardPayoutsForGuild(guild, db);
+}
+
 module.exports = {
-    checkHourlyRecruitRewardBalanceForGuild,
-    ensureHourlyRecruitRewardForGuild,
-    hourlyRecruitBalanceReserveAmount,
-    hourlyRecruitRewardAmount,
+    checkDailyRecruitRewardBalanceForGuild,
+    dailyRecruitBalanceReserveAmount,
+    dailyRecruitRewardPrizeAmounts,
+    ensureDailyRecruitRewardsForGuild,
+    processPendingDailyRecruitRewardPayoutsForGuild,
     processPendingHourlyRecruitRewardPayoutsForGuild
 };
