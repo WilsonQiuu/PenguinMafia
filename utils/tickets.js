@@ -28,6 +28,7 @@ const {
 
 const TICKET_PANEL_CHANNEL_ID = process.env.TICKET_PANEL_CHANNEL_ID || '1521278851043557578';
 const TICKET_CATEGORY_ID = process.env.TICKET_CATEGORY_ID || '1521277985636749413';
+const ADMIN_CHAT_CHANNEL_ID = process.env.ADMIN_CHAT_CHANNEL_ID || '1512683847148507166';
 const TICKET_PANEL_MARKER = 'Penguin Mafia Tickets';
 const TICKET_BUTTON_PREFIX = 'ticket_open';
 const TICKET_MODAL_PREFIX = 'ticket_modal';
@@ -834,7 +835,7 @@ function staffApplicationReviewReady(status, counts, now = Date.now()) {
 }
 
 async function findAdminChatChannel(guild) {
-    const configuredId = process.env.ADMIN_CHAT_CHANNEL_ID;
+    const configuredId = ADMIN_CHAT_CHANNEL_ID;
 
     if (configuredId) {
         const channel = guild.channels.cache.get(configuredId) ||
