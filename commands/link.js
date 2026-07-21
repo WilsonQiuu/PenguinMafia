@@ -117,6 +117,11 @@ module.exports = {
                 interaction.user.globalName ||
                 interaction.user.username;
 
+            const beforeRows = await sql`
+                select minecraft_ign from players where discord_id = ${interaction.user.id} limit 1
+            `;
+            const wasFirstLink = !beforeRows[0]?.minecraft_ign;
+
             await sql`
                 insert into players (
                     discord_id,
@@ -150,6 +155,34 @@ module.exports = {
                     account_link_reminder_sent_at = null,
                     updated_at = now()
             `;
+
+            let welcomeLine = '';
+
+            if (wasFirstLink) {
+                try {
+                    await ensureMinecraftBotConnected({
+                        guild: interaction.guild,
+                        source: 'Welcome bonus'
+                    });
+
+                    await payPlayerAfterBusyWait(minecraftIGN, '1000', {
+                        guild: interaction.guild,
+                        source: `Welcome bonus for ${interaction.user.id}`,
+                        actorId: interaction.user.id,
+                        suppressPaymentLog: true
+                    });
+
+                    await interaction.user.send(
+                        `🐧 **Welcome to the Penguin Mafia!**\n\n` +
+                        `You've received a **1,000** welcome bonus for linking your account!\n\n` +
+                        `Start recruiting to climb the ranks and earn more rewards. Use \`/graph\` to see your tree.`
+                    ).catch(() => {});
+
+                    welcomeLine = `\n🎉 Welcome bonus of **1,000** has been sent to your Minecraft account!`;
+                } catch (bonusError) {
+                    console.log(`Welcome bonus failed for ${interaction.user.tag}: ${bonusError.message}`);
+                }
+            }
 
             const commRows = await sql`
                 select unpaid_commissions from players
@@ -199,7 +232,7 @@ module.exports = {
                     `✅ **Minecraft IGN linked successfully!**\n\n` +
                     `Discord: ${interaction.user}\n` +
                     `Minecraft IGN: **${minecraftIGN}**\n` +
-                    `Edition: **${editionLabel}**${payoutLine}\n\n` +
+                    `Edition: **${editionLabel}**${welcomeLine}${payoutLine}\n\n` +
                     `You can run \`/penguinlink\` again if this was wrong.`,
                 components: []
             });
