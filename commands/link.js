@@ -118,9 +118,12 @@ module.exports = {
                 interaction.user.username;
 
             const beforeRows = await sql`
-                select minecraft_ign, welcome_bonus_paid from players where discord_id = ${interaction.user.id} limit 1
+                select minecraft_ign from players where discord_id = ${interaction.user.id} limit 1
             `;
-            const wasFirstLink = !beforeRows[0]?.minecraft_ign && !beforeRows[0]?.welcome_bonus_paid;
+            const bonusRows = await sql`
+                select value from bot_state where key = 'welcome_bonus_paid:' || ${interaction.user.id} limit 1
+            `;
+            const wasFirstLink = !beforeRows[0]?.minecraft_ign && !bonusRows[0]?.value;
 
             await sql`
                 insert into players (
@@ -132,8 +135,7 @@ module.exports = {
                     parent_discord_id,
                     claims_available,
                     rank_name,
-                    status,
-                    welcome_bonus_paid
+                    status
                 )
                 values (
                     ${interaction.user.id},
@@ -144,8 +146,7 @@ module.exports = {
                     null,
                     0,
                     ${DEFAULT_RANK_NAME},
-                    'active',
-                    false
+                    'active'
                 )
                 on conflict (discord_id) do update
                 set
@@ -155,10 +156,6 @@ module.exports = {
                     minecraft_edition = excluded.minecraft_edition,
                     account_link_reminders_disabled = false,
                     account_link_reminder_sent_at = null,
-                    welcome_bonus_paid = case
-                        when players.welcome_bonus_paid then true
-                        else excluded.welcome_bonus_paid
-                    end,
                     updated_at = now()
             `;
 
@@ -179,9 +176,9 @@ module.exports = {
                     });
 
                     await sql`
-                        update players
-                        set welcome_bonus_paid = true, updated_at = now()
-                        where discord_id = ${interaction.user.id}
+                        insert into bot_state (key, value)
+                        values ('welcome_bonus_paid:' || ${interaction.user.id}, 'true')
+                        on conflict (key) do nothing
                     `;
 
                     await interaction.user.send(

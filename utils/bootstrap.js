@@ -1178,11 +1178,6 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
-        alter table players
-        add column if not exists welcome_bonus_paid boolean not null default false
-    `;
-
-    await sql`
         update players
         set captain_direct_recruits_count = direct_recruits_count
         where captain_direct_recruits_count <> direct_recruits_count
