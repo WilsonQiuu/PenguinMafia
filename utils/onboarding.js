@@ -32,6 +32,10 @@ const {
     setMemberNicknameToIgn
 } = require('./nicknames.js');
 const {
+    ensureMinecraftBotConnected,
+    payPlayerAfterBusyWait
+} = require('./commissionPayments.js');
+const {
     donDiscordIds
 } = require('./staff.js');
 
@@ -1210,6 +1214,42 @@ async function handleWelcomeModal(interaction) {
 
     if (!isTest) {
         console.log(`Welcome IGN link for ${interaction.user.tag}: ${minecraftIgn}${minecraftEdition ? ` (${minecraftEditionLabel(minecraftEdition)})` : ''}. Join-all=${isJoinAllModal ? 'yes' : 'no'}.`);
+    }
+
+    if (!isTest) {
+        const bonusRows = await sql`
+            select value from bot_state where key = 'welcome_bonus_paid:' || ${interaction.user.id} limit 1
+        `;
+
+        if (!bonusRows[0]?.value) {
+            try {
+                await ensureMinecraftBotConnected({
+                    guild: interaction.guild,
+                    source: 'Welcome bonus'
+                });
+
+                await payPlayerAfterBusyWait(minecraftIgn, '1000', {
+                    guild: interaction.guild,
+                    source: `Welcome bonus for ${interaction.user.id}`,
+                    actorId: interaction.user.id,
+                    suppressPaymentLog: true
+                });
+
+                await sql`
+                    insert into bot_state (key, value)
+                    values ('welcome_bonus_paid:' || ${interaction.user.id}, 'true')
+                    on conflict (key) do nothing
+                `;
+
+                await interaction.user.send(
+                    `🐧 **Welcome to the Penguin Mafia!**\n\n` +
+                    `You've received a **1,000** welcome bonus for linking your account!\n\n` +
+                    `Start recruiting to climb the ranks and earn more rewards. Use \`/graph\` to see your tree.`
+                ).catch(() => {});
+            } catch (bonusError) {
+                console.log(`Welcome bonus failed during onboarding for ${interaction.user.tag}: ${bonusError.message}`);
+            }
+        }
     }
 
     await finishOnboardingInteraction(interaction, {
