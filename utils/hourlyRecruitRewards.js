@@ -30,7 +30,7 @@ const {
 } = require('./time.js');
 
 const DAILY_RECRUIT_REWARD_TYPE = 'daily';
-const DEFAULT_DAILY_RECRUIT_REWARD_PRIZES = ['30m', '20m', '10m'];
+const DEFAULT_DAILY_RECRUIT_REWARD_PRIZES = ['15m', '10m', '5m'];
 const DEFAULT_DAILY_RECRUIT_BALANCE_RESERVE = '60m';
 const TERMINAL_HOURLY_REWARD_PAYOUT_STATUSES = [
     'paid',

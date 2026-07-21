@@ -15,6 +15,11 @@ const {
     cleanupWelcomeChannelsForMissingMembers,
     remindIncompleteWelcomeMembers
 } = require('./onboarding.js');
+const {
+    payPlayerAfterBusyWait,
+    ensureMinecraftBotConnected,
+    formatMinecraftPaymentAmountFromCents
+} = require('./commissionPayments.js');
 
 const EASTERN_TIME_ZONE = 'America/Toronto';
 const runningGuildSchedules = new Set();
@@ -225,6 +230,38 @@ async function runFridayNoonScheduleForGuild(guild, db = sql, now = new Date()) 
             });
             await updateWeeklyRecruitsLeaderboardForGuild(guild, db);
             await updateTeamWeeklyRecruitsLeaderboardForGuild(guild, db);
+
+            const WEEKLY_PRIZES = ['30m', '20m', '10m'];
+            const prevRows = await db`
+                select value from bot_state
+                where key = 'previous_weekly_recruits_top_three'
+                limit 1
+            `;
+            const topThree = prevRows[0]?.value ? JSON.parse(prevRows[0].value) : [];
+
+            for (let i = 0; i < Math.min(topThree.length, 3); i++) {
+                const winner = topThree[i];
+                const prizeAmount = WEEKLY_PRIZES[i];
+
+                if (!winner.minecraft_ign) continue;
+
+                try {
+                    await ensureMinecraftBotConnected({
+                        guild,
+                        source: `Weekly recruit prize for ${winner.minecraft_ign}`
+                    });
+                    await payPlayerAfterBusyWait(winner.minecraft_ign, prizeAmount, {
+                        guild,
+                        source: `Weekly top ${i + 1} prize`,
+                        actorId: winner.discord_id,
+                        suppressPaymentLog: true
+                    });
+                    console.log(`Weekly prize paid: ${prizeAmount} to ${winner.minecraft_ign} (place ${i + 1})`);
+                } catch (error) {
+                    console.error(`Weekly prize failed for ${winner.minecraft_ign}: ${error.message}`);
+                }
+            }
+
             weeklyReset = true;
         }
 
