@@ -118,9 +118,9 @@ module.exports = {
                 interaction.user.username;
 
             const beforeRows = await sql`
-                select minecraft_ign from players where discord_id = ${interaction.user.id} limit 1
+                select minecraft_ign, welcome_bonus_paid from players where discord_id = ${interaction.user.id} limit 1
             `;
-            const wasFirstLink = !beforeRows[0]?.minecraft_ign;
+            const wasFirstLink = !beforeRows[0]?.minecraft_ign && !beforeRows[0]?.welcome_bonus_paid;
 
             await sql`
                 insert into players (
@@ -132,7 +132,8 @@ module.exports = {
                     parent_discord_id,
                     claims_available,
                     rank_name,
-                    status
+                    status,
+                    welcome_bonus_paid
                 )
                 values (
                     ${interaction.user.id},
@@ -143,7 +144,8 @@ module.exports = {
                     null,
                     0,
                     ${DEFAULT_RANK_NAME},
-                    'active'
+                    'active',
+                    false
                 )
                 on conflict (discord_id) do update
                 set
@@ -153,6 +155,10 @@ module.exports = {
                     minecraft_edition = excluded.minecraft_edition,
                     account_link_reminders_disabled = false,
                     account_link_reminder_sent_at = null,
+                    welcome_bonus_paid = case
+                        when players.welcome_bonus_paid then true
+                        else excluded.welcome_bonus_paid
+                    end,
                     updated_at = now()
             `;
 
@@ -171,6 +177,12 @@ module.exports = {
                         actorId: interaction.user.id,
                         suppressPaymentLog: true
                     });
+
+                    await sql`
+                        update players
+                        set welcome_bonus_paid = true, updated_at = now()
+                        where discord_id = ${interaction.user.id}
+                    `;
 
                     await interaction.user.send(
                         `🐧 **Welcome to the Penguin Mafia!**\n\n` +
