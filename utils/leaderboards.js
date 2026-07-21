@@ -223,6 +223,8 @@ async function updateWeeklyRecruitsLeaderboardForGuild(guild, sql) {
         `Top 10 penguins by **direct recruits this week**.\n` +
         `Tie-breaker: if players have the same recruit count, whoever reached that count first ranks higher.\n` +
         `This board resets every **Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time).\n\n` +
+        `**Weekly Prizes**\n` +
+        `1st: **30m** • 2nd: **20m** • 3rd: **10m**\n\n` +
         `## Current Week\n${weeklyLines}\n\n` +
         `## Previous Week Top 3\n${previousLines}\n\n`
     );
