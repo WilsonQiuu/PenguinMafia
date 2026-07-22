@@ -13,7 +13,9 @@ const {
     ICEBERG_MEMBERS_CHANNEL_ID
 } = require('../utils/bootstrap.js');
 const {
-    getIcebergRole
+    getIcebergRole,
+    updateIcebergChannel,
+    updateMembersListChannel
 } = require('../utils/iceberg.js');
 
 module.exports = {
@@ -49,31 +51,37 @@ module.exports = {
                     delete from iceberg_members
                 `;
                 await sql`
+                    delete from iceberg_plots
+                `;
+                await sql`
                     update iceberg_fund set balance = 0, updated_at = now() where id = 1
                 `;
 
-                const icebergChannel = interaction.guild.channels.cache.get(ICEBERG_CHANNEL_ID) ||
-                    (await interaction.guild.channels.fetch(ICEBERG_CHANNEL_ID).catch(() => null));
-                const membersChannel = interaction.guild.channels.cache.get(ICEBERG_MEMBERS_CHANNEL_ID) ||
-                    (await interaction.guild.channels.fetch(ICEBERG_MEMBERS_CHANNEL_ID).catch(() => null));
+                // Delete existing bot messages in both channels
+                for (const channelId of [ICEBERG_CHANNEL_ID, ICEBERG_MEMBERS_CHANNEL_ID]) {
+                    const channel = interaction.guild.channels.cache.get(channelId) ||
+                        (await interaction.guild.channels.fetch(channelId).catch(() => null));
+                    if (!channel) continue;
 
-                if (icebergChannel) {
-                    const recent = await icebergChannel.messages.fetch({ limit: 20 }).catch(() => null);
-                    const existing = recent?.find(m => m.author.id === interaction.client.user.id && m.content.includes('BUILDER\'S FUND'));
-                    if (existing) await existing.delete().catch(() => {});
+                    const recent = await channel.messages.fetch({ limit: 20 }).catch(() => null);
+                    if (recent) {
+                        for (const [, msg] of recent) {
+                            if (msg.author.id === interaction.client.user.id) {
+                                await msg.delete().catch(() => {});
+                            }
+                        }
+                    }
                 }
 
-                if (membersChannel) {
-                    const recent = await membersChannel.messages.fetch({ limit: 20 }).catch(() => null);
-                    const existing = recent?.find(m => m.author.id === interaction.client.user.id && m.content.includes('ICEBERG MEMBERS'));
-                    if (existing) await existing.delete().catch(() => {});
-                }
+                await updateIcebergChannel(interaction.guild).catch(() => {});
+                await updateMembersListChannel(interaction.guild).catch(() => {});
 
                 await interaction.editReply(
                     `✅ **Iceberg reset complete.**\n\n` +
                     `Role removed from **${removed}** members.\n` +
                     `Builder's Fund reset to **0**.\n` +
-                    `Members list and channel cleared.\n\n` +
+                    `Plots and members cleared.\n` +
+                    `Channels refreshed.\n\n` +
                     `Run \`/iceberg claims enable\` when ready for new claims.`
                 );
             } else {

@@ -19,7 +19,7 @@ const {
 
 const TRUSTED_PENGUIN_ROLE_ID =
     process.env.TRUSTED_PENGUIN_ROLE_ID || '1518113965282955345';
-const TRUSTED_ADMIN_VOUCHES_REQUIRED = 2;
+const TRUSTED_ADMIN_VOUCHES_REQUIRED = 3;
 
 function playerName(player, fallback = 'Unknown Player') {
     return player?.discord_display_name ||
