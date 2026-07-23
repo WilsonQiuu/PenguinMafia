@@ -222,6 +222,15 @@ async function handleClaimPlot(interaction, commandLabel = '/iceberg claimplot')
             return;
         }
 
+        const ownedCount = await sql`
+            select count(*)::int as count from iceberg_plots
+            where owner_discord_id = ${interaction.user.id}
+        `;
+        if (ownedCount[0]?.count >= 2) {
+            await interaction.editReply('❌ You already own **2 plots**, which is the maximum. Sell or transfer one before claiming another.');
+            return;
+        }
+
         const pendingRows = await sql`
             select id from iceberg_payment_requests
             where player_discord_id = ${interaction.user.id} and purpose = 'claim' and plot_number = ${plotNumber} and status = 'pending'
@@ -304,6 +313,20 @@ async function handleTransfer(interaction) {
 
         if (plot.owner_discord_id !== interaction.user.id) {
             await interaction.editReply('❌ You do not own this plot.');
+            return;
+        }
+
+        if (targetUser.id === interaction.user.id) {
+            await interaction.editReply('❌ You already own this plot.');
+            return;
+        }
+
+        const targetOwned = await sql`
+            select count(*)::int as count from iceberg_plots
+            where owner_discord_id = ${targetUser.id}
+        `;
+        if (targetOwned[0]?.count >= 2) {
+            await interaction.editReply(`❌ ${targetUser} already owns **2 plots** (the maximum). They cannot receive another.`);
             return;
         }
 

@@ -439,7 +439,7 @@ async function updateIcebergChannel(guild) {
         `━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
         `**📋 PLOT COMMANDS**\n\n` +
         `\`/claimplot [number]\` — Purchase a plot quickly\n` +
-        `\`/iceberg claimplot [number]\` — Purchase a plot (must be Iceberg member with linked IGN)\n` +
+        `\`/iceberg claimplot [number]\` — Purchase a plot (max **2 per person**)\n` +
         `\`/iceberg plot [number]\` — Check plot ownership and price\n` +
         `\`/iceberg transfer [number] [user]\` — Transfer your plot to another player\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
