@@ -183,6 +183,7 @@ module.exports = {
                         1 as depth
                     from players
                     where parent_discord_id = ${playerUser.id}
+                        and welcome_completed = true
 
                     union all
 
@@ -197,6 +198,7 @@ module.exports = {
                     from players p
                     join descendants
                         on p.parent_discord_id = descendants.discord_id
+                    where p.welcome_completed = true
                 )
                 select *
                 from descendants

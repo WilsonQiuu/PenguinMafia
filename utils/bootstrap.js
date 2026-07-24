@@ -1495,7 +1495,7 @@ async function ensureDatabaseSchema(sql) {
         returns trigger as $$
         begin
             if tg_op = 'INSERT' then
-                if new.parent_discord_id is not null then
+                if new.parent_discord_id is not null and new.welcome_completed then
                     update players
                     set
                         direct_recruits_count = direct_recruits_count + 1,
@@ -1518,7 +1518,7 @@ async function ensureDatabaseSchema(sql) {
 
             if tg_op = 'UPDATE' then
                 if old.parent_discord_id is distinct from new.parent_discord_id then
-                    if old.parent_discord_id is not null then
+                    if old.parent_discord_id is not null and old.welcome_completed then
                         update players
                         set
                             direct_recruits_count = greatest(direct_recruits_count - 1, 0),
@@ -1527,7 +1527,7 @@ async function ensureDatabaseSchema(sql) {
                         where discord_id = old.parent_discord_id;
                     end if;
 
-                    if new.parent_discord_id is not null then
+                    if new.parent_discord_id is not null and new.welcome_completed then
                         update players
                         set
                             direct_recruits_count = direct_recruits_count + 1,
@@ -1548,7 +1548,7 @@ async function ensureDatabaseSchema(sql) {
             end if;
 
             if tg_op = 'DELETE' then
-                if old.parent_discord_id is not null then
+                if old.parent_discord_id is not null and old.welcome_completed then
                     update players
                     set
                         direct_recruits_count = greatest(direct_recruits_count - 1, 0),
@@ -1600,7 +1600,7 @@ async function ensureDatabaseSchema(sql) {
         create or replace function record_first_recruit()
         returns trigger as $$
         begin
-            if new.parent_discord_id is not null then
+            if new.parent_discord_id is not null and new.welcome_completed then
                 insert into recruit_history (
                     recruit_discord_id,
                     recruiter_discord_id,
@@ -1632,6 +1632,62 @@ async function ensureDatabaseSchema(sql) {
         for each row
         when (new.parent_discord_id is not null)
         execute function record_first_recruit()
+    `;
+
+    await sql`
+        create or replace function count_recruit_on_welcome()
+        returns trigger as $$
+        begin
+            if old.welcome_completed = false and new.welcome_completed = true
+                and new.parent_discord_id is not null
+            then
+                if not exists (
+                    select 1 from recruit_history
+                    where recruit_discord_id = new.discord_id
+                ) then
+                    update players
+                    set
+                        direct_recruits_count = direct_recruits_count + 1,
+                        weekly_direct_recruits_count = weekly_direct_recruits_count + 1,
+                        captain_direct_recruits_count = captain_direct_recruits_count + 1,
+                        rank_name = case
+                            when captain_direct_recruits_count + 1 >= 3 and rank_name = 'Penguin Soldier' then 'Penguin Captain'
+                            else rank_name
+                        end,
+                        reached_captain_at = case
+                            when captain_direct_recruits_count + 1 >= 3 and rank_name = 'Penguin Soldier' then coalesce(reached_captain_at, now())
+                            else reached_captain_at
+                        end,
+                        updated_at = now()
+                    where discord_id = new.parent_discord_id;
+
+                    insert into recruit_history (
+                        recruit_discord_id, recruiter_discord_id,
+                        recruited_at, counts_for_hourly
+                    ) values (
+                        new.discord_id, new.parent_discord_id,
+                        now(), true
+                    )
+                    on conflict (recruit_discord_id) do nothing;
+                end if;
+            end if;
+
+            return new;
+        end;
+        $$ language plpgsql
+    `;
+
+    await sql`
+        drop trigger if exists trg_count_recruit_on_welcome on players
+    `;
+
+    await sql`
+        create trigger trg_count_recruit_on_welcome
+        after update of welcome_completed
+        on players
+        for each row
+        when (old.welcome_completed = false and new.welcome_completed = true)
+        execute function count_recruit_on_welcome()
     `;
 
     await sql`
