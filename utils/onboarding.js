@@ -238,7 +238,7 @@ function introMessage(member, context = {}) {
         : `No recruiter was detected for this join. If someone invited you, use \`/join recruiter:@TheirDiscord\` after this tutorial.`;
     const isTest = Boolean(context.isTest);
 
-    return withClickHerePrompt({
+    return {
         content:
             `# 🐧 Welcome to the Penguin Mafia\n\n` +
             `This welcome room is for **${memberDisplayName(member)}** ${member}.\n\n` +
@@ -248,13 +248,13 @@ function introMessage(member, context = {}) {
             `• **Build a team**\n\n` +
             `Penguin skins are **encouraged**, but they are **not required**. 🐧\n\n` +
             `${parentLine}\n\n` +
-            `Tap below to start the tutorial.`,
+            `Press **Next** to begin.`,
         allowedMentions: {
             users: [member.id, ...helperMentions],
             parse: []
         },
         components: [
-            row(scopedButton('rank_graph', member.id, 'Start Tutorial', ButtonStyle.Success, isTest))
+            row(scopedButton('rank_graph', member.id, 'Next', ButtonStyle.Success, isTest))
         ]
     });
 }
@@ -396,7 +396,7 @@ async function welcomeGraphAttachment(stageName, simulation) {
 
 async function withWelcomeGraph(stageName, simulation, message) {
     return {
-        ...withClickHereComponent(message),
+        ...message,
         files: [
             await welcomeGraphAttachment(stageName, simulation)
         ]
@@ -411,7 +411,7 @@ async function rankIntroMessage(member, userId, isTest = false) {
             `You start with a base commission rate of **40%**.\n\n` +
             `Your first upgrade is **Penguin Captain**, which starts when you build your team.`,
         components: [
-            row(scopedButton('direct_recruit_1', userId, 'Add Recruit 1', ButtonStyle.Success, isTest))
+            row(scopedButton('direct_recruit_1', userId, 'Next', ButtonStyle.Success, isTest))
         ]
     });
 }
@@ -430,8 +430,8 @@ async function directRecruitMessage(member, userId, recruitCount, isTest = false
         components: [
             row(
                 isCaptain
-                    ? scopedButton('general_train_1', userId, 'Help Recruit 1 Reach Captain', ButtonStyle.Success, isTest)
-                    : scopedButton(`direct_recruit_${recruitCount + 1}`, userId, `Add Recruit ${recruitCount + 1}`, ButtonStyle.Success, isTest)
+                    ? scopedButton('general_train_1', userId, 'Next', ButtonStyle.Success, isTest)
+                    : scopedButton(`direct_recruit_${recruitCount + 1}`, userId, 'Next', ButtonStyle.Success, isTest)
             )
         ]
     });
@@ -451,8 +451,8 @@ async function generalTrainingMessage(member, userId, captainCount, isTest = fal
         components: [
             row(
                 isGeneral
-                    ? scopedButton('emperor_train_1', userId, 'Train a General', ButtonStyle.Success, isTest)
-                    : scopedButton(`general_train_${captainCount + 1}`, userId, `Help Recruit ${captainCount + 1} Reach Captain`, ButtonStyle.Success, isTest)
+                    ? scopedButton('emperor_train_1', userId, 'Next', ButtonStyle.Success, isTest)
+                    : scopedButton(`general_train_${captainCount + 1}`, userId, 'Next', ButtonStyle.Success, isTest)
             )
         ]
     });
@@ -472,15 +472,15 @@ async function emperorTrainingMessage(member, userId, generalCount, isTest = fal
         components: [
             row(
                 isEmperor
-                    ? scopedButton('why_team', userId, 'Why Build a Large Team?', ButtonStyle.Success, isTest)
-                    : scopedButton(`emperor_train_${generalCount + 1}`, userId, 'Train One More General', ButtonStyle.Success, isTest)
+                    ? scopedButton('why_team', userId, 'Next', ButtonStyle.Success, isTest)
+                    : scopedButton(`emperor_train_${generalCount + 1}`, userId, 'Next', ButtonStyle.Success, isTest)
             )
         ]
     });
 }
 
 function whyTeamMessage(userId, isTest = false) {
-    return withClickHerePrompt({
+    return {
         content:
             `# 5️⃣ Why do we want a large team?\n\n` +
             `If any teammate under you:\n\n` +
@@ -490,7 +490,7 @@ function whyTeamMessage(userId, isTest = false) {
             `You can earn a portion through your commission chain.\n\n` +
             `That is the point of building a strong tree: when your team wins, the whole branch can eat.`,
         components: [
-            row(scopedButton('giveaway_prompt', userId, 'Continue', ButtonStyle.Success, isTest))
+            row(scopedButton('giveaway_prompt', userId, 'Next', ButtonStyle.Success, isTest))
         ]
     });
 }
@@ -520,7 +520,7 @@ async function giveawayJoinPromptMessage(guild, userId, isTest = false) {
         ? `There ${activeCount === 1 ? 'is' : 'are'} currently **${activeCount}** active giveaway${activeCount === 1 ? '' : 's'} with **${formatDonationAmount(totalAmount)}** in prize pools.`
         : `There are no active giveaways right now, but this is where new active giveaways will appear.`;
 
-    return withClickHerePrompt({
+    return {
         content:
             `# 6️⃣ Active giveaways\n\n` +
             `${giveawayLine}\n\n` +
@@ -531,11 +531,11 @@ async function giveawayJoinPromptMessage(guild, userId, isTest = false) {
                 scopedButton('giveaway_join_all_no', userId, 'No', ButtonStyle.Secondary, isTest)
             )
         ]
-    });
+    };
 }
 
 function joinAllGiveawaysInfoMessage(userId, isTest = false) {
-    return withClickHerePrompt({
+    return {
         content:
             `# 💰 Instant giveaway payouts\n\n` +
             `Our giveaways are hosted by players in the community, and the best part is that we have **instant payouts**.\n\n` +
