@@ -256,7 +256,7 @@ function introMessage(member, context = {}) {
         components: [
             row(scopedButton('rank_graph', member.id, 'Next', ButtonStyle.Success, isTest))
         ]
-    });
+    };
 }
 
 function simulatedWelcomePlayer(id, name, rankName, parentId = null) {
@@ -492,7 +492,7 @@ function whyTeamMessage(userId, isTest = false) {
         components: [
             row(scopedButton('giveaway_prompt', userId, 'Next', ButtonStyle.Success, isTest))
         ]
-    });
+    };
 }
 
 async function activeGiveawaySummary(guild) {
@@ -548,7 +548,7 @@ function joinAllGiveawaysInfoMessage(userId, isTest = false) {
                 scopedButton('join_all_skip', userId, 'Skip', ButtonStyle.Secondary, isTest)
             )
         ]
-    });
+    };
 }
 
 function finalMessage(userId, linkedIgn = null, edition = null, options = {}) {
