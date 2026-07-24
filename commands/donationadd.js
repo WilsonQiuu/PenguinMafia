@@ -26,7 +26,7 @@ const DEFAULT_RANK_NAME = 'Penguin Soldier';
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('donationadd')
-        .setDescription('Add donations to a player. Don only.')
+        .setDescription('Add donations to a player. Owner only.')
         .addUserOption(option =>
             option
                 .setName('player')
@@ -56,7 +56,7 @@ module.exports = {
 
         if (!isDon(interaction.user.id)) {
             await interaction.editReply(
-                '❌ Only the Don can use this command.'
+                '❌ Only the owner can use this command.'
             );
             return;
         }

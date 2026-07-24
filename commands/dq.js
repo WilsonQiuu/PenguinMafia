@@ -17,7 +17,7 @@ const {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('dq')
-        .setDescription('Disqualify a player from the captain speed leaderboard. Don only.')
+        .setDescription('Disqualify a player from the captain speed leaderboard. Owner only.')
         .addUserOption(option =>
             option
                 .setName('player')
@@ -31,7 +31,7 @@ module.exports = {
         });
 
         if (!isDon(interaction.user.id)) {
-            await interaction.editReply('❌ Only the Don can use `/dq`.');
+            await interaction.editReply('❌ Only the owner can use `/dq`.');
             return;
         }
 

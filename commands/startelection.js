@@ -17,7 +17,7 @@ const {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('startelection')
-        .setDescription('Start a 24-hour Penguin Mafia DON election. Don only.'),
+        .setDescription('Start a 24-hour Penguin Mafia DON election. Owner only.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -25,7 +25,7 @@ module.exports = {
         });
 
         if (!isDon(interaction.user.id)) {
-            await interaction.editReply('❌ Only the Don can start an election.');
+            await interaction.editReply('❌ Only the owner can start an election.');
             return;
         }
 

@@ -245,12 +245,12 @@ module.exports = {
                 },
                 {
                     name: 'Reason',
-                    value: 'The Don cannot be banned.'
+                    value: 'The owner cannot be banned.'
                 }
             ]);
 
             await interaction.editReply(
-                '❌ The Don cannot be banned.'
+                '❌ The owner cannot be banned.'
             );
             return;
         }

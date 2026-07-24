@@ -22,7 +22,7 @@ function playerName(player, fallback = 'Unknown Player') {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('verify')
-        .setDescription('Refill Staff ban points. Don only.')
+        .setDescription('Refill Staff ban points. Owner only.')
         .addUserOption(option =>
             option
                 .setName('staff')
@@ -46,7 +46,7 @@ module.exports = {
 
         if (!isDon(interaction.user.id)) {
             await interaction.editReply(
-                '❌ Only the Don can use `/verify`.'
+                '❌ Only the owner can use `/verify`.'
             );
             return;
         }

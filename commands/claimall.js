@@ -23,7 +23,7 @@ function playerName(player) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('claimall')
-        .setDescription('Make every orphaned Penguin recruit belong to the Don. Don only.'),
+        .setDescription('Make every orphaned Penguin recruit belong to the owner. Owner only.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -41,7 +41,7 @@ module.exports = {
 
         if (!isDon(interaction.user.id)) {
             await interaction.editReply(
-                '❌ Only the Don can use `/claimall`.'
+                '❌ Only the owner can use `/claimall`.'
             );
             return;
         }

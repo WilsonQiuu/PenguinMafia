@@ -87,7 +87,7 @@ async function moveHigherRecruitsUpAfterDemotion(sql, playerDiscordId, demotedRa
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('demote')
-        .setDescription('Demote a player to the previous rank. Don only.')
+        .setDescription('Demote a player to the previous rank. Owner only.')
         .addUserOption(option =>
             option
                 .setName('player')
@@ -111,7 +111,7 @@ module.exports = {
 
         if (!isDon(interaction.user.id)) {
             await interaction.editReply(
-                '❌ Only the Don can use this command.'
+                '❌ Only the owner can use this command.'
             );
             return;
         }

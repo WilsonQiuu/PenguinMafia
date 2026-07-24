@@ -17,7 +17,7 @@ const {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('clearcaptainlb')
-        .setDescription('Reset the monthly captain speed leaderboard. Don only.'),
+        .setDescription('Reset the monthly captain speed leaderboard. Owner only.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -25,7 +25,7 @@ module.exports = {
         });
 
         if (!isDon(interaction.user.id)) {
-            await interaction.editReply('❌ Only the Don can use `/clearcaptainlb`.');
+            await interaction.editReply('❌ Only the owner can use `/clearcaptainlb`.');
             return;
         }
 

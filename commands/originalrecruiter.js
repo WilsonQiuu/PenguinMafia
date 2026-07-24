@@ -38,7 +38,7 @@ function timestampLine(label, value) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('originalrecruiter')
-        .setDescription('Check a player\'s original recruiter before any transfers. Don only.')
+        .setDescription('Check a player\'s original recruiter before any transfers. Owner only.')
         .addUserOption(option =>
             option
                 .setName('player')
@@ -52,7 +52,7 @@ module.exports = {
         });
 
         if (!isDon(interaction.user.id)) {
-            await interaction.editReply('❌ Only the Don can use `/originalrecruiter`.');
+            await interaction.editReply('❌ Only the owner can use `/originalrecruiter`.');
             return;
         }
 

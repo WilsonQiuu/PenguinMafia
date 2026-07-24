@@ -21,7 +21,7 @@ module.exports = {
         .addUserOption(option =>
             option
                 .setName('player')
-                .setDescription('Player to remove from the election. Don only for other players.')
+                .setDescription('Player to remove from the election. owner only for other players.')
                 .setRequired(false)
         ),
 
@@ -33,7 +33,7 @@ module.exports = {
         const playerUser = interaction.options.getUser('player') || interaction.user;
 
         if (playerUser.id !== interaction.user.id && !isDon(interaction.user.id)) {
-            await interaction.editReply('❌ You can only remove yourself from the election. Only the Don can remove another player.');
+            await interaction.editReply('❌ You can only remove yourself from the election. Only the owner can remove another player.');
             return;
         }
 

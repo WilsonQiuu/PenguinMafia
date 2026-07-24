@@ -27,7 +27,7 @@ module.exports = {
         .addUserOption(option =>
             option
                 .setName('player')
-                .setDescription('The player to check. Don only for other players.')
+                .setDescription('The player to check. owner only for other players.')
                 .setRequired(false)
         ),
 
@@ -43,7 +43,7 @@ module.exports = {
             !isDon(interaction.user.id)
         ) {
             await interaction.editReply(
-                '❌ Only the Don can check another player’s unpaid commissions.'
+                '❌ Only the owner can check another player’s unpaid commissions.'
             );
             return;
         }

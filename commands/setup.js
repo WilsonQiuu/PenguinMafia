@@ -153,7 +153,7 @@ module.exports = {
 
         if (!hasDonAccess(interaction.user.id)) {
             await interaction.editReply(
-                '❌ Only the Don can use `/setup`.'
+                '❌ Only the owner can use `/setup`.'
             );
             return;
         }

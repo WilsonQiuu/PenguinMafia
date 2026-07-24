@@ -17,7 +17,7 @@ const {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('electioncancel')
-        .setDescription('Cancel the active election and return the board to starting-soon mode. Don only.'),
+        .setDescription('Cancel the active election and return the board to starting-soon mode. Owner only.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -25,7 +25,7 @@ module.exports = {
         });
 
         if (!isDon(interaction.user.id)) {
-            await interaction.editReply('❌ Only the Don can cancel the election.');
+            await interaction.editReply('❌ Only the owner can cancel the election.');
             return;
         }
 

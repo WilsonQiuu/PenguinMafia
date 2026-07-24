@@ -28,7 +28,7 @@ function playerName(player, fallback = 'Unknown Player') {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('remove')
-        .setDescription('Remove a player from the database without banning or kicking them. Don only.')
+        .setDescription('Remove a player from the database without banning or kicking them. Owner only.')
         .addStringOption(option =>
             option
                 .setName('player')
@@ -52,7 +52,7 @@ module.exports = {
 
         if (!isDon(interaction.user.id)) {
             await interaction.editReply(
-                '❌ Only the Don can use this command.'
+                '❌ Only the owner can use this command.'
             );
             return;
         }
@@ -69,7 +69,7 @@ module.exports = {
 
         if (donDiscordIds().includes(playerDiscordId)) {
             await interaction.editReply(
-                '❌ The Don cannot be removed from the database.'
+                '❌ The owner cannot be removed from the database.'
             );
             return;
         }

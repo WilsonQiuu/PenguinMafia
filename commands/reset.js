@@ -107,7 +107,7 @@ async function confirmReset(interaction, {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('reset')
-        .setDescription('Reset Penguin Mafia data. Don only.')
+        .setDescription('Reset Penguin Mafia data. Owner only.')
         .addSubcommand(subcommand =>
             subcommand
                 .setName('all')
@@ -135,7 +135,7 @@ module.exports = {
 
         if (!hasDonAccess(interaction.user.id)) {
             await interaction.editReply(
-                '❌ Only the Don can use `/reset`.'
+                '❌ Only the owner can use `/reset`.'
             );
             return;
         }

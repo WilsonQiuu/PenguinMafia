@@ -449,7 +449,7 @@ async function logBanTreeCommand(interaction, title, fields) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('bantree')
-        .setDescription('Ban a player and their entire recruit tree, then remove them from the database. Don only.')
+        .setDescription('Ban a player and their entire recruit tree, then remove them from the database. Owner only.')
         .addStringOption(option =>
             option
                 .setName('player')
@@ -475,7 +475,7 @@ module.exports = {
         }
 
         if (!isDon(interaction.user.id)) {
-            await interaction.editReply('❌ Only the Don can use `/bantree`.');
+            await interaction.editReply('❌ Only the owner can use `/bantree`.');
             return;
         }
 
@@ -492,7 +492,7 @@ module.exports = {
         }
 
         if (donDiscordIds().includes(targetDiscordId)) {
-            await interaction.editReply('❌ The Don cannot be banned or removed.');
+            await interaction.editReply('❌ The owner cannot be banned or removed.');
             return;
         }
 
@@ -512,7 +512,7 @@ module.exports = {
             const playerIds = treeRows.map(row => row.discord_id);
 
             if (playerIds.some(playerId => donDiscordIds().includes(playerId))) {
-                await interaction.editReply('❌ This tree includes the Don, so `/bantree` is blocked.');
+                await interaction.editReply('❌ This tree includes the owner, so `/bantree` is blocked.');
                 return;
             }
 

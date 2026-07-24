@@ -17,7 +17,7 @@ const {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('electionclear')
-        .setDescription('Clear the finished election board back to the starting-soon message. Don only.'),
+        .setDescription('Clear the finished election board back to the starting-soon message. Owner only.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -25,7 +25,7 @@ module.exports = {
         });
 
         if (!isDon(interaction.user.id)) {
-            await interaction.editReply('❌ Only the Don can clear the election board.');
+            await interaction.editReply('❌ Only the owner can clear the election board.');
             return;
         }
 

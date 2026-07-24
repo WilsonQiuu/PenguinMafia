@@ -18,7 +18,7 @@ function parseDiscordId(input) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('unban')
-        .setDescription('Unban a user from Discord only. Don only.')
+        .setDescription('Unban a user from Discord only. Owner only.')
         .addStringOption(option =>
             option
                 .setName('player')
@@ -33,7 +33,7 @@ module.exports = {
 
         if (!isDon(interaction.user.id)) {
             await interaction.editReply(
-                '❌ Only the Don can use this command.'
+                '❌ Only the owner can use this command.'
             );
             return;
         }

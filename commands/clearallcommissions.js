@@ -17,7 +17,7 @@ const {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('clearallcommissions')
-        .setDescription('Clear every player’s unpaid commissions. Don only.'),
+        .setDescription('Clear every player’s unpaid commissions. Owner only.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -32,7 +32,7 @@ module.exports = {
         }
 
         if (!isDon(interaction.user.id)) {
-            await interaction.editReply('❌ Only the Don can use `/clearallcommissions`.');
+            await interaction.editReply('❌ Only the owner can use `/clearallcommissions`.');
             return;
         }
 

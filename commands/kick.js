@@ -111,12 +111,12 @@ module.exports = {
                 },
                 {
                     name: 'Reason',
-                    value: 'The Don cannot be kicked.'
+                    value: 'The owner cannot be kicked.'
                 }
             ]);
 
             await interaction.editReply(
-                '❌ The Don cannot be kicked.'
+                '❌ The owner cannot be kicked.'
             );
             return;
         }

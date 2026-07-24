@@ -138,7 +138,7 @@ function vectorLine(label, vector) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('bot')
-        .setDescription('Control the Minecraft payment bot. Don only.')
+        .setDescription('Control the Minecraft payment bot. Owner only.')
         .addSubcommand(subcommand =>
             subcommand
                 .setName('start')
@@ -244,7 +244,7 @@ module.exports = {
         if (!isDon(interaction.user.id)) {
             emitMinecraftEvent(
                 'Unauthorized Minecraft Bot Command',
-                'A Discord user attempted to control the Minecraft bot without Don access.',
+                'A Discord user attempted to control the Minecraft bot without owner access.',
                 'warning',
                 {
                     Action: `/bot ${interaction.options.getSubcommand()}`,
@@ -252,7 +252,7 @@ module.exports = {
                     'Discord ID': interaction.user.id
                 }
             );
-            await interaction.editReply('❌ Only the Don can control the Minecraft bot.');
+            await interaction.editReply('❌ Only the owner can control the Minecraft bot.');
             return;
         }
 

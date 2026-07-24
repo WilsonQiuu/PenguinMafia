@@ -17,7 +17,7 @@ const {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('teamsync')
-        .setDescription('Re-sync all Discord team roles from the database. Don only.'),
+        .setDescription('Re-sync all Discord team roles from the database. Owner only.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -25,7 +25,7 @@ module.exports = {
         });
 
         if (!isDon(interaction.user.id)) {
-            await interaction.editReply('❌ Only the Don can use `/teamsync`.');
+            await interaction.editReply('❌ Only the owner can use `/teamsync`.');
             return;
         }
 

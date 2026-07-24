@@ -24,7 +24,7 @@ function playerName(player, fallback = 'Unknown Player') {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('clearcommission')
-        .setDescription('Clear a player’s unpaid commissions. Don only.')
+        .setDescription('Clear a player’s unpaid commissions. Owner only.')
         .addUserOption(option =>
             option
                 .setName('player')
@@ -48,7 +48,7 @@ module.exports = {
 
         if (!isDon(interaction.user.id)) {
             await interaction.editReply(
-                '❌ Only the Don can use `/clearcommission`.'
+                '❌ Only the owner can use `/clearcommission`.'
             );
             return;
         }

@@ -21,7 +21,7 @@ const {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('donationssub')
-        .setDescription('Subtract donations from a player. Don only.')
+        .setDescription('Subtract donations from a player. Owner only.')
         .addUserOption(option =>
             option
                 .setName('player')
@@ -51,7 +51,7 @@ module.exports = {
 
         if (!isDon(interaction.user.id)) {
             await interaction.editReply(
-                '❌ Only the Don can use this command.'
+                '❌ Only the owner can use this command.'
             );
             return;
         }

@@ -79,7 +79,7 @@ async function syncTrustedRolesAfterReset(guild, trustedRole) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('resettrustedpenguins')
-        .setDescription('Reset all vouches and Trusted Penguin roles. Vetos stay. Don only.'),
+        .setDescription('Reset all vouches and Trusted Penguin roles. Vetos stay. Owner only.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -92,7 +92,7 @@ module.exports = {
         }
 
         if (!isDon(interaction.user.id)) {
-            await interaction.editReply('❌ Only the Don can use `/resettrustedpenguins`.');
+            await interaction.editReply('❌ Only the owner can use `/resettrustedpenguins`.');
             return;
         }
 

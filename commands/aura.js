@@ -73,7 +73,7 @@ async function dmAuraCommissionCredit(guild, player, newBalanceCents) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('aura')
-        .setDescription('Pay everyone currently in your voice call 1m. Don only.'),
+        .setDescription('Pay everyone currently in your voice call 1m. Owner only.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -81,7 +81,7 @@ module.exports = {
         });
 
         if (!isDon(interaction.user.id)) {
-            await interaction.editReply('❌ Only the Don can use `/aura`.');
+            await interaction.editReply('❌ Only the owner can use `/aura`.');
             return;
         }
 

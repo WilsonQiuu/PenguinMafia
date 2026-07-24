@@ -31,7 +31,7 @@ module.exports = {
         });
 
         if (!isDon(interaction.user.id)) {
-            await interaction.editReply('❌ Only the Don can inspect election vote receipts.');
+            await interaction.editReply('❌ Only the owner can inspect election vote receipts.');
             return;
         }
 

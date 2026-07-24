@@ -60,7 +60,7 @@ function previewResults(results, limit = 6) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('payallcommissions')
-        .setDescription('Pay every linked unpaid commission balance. Don only.'),
+        .setDescription('Pay every linked unpaid commission balance. Owner only.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -68,7 +68,7 @@ module.exports = {
         });
 
         if (!isDon(interaction.user.id)) {
-            await interaction.editReply('Only the Don can use `/payallcommissions`.');
+            await interaction.editReply('Only the owner can use `/payallcommissions`.');
             return;
         }
 

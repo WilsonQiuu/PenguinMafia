@@ -21,7 +21,7 @@ const {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('reseticeberg')
-        .setDescription('Remove Iceberg role from all, reset fund and members. Don only.'),
+        .setDescription('Remove Iceberg role from all, reset fund and members. Owner only.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -29,7 +29,7 @@ module.exports = {
         });
 
         if (!process.env.DON_DISCORD_ID || interaction.user.id !== process.env.DON_DISCORD_ID) {
-            await interaction.editReply('❌ Only the Don can use `/reseticeberg`.');
+            await interaction.editReply('❌ Only the owner can use `/reseticeberg`.');
             return;
         }
 

@@ -72,21 +72,21 @@ module.exports = {
         )
         .addSubcommand(sub =>
             sub.setName('addmember')
-                .setDescription('Manually add a player to the Iceberg and add the 30m entry fee. Don only.')
+                .setDescription('Manually add a player to the Iceberg and add the 30m entry fee. Owner only.')
                 .addUserOption(opt =>
                     opt.setName('user').setDescription('The Discord user to add').setRequired(true)
                 )
         )
         .addSubcommand(sub =>
             sub.setName('plotclear')
-                .setDescription('Clear the owner and active hold from an Iceberg plot. Don only.')
+                .setDescription('Clear the owner and active hold from an Iceberg plot. Owner only.')
                 .addIntegerOption(opt =>
                     opt.setName('number').setDescription('Plot number').setRequired(true).setMinValue(1)
                 )
         )
         .addSubcommand(sub =>
             sub.setName('fund')
-                .setDescription('Add or remove money from the Iceberg Builder\'s Fund. Don only.')
+                .setDescription('Add or remove money from the Iceberg Builder\'s Fund. Owner only.')
                 .addStringOption(opt =>
                     opt.setName('action')
                         .setDescription('Whether to add or remove money')
@@ -102,7 +102,7 @@ module.exports = {
         )
         .addSubcommand(sub =>
             sub.setName('claims')
-                .setDescription('Enable or disable plot claiming. Don only.')
+                .setDescription('Enable or disable plot claiming. Owner only.')
                 .addStringOption(opt =>
                     opt.setName('state')
                         .setDescription('Enable or disable claiming')
@@ -359,7 +359,7 @@ async function handleAddMember(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!isDon(interaction.user.id)) {
-        await interaction.editReply('❌ Only the Don can use `/iceberg addmember`.');
+        await interaction.editReply('❌ Only the owner can use `/iceberg addmember`.');
         return;
     }
 
@@ -424,7 +424,7 @@ async function handlePlotClear(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!isDon(interaction.user.id)) {
-        await interaction.editReply('❌ Only the Don can use `/iceberg plotclear`.');
+        await interaction.editReply('❌ Only the owner can use `/iceberg plotclear`.');
         return;
     }
 
@@ -459,7 +459,7 @@ async function handleFund(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!isDon(interaction.user.id)) {
-        await interaction.editReply('❌ Only the Don can use `/iceberg fund`.');
+        await interaction.editReply('❌ Only the owner can use `/iceberg fund`.');
         return;
     }
 
@@ -494,7 +494,7 @@ async function handleClaims(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!isDon(interaction.user.id)) {
-        await interaction.editReply('❌ Only the Don can use `/iceberg claims`.');
+        await interaction.editReply('❌ Only the owner can use `/iceberg claims`.');
         return;
     }
 

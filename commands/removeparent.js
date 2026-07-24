@@ -20,7 +20,7 @@ function playerName(player, fallback = 'Unknown Player') {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('removerecruiter')
-        .setDescription('Remove a player recruiter and make them an orphan. Don only.')
+        .setDescription('Remove a player recruiter and make them an orphan. Owner only.')
         .addUserOption(option =>
             option
                 .setName('player')
@@ -44,7 +44,7 @@ module.exports = {
 
         if (!isDon(interaction.user.id)) {
             await interaction.editReply(
-                '❌ Only the Don can use this command.'
+                '❌ Only the owner can use this command.'
             );
             return;
         }
