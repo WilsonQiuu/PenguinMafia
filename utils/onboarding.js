@@ -12,7 +12,6 @@ const {
     MessageFlags
 } = require('discord.js');
 
-const sql = require('../db.js');
 const {
     DEFAULT_RANK_NAME,
     ensureRankRoles,
@@ -23,18 +22,11 @@ const {
     formatDonationAmount
 } = require('./donations.js');
 const {
-    enterAllActiveGiveawaysForUser
-} = require('./giveaways.js');
-const {
     renderRecruitTreeImage
 } = require('./treeImage.js');
 const {
     setMemberNicknameToIgn
 } = require('./nicknames.js');
-const {
-    ensureMinecraftBotConnected,
-    payPlayerAfterBusyWait
-} = require('./commissionPayments.js');
 const {
     donDiscordIds
 } = require('./staff.js');
@@ -48,6 +40,23 @@ const CLICK_HERE_PROMPT = '# CLICK BELOW';
 const CLICK_HERE_COMPONENT_ID = `${BUTTON_PREFIX}:click_here_label`;
 
 const welcomeGraphCache = new Map();
+let sqlClient = null;
+
+function database() {
+    if (!sqlClient) {
+        sqlClient = require('../db.js');
+    }
+
+    return sqlClient;
+}
+
+function giveawayActions() {
+    return require('./giveaways.js');
+}
+
+function commissionPaymentActions() {
+    return require('./commissionPayments.js');
+}
 
 pregenerateAllGraphs();
 
@@ -199,7 +208,7 @@ async function resolveGrandRecruiterId(recruiterId) {
         return null;
     }
 
-    const rows = await sql`
+    const rows = await database()`
         select parent_discord_id
         from players
         where discord_id = ${recruiterId}
@@ -237,17 +246,21 @@ function introMessage(member, context = {}) {
         ? `Our bots detected ${context.recruiterId ? `<@${context.recruiterId}>` : `**${safeInviterDisplayName}**`} as your recruiter. They${context.grandRecruiterId ? ` and <@${context.grandRecruiterId}>` : ''} can see this room and help if you get stuck.`
         : `No recruiter was detected for this join. If someone invited you, use \`/join recruiter:@TheirDiscord\` after this tutorial.`;
     const isTest = Boolean(context.isTest);
+    const locationLabel = context.isDm ? 'DM' : 'welcome room';
+    const testLine = isTest
+        ? `This is a **test preview**. It will not change ranks, accounts, giveaways, or player data.`
+        : parentLine;
 
     return {
         content:
             `# 🐧 Welcome to the Penguin Mafia\n\n` +
-            `This welcome room is for **${memberDisplayName(member)}** ${member}.\n\n` +
+            `This ${locationLabel} is for **${memberDisplayName(member)}** ${member}.\n\n` +
             `Here you can:\n\n` +
             `• **Buy and sell spawners**\n` +
             `• **Win giveaways**\n` +
             `• **Build a team**\n\n` +
             `Penguin skins are **encouraged**, but they are **not required**. 🐧\n\n` +
-            `${parentLine}\n\n` +
+            `${testLine}\n\n` +
             `Press **Next** to begin.`,
         allowedMentions: {
             users: [member.id, ...helperMentions],
@@ -496,7 +509,7 @@ function whyTeamMessage(userId, isTest = false) {
 }
 
 async function activeGiveawaySummary(guild) {
-    const rows = await sql`
+    const rows = await database()`
         select
             count(*)::int as active_count,
             coalesce(sum(amount), 0)::bigint as total_amount
@@ -513,12 +526,18 @@ async function activeGiveawaySummary(guild) {
 }
 
 async function giveawayJoinPromptMessage(guild, userId, isTest = false) {
-    const summary = await activeGiveawaySummary(guild);
-    const activeCount = Number(summary.active_count || 0);
-    const totalAmount = BigInt(summary.total_amount || 0);
-    const giveawayLine = activeCount > 0
-        ? `There ${activeCount === 1 ? 'is' : 'are'} currently **${activeCount}** active giveaway${activeCount === 1 ? '' : 's'} with **${formatDonationAmount(totalAmount)}** in prize pools.`
-        : `There are no active giveaways right now, but this is where new active giveaways will appear.`;
+    let giveawayLine;
+
+    if (isTest) {
+        giveawayLine = '🧪 Test preview: no live giveaway data will be read or changed.';
+    } else {
+        const summary = await activeGiveawaySummary(guild);
+        const activeCount = Number(summary.active_count || 0);
+        const totalAmount = BigInt(summary.total_amount || 0);
+        giveawayLine = activeCount > 0
+            ? `There ${activeCount === 1 ? 'is' : 'are'} currently **${activeCount}** active giveaway${activeCount === 1 ? '' : 's'} with **${formatDonationAmount(totalAmount)}** in prize pools.`
+            : `There are no active giveaways right now, but this is where new active giveaways will appear.`;
+    }
 
     return {
         content:
@@ -714,7 +733,7 @@ async function ensureWelcomeChannel(member, context = {}) {
 }
 
 async function sendWelcomeReminderIfDue(member, channel) {
-    const rows = await sql`
+    const rows = await database()`
         select welcome_completed, welcome_reminder_sent_at
         from players
         where discord_id = ${member.id}
@@ -745,7 +764,7 @@ async function sendWelcomeReminderIfDue(member, channel) {
                 `Once you complete it, you’ll get your **${DEFAULT_RANK_NAME}** role and full server access.`
         });
 
-        await sql`
+        await database()`
             update players
             set
                 welcome_reminder_sent_at = now(),
@@ -784,7 +803,7 @@ async function startOnboardingForMember(member, context = {}) {
 }
 
 async function remindIncompleteWelcomeMembers(guild) {
-    const rows = await sql`
+    const rows = await database()`
         select discord_id, parent_discord_id
         from players
         where welcome_completed = false
@@ -887,7 +906,7 @@ async function cleanupWelcomeChannelForMember(guild, userId) {
 }
 
 async function completeOnboarding(member, linkedIgn = null, minecraftEdition = null) {
-    await sql`
+    await database()`
         update players
         set
             welcome_completed = true,
@@ -901,7 +920,7 @@ async function completeOnboarding(member, linkedIgn = null, minecraftEdition = n
     await syncMemberRankRole(member, rankRoles, DEFAULT_RANK_NAME);
 
     if (linkedIgn) {
-        await sql`
+        await database()`
             update players
             set
                 account_link_reminders_disabled = false,
@@ -915,7 +934,7 @@ async function completeOnboarding(member, linkedIgn = null, minecraftEdition = n
 }
 
 async function saveOnboardingIgn(member, linkedIgn, minecraftEdition) {
-    await sql`
+    await database()`
         update players
         set
             minecraft_ign = ${linkedIgn},
@@ -929,7 +948,7 @@ async function saveOnboardingIgn(member, linkedIgn, minecraftEdition) {
 }
 
 async function skipOnboardingIgn(userId) {
-    await sql`
+    await database()`
         update players
         set
             account_link_reminders_disabled = true,
@@ -997,10 +1016,10 @@ async function finishOnboardingInteraction(interaction, options) {
         await completeOnboarding(member, linkedIgn, minecraftEdition);
 
         if (enterAllGiveaways && ((linkedIgn && minecraftEdition) || allowUnlinkedGiveawayEntry)) {
-            const entryResult = await enterAllActiveGiveawaysForUser(
+            const entryResult = await giveawayActions().enterAllActiveGiveawaysForUser(
                 interaction.guild,
                 targetUserId,
-                sql
+                database()
             );
 
             if (entryResult.eligible_count > 0 || entryResult.own_skipped > 0) {
@@ -1021,7 +1040,9 @@ async function finishOnboardingInteraction(interaction, options) {
             giveawaySkippedLine: finalGiveawaySkippedLine
         })
     );
-    await scheduleWelcomeChannelDelete(interaction);
+    if (!isTest || !interaction.channel?.isDMBased?.()) {
+        await scheduleWelcomeChannelDelete(interaction);
+    }
 }
 
 async function handleWelcomeButton(interaction) {
@@ -1070,7 +1091,15 @@ async function handleWelcomeButton(interaction) {
     }
 
     if (action === 'giveaway_prompt') {
-        const rows = await sql`
+        if (isTest) {
+            await updateWithReadingDelay(
+                interaction,
+                () => giveawayJoinPromptMessage(interaction.guild, targetUserId, true)
+            );
+            return true;
+        }
+
+        const rows = await database()`
             select minecraft_ign, minecraft_edition
             from players
             where discord_id = ${targetUserId}
@@ -1149,8 +1178,8 @@ async function handleWelcomeButton(interaction) {
     }
 
     if (action === 'done') {
-        const member = await interaction.guild.members.fetch(targetUserId);
         if (!isTest) {
+            const member = await interaction.guild.members.fetch(targetUserId);
             await completeOnboarding(member);
         }
 
@@ -1160,7 +1189,9 @@ async function handleWelcomeButton(interaction) {
                 `Training complete. Your **${DEFAULT_RANK_NAME}** role is active. Enter the iceberg. 🧊✨`,
             components: []
         });
-        await scheduleWelcomeChannelDelete(interaction);
+        if (!isTest || !interaction.channel?.isDMBased?.()) {
+            await scheduleWelcomeChannelDelete(interaction);
+        }
         return true;
     }
 
@@ -1217,25 +1248,25 @@ async function handleWelcomeModal(interaction) {
     }
 
     if (!isTest) {
-        const bonusRows = await sql`
+        const bonusRows = await database()`
             select value from bot_state where key = 'welcome_bonus_paid:' || ${interaction.user.id} limit 1
         `;
 
         if (!bonusRows[0]?.value) {
             try {
-                await ensureMinecraftBotConnected({
+                await commissionPaymentActions().ensureMinecraftBotConnected({
                     guild: interaction.guild,
                     source: 'Welcome bonus'
                 });
 
-                await payPlayerAfterBusyWait(minecraftIgn, '1000', {
+                await commissionPaymentActions().payPlayerAfterBusyWait(minecraftIgn, '1000', {
                     guild: interaction.guild,
                     source: `Welcome bonus for ${interaction.user.id}`,
                     actorId: interaction.user.id,
                     suppressPaymentLog: true
                 });
 
-                await sql`
+                await database()`
                     insert into bot_state (key, value)
                     values ('welcome_bonus_paid:' || ${interaction.user.id}, 'true')
                     on conflict (key) do nothing
@@ -1263,10 +1294,36 @@ async function handleWelcomeModal(interaction) {
     return true;
 }
 
+async function startTestOnboardingInDm(userOrMember) {
+    const user = userOrMember?.user || userOrMember;
+
+    if (!user?.id || typeof user.createDM !== 'function') {
+        throw new Error('A valid Discord player is required for the DM welcome preview.');
+    }
+
+    const previewMember = {
+        id: user.id,
+        user,
+        displayName: user.globalName || user.username,
+        toString() {
+            return `<@${user.id}>`;
+        }
+    };
+    const dm = await user.createDM();
+
+    await dm.send(introMessage(previewMember, {
+        isTest: true,
+        isDm: true
+    }));
+
+    return dm;
+}
+
 module.exports = {
     cleanupWelcomeChannelForMember,
     cleanupWelcomeChannelsForMissingMembers,
     remindIncompleteWelcomeMembers,
+    startTestOnboardingInDm,
     startOnboardingForMember,
     handleWelcomeButton,
     handleWelcomeModal
