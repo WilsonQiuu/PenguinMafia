@@ -1,6 +1,7 @@
+const fs = require('fs');
+const path = require('path');
 const {
     ActionRowBuilder,
-    AttachmentBuilder,
     ButtonBuilder,
     ButtonStyle,
     ChannelType,
@@ -19,12 +20,6 @@ const {
     syncMemberRankRole
 } = require('./bootstrap.js');
 const {
-    formatDonationAmount
-} = require('./donations.js');
-const {
-    renderRecruitTreeImage
-} = require('./treeImage.js');
-const {
     setMemberNicknameToIgn
 } = require('./nicknames.js');
 const {
@@ -36,10 +31,101 @@ const MODAL_PREFIX = 'welcome_ign_submit';
 const JOIN_ALL_MODAL_PREFIX = 'welcome_join_all_ign';
 const WELCOME_REMINDER_INTERVAL_MS = 2 * 24 * 60 * 60 * 1000;
 const WELCOME_SELF_DESTRUCT_SECONDS = 30;
-const CLICK_HERE_PROMPT = '# CLICK BELOW';
-const CLICK_HERE_COMPONENT_ID = `${BUTTON_PREFIX}:click_here_label`;
+const WELCOME_DM_CLEANUP_STATE_FILE = process.env.WELCOME_DM_CLEANUP_STATE_FILE ||
+    path.join(__dirname, '..', '.welcome-dm-cleanup-queue.json');
 
-const welcomeGraphCache = new Map();
+// Tracks exact message ids pending self-destruct in a DM welcome flow, keyed
+// by channel id, so a restart mid-countdown can finish deleting precisely
+// those messages later - never a broader sweep of the user's other DMs.
+function loadPendingWelcomeDmCleanups() {
+    try {
+        const raw = fs.readFileSync(WELCOME_DM_CLEANUP_STATE_FILE, 'utf8');
+        const pending = JSON.parse(raw);
+        return pending && typeof pending === 'object' && !Array.isArray(pending)
+            ? pending
+            : {};
+    } catch {
+        return {};
+    }
+}
+
+function savePendingWelcomeDmCleanups(pending) {
+    const temporaryFile = `${WELCOME_DM_CLEANUP_STATE_FILE}.tmp`;
+    fs.writeFileSync(temporaryFile, JSON.stringify(pending), 'utf8');
+    fs.renameSync(temporaryFile, WELCOME_DM_CLEANUP_STATE_FILE);
+}
+
+function recordPendingWelcomeDmCleanup(channelId, messageIds) {
+    const pending = loadPendingWelcomeDmCleanups();
+    pending[channelId] = [...new Set(messageIds.filter(Boolean))];
+    savePendingWelcomeDmCleanups(pending);
+}
+
+function clearPendingWelcomeDmCleanup(channelId) {
+    const pending = loadPendingWelcomeDmCleanups();
+
+    if (!(channelId in pending)) {
+        return;
+    }
+
+    delete pending[channelId];
+    savePendingWelcomeDmCleanups(pending);
+}
+
+async function resumePendingWelcomeDmCleanups(client) {
+    const pending = loadPendingWelcomeDmCleanups();
+    const channelIds = Object.keys(pending);
+    let messagesDeleted = 0;
+    let channelsCleaned = 0;
+
+    for (const channelId of channelIds) {
+        const messageIds = pending[channelId];
+        const remainingMessageIds = [];
+
+        try {
+            const channel = await client.channels.fetch(channelId);
+
+            for (const messageId of messageIds) {
+                try {
+                    await channel.messages.delete(messageId);
+                    messagesDeleted++;
+                } catch (error) {
+                    // Discord's "unknown message" error means it was already
+                    // deleted (e.g. right before the restart) - nothing to do.
+                    if (error?.code !== 10008) {
+                        remainingMessageIds.push(messageId);
+                        console.error(`Failed to delete pending welcome DM message ${messageId} in channel ${channelId}:`, error);
+                    }
+                }
+            }
+
+            if (remainingMessageIds.length === 0) {
+                channelsCleaned++;
+            }
+        } catch (error) {
+            // An unknown DM channel cannot become fetchable on a later retry.
+            // Other errors (temporary API failures, missing access, etc.) stay
+            // queued for the next startup.
+            if (error?.code !== 10003) {
+                remainingMessageIds.push(...messageIds);
+                console.error(`Failed to resume welcome DM cleanup for channel ${channelId}:`, error);
+            } else {
+                channelsCleaned++;
+            }
+        }
+
+        if (remainingMessageIds.length > 0) {
+            recordPendingWelcomeDmCleanup(channelId, remainingMessageIds);
+        } else {
+            clearPendingWelcomeDmCleanup(channelId);
+        }
+    }
+
+    return {
+        channelsCleaned,
+        messagesDeleted
+    };
+}
 let sqlClient = null;
 
 function database() {
@@ -58,43 +144,8 @@ function commissionPaymentActions() {
     return require('./commissionPayments.js');
 }
 
-pregenerateAllGraphs();
-
-async function pregenerateAllGraphs() {
-    const stages = [
-        ['soldier', directRecruitSimulation, [0]],
-        ['direct-1', directRecruitSimulation, [1]],
-        ['direct-2', directRecruitSimulation, [2]],
-        ['direct-3', directRecruitSimulation, [3]],
-        ['general-1', generalSimulation, [1]],
-        ['general-2', generalSimulation, [2]],
-        ['general-3', generalSimulation, [3]],
-        ['emperor-1', emperorSimulation, [1]],
-        ['emperor-2', emperorSimulation, [2]],
-    ];
-
-    const results = await Promise.allSettled(stages.map(async ([stageName, simFn, args]) => {
-        if (welcomeGraphCache.has(stageName)) return;
-        const sim = simFn(null, 'welcome-root', ...args);
-        const imageBuffer = await renderRecruitTreeImage(sim.root, sim.recruits);
-        welcomeGraphCache.set(stageName, new AttachmentBuilder(imageBuffer, {
-            name: `welcome-${stageName}-graph.png`
-        }));
-    }));
-
-    for (const result of results) {
-        if (result.status === 'rejected') {
-            console.error('Failed to pre-generate welcome graph:', result.reason);
-        }
-    }
-}
-
 function buttonId(action, userId, isTest = false) {
     return `${BUTTON_PREFIX}:${action}:${userId}:${isTest ? 'test' : 'live'}`;
-}
-
-function ignModalId(userId, edition, isTest = false) {
-    return `${MODAL_PREFIX}:${userId}:${edition}:${isTest ? 'test' : 'live'}`;
 }
 
 function joinAllIgnModalId(userId, edition, isTest = false) {
@@ -114,49 +165,6 @@ function scopedButton(action, userId, label, style = ButtonStyle.Primary, isTest
 
 function row(...components) {
     return new ActionRowBuilder().addComponents(...components);
-}
-
-function clickHereRow() {
-    return row(
-        new ButtonBuilder()
-            .setCustomId(CLICK_HERE_COMPONENT_ID)
-            .setLabel('CLICK BELOW')
-            .setStyle(ButtonStyle.Primary)
-            .setDisabled(true)
-    );
-}
-
-function withClickHerePrompt(message) {
-    if (!message.components?.length || message.content.includes(CLICK_HERE_PROMPT)) {
-        return message;
-    }
-
-    return {
-        ...message,
-        content: `${message.content}\n\n${CLICK_HERE_PROMPT}`
-    };
-}
-
-function withClickHereComponent(message) {
-    if (!message.components?.length) {
-        return message;
-    }
-
-    const hasClickHereComponent = message.components.some(actionRow => {
-        return actionRow.components.some(component => component.data?.custom_id === CLICK_HERE_COMPONENT_ID);
-    });
-
-    if (hasClickHereComponent) {
-        return message;
-    }
-
-    return {
-        ...message,
-        components: [
-            clickHereRow(),
-            ...message.components
-        ]
-    };
 }
 
 function normalizeWelcomePayload(interaction, message) {
@@ -197,10 +205,6 @@ function escapeDiscordMarkdown(value) {
     return String(value)
         .replace(/\\/g, '\\\\')
         .replace(/([*_`~|])/g, '\\$1');
-}
-
-function memberDisplayName(member) {
-    return escapeDiscordMarkdown(member?.displayName || member?.user?.globalName || member?.user?.username || 'new penguin');
 }
 
 async function resolveGrandRecruiterId(recruiterId) {
@@ -246,320 +250,62 @@ function introMessage(member, context = {}) {
         ? `Our bots detected ${context.recruiterId ? `<@${context.recruiterId}>` : `**${safeInviterDisplayName}**`} as your recruiter. They${context.grandRecruiterId ? ` and <@${context.grandRecruiterId}>` : ''} can see this room and help if you get stuck.`
         : `No recruiter was detected for this join. If someone invited you, use \`/join recruiter:@TheirDiscord\` after this tutorial.`;
     const isTest = Boolean(context.isTest);
-    const locationLabel = context.isDm ? 'DM' : 'welcome room';
-    const testLine = isTest
-        ? `This is a **test preview**. It will not change ranks, accounts, giveaways, or player data.`
-        : parentLine;
 
     return {
         content:
-            `# 🐧 Welcome to the Penguin Mafia\n\n` +
-            `This ${locationLabel} is for **${memberDisplayName(member)}** ${member}.\n\n` +
-            `Here you can:\n\n` +
-            `• **Buy and sell spawners**\n` +
-            `• **Win giveaways**\n` +
-            `• **Build a team**\n\n` +
-            `Penguin skins are **encouraged**, but they are **not required**. 🐧\n\n` +
-            `${testLine}\n\n` +
-            `Press **Next** to begin.`,
+            `# 🐧 Welcome to the Penguin Mafia!\n\n` +
+            `Recruit players, grow your team, win giveaways, and earn rewards together.\n\n` +
+            `Let's get you set up in under a minute.\n\n` +
+            `${parentLine}`,
         allowedMentions: {
             users: [member.id, ...helperMentions],
             parse: []
         },
         components: [
-            row(scopedButton('rank_graph', member.id, 'Next', ButtonStyle.Success, isTest))
+            row(scopedButton('build_team', member.id, 'Next', ButtonStyle.Success, isTest))
         ]
     };
 }
 
-function simulatedWelcomePlayer(id, name, rankName, parentId = null) {
+function buildTeamMessage(userId, isTest = false) {
     return {
-        discord_id: id,
-        discord_username: name,
-        discord_display_name: name,
-        minecraft_ign: name,
-        rank_name: rankName,
-        parent_discord_id: parentId
-    };
-}
-
-function welcomeRootName() {
-    return 'You';
-}
-
-function welcomeRoot(member, userId, rankName) {
-    return simulatedWelcomePlayer(
-        userId || member?.id || member?.user?.id || 'welcome-root',
-        welcomeRootName(member),
-        rankName
-    );
-}
-
-function directRecruitSimulation(member, userId, recruitCount) {
-    const isCaptain = recruitCount >= 3;
-    const root = welcomeRoot(member, userId, isCaptain ? 'Penguin Captain' : DEFAULT_RANK_NAME);
-    const recruits = [];
-
-    for (let index = 1; index <= recruitCount; index++) {
-        recruits.push(simulatedWelcomePlayer(
-            `welcome-direct-${index}`,
-            `Recruit ${index}`,
-            DEFAULT_RANK_NAME,
-            root.discord_id
-        ));
-    }
-
-    return {
-        root,
-        recruits
-    };
-}
-
-function generalSimulation(member, userId, captainCount) {
-    const isGeneral = captainCount >= 3;
-    const root = welcomeRoot(member, userId, isGeneral ? 'Penguin General' : 'Penguin Captain');
-    const recruits = [];
-
-    for (let index = 1; index <= 3; index++) {
-        const trained = index <= captainCount;
-        const directRecruitId = `welcome-general-direct-${index}`;
-
-        recruits.push(simulatedWelcomePlayer(
-            directRecruitId,
-            `Recruit ${index}`,
-            trained ? 'Penguin Captain' : DEFAULT_RANK_NAME,
-            root.discord_id
-        ));
-
-        if (trained) {
-            for (let childIndex = 1; childIndex <= 3; childIndex++) {
-                recruits.push(simulatedWelcomePlayer(
-                    `welcome-general-${index}-${childIndex}`,
-                    `Recruit ${index}.${childIndex}`,
-                    DEFAULT_RANK_NAME,
-                    directRecruitId
-                ));
-            }
-        }
-    }
-
-    return {
-        root,
-        recruits
-    };
-}
-
-function emperorSimulation(member, userId, generalCount) {
-    const isEmperor = generalCount >= 2;
-    const root = welcomeRoot(member, userId, isEmperor ? 'Emperor Penguin' : 'Penguin General');
-    const recruits = [];
-
-    for (let index = 1; index <= 3; index++) {
-        const isGeneral = index <= generalCount;
-        const directRecruitId = `welcome-emperor-direct-${index}`;
-
-        recruits.push(simulatedWelcomePlayer(
-            directRecruitId,
-            `Recruit ${index}`,
-            isGeneral ? 'Penguin General' : 'Penguin Captain',
-            root.discord_id
-        ));
-
-        for (let childIndex = 1; childIndex <= 3; childIndex++) {
-            const captainId = `welcome-emperor-${index}-${childIndex}`;
-
-            recruits.push(simulatedWelcomePlayer(
-                captainId,
-                `Recruit ${index}.${childIndex}`,
-                isGeneral ? 'Penguin Captain' : DEFAULT_RANK_NAME,
-                directRecruitId
-            ));
-
-            if (isGeneral) {
-                for (let recruitIndex = 1; recruitIndex <= 3; recruitIndex++) {
-                    recruits.push(simulatedWelcomePlayer(
-                        `welcome-emperor-${index}-${childIndex}-${recruitIndex}`,
-                        `Recruit ${index}.${childIndex}.${recruitIndex}`,
-                        DEFAULT_RANK_NAME,
-                        captainId
-                    ));
-                }
-            }
-        }
-    }
-
-    return {
-        root,
-        recruits
-    };
-}
-
-async function welcomeGraphAttachment(stageName, simulation) {
-    const cached = welcomeGraphCache.get(stageName);
-    if (cached) return cached;
-
-    const imageBuffer = await renderRecruitTreeImage(simulation.root, simulation.recruits);
-    const attachment = new AttachmentBuilder(imageBuffer, {
-        name: `welcome-${stageName}-graph.png`
-    });
-
-    welcomeGraphCache.set(stageName, attachment);
-    return attachment;
-}
-
-async function withWelcomeGraph(stageName, simulation, message) {
-    return {
-        ...message,
-        files: [
-            await welcomeGraphAttachment(stageName, simulation)
-        ]
-    };
-}
-
-async function rankIntroMessage(member, userId, isTest = false) {
-    return withWelcomeGraph('soldier', directRecruitSimulation(member, userId, 0), {
         content:
-            `# 1️⃣ Your first rank\n\n` +
-            `Your first rank is **${DEFAULT_RANK_NAME}**.\n\n` +
-            `You start with a base commission rate of **40%**.\n\n` +
-            `Your first upgrade is **Penguin Captain**, which starts when you build your team.`,
+            `# 👥 Build Your Team\n\n` +
+            `Every player you recruit becomes part of your recruit tree.\n\n` +
+            `As your team participates and earns rewards, you'll earn commission bonuses too.\n\n` +
+            `Use \`/graph\` to view your recruit tree at any time.\n\n` +
+            `More penguins. More power.`,
         components: [
-            row(scopedButton('direct_recruit_1', userId, 'Next', ButtonStyle.Success, isTest))
-        ]
-    });
-}
-
-async function directRecruitMessage(member, userId, recruitCount, isTest = false) {
-    const isCaptain = recruitCount >= 3;
-
-    return withWelcomeGraph(`direct-${recruitCount}`, directRecruitSimulation(member, userId, recruitCount), {
-        content:
-            `# 2️⃣ Let’s add recruits to your team\n\n` +
-            (
-                isCaptain
-                    ? `When you get **3 direct recruits**, you become a **Penguin Captain** and your commission rate becomes **60%**.`
-                    : `Recruit ${recruitCount} joined your team. Add the next recruit to keep climbing.`
-            ),
-        components: [
-            row(
-                isCaptain
-                    ? scopedButton('general_train_1', userId, 'Next', ButtonStyle.Success, isTest)
-                    : scopedButton(`direct_recruit_${recruitCount + 1}`, userId, 'Next', ButtonStyle.Success, isTest)
-            )
-        ]
-    });
-}
-
-async function generalTrainingMessage(member, userId, captainCount, isTest = false) {
-    const isGeneral = captainCount >= 3;
-
-    return withWelcomeGraph(`general-${captainCount}`, generalSimulation(member, userId, captainCount), {
-        content:
-            `# 3️⃣ Help your recruits build their teams\n\n` +
-            (
-                isGeneral
-                    ? `Once you train **3 direct recruits** to reach **Captain**, you become a **Penguin General** with an **80%** commission rate.`
-                    : `Recruit ${captainCount} just reached **Penguin Captain**. Keep training the next direct recruit.`
-            ),
-        components: [
-            row(
-                isGeneral
-                    ? scopedButton('emperor_train_1', userId, 'Next', ButtonStyle.Success, isTest)
-                    : scopedButton(`general_train_${captainCount + 1}`, userId, 'Next', ButtonStyle.Success, isTest)
-            )
-        ]
-    });
-}
-
-async function emperorTrainingMessage(member, userId, generalCount, isTest = false) {
-    const isEmperor = generalCount >= 2;
-
-    return withWelcomeGraph(`emperor-${generalCount}`, emperorSimulation(member, userId, generalCount), {
-        content:
-            `# 4️⃣ The Emperor path\n\n` +
-            (
-                isEmperor
-                    ? `If you manage to make it this far, you’ve done something right. **Emperor Penguin** is the highest rank. Once you train **2 direct recruits** to become **General**, you earn **Emperor Penguin**.`
-                    : `Recruit ${generalCount} became a **Penguin General** because their Captains built teams too. Train one more General to reach the top.`
-            ),
-        components: [
-            row(
-                isEmperor
-                    ? scopedButton('why_team', userId, 'Next', ButtonStyle.Success, isTest)
-                    : scopedButton(`emperor_train_${generalCount + 1}`, userId, 'Next', ButtonStyle.Success, isTest)
-            )
-        ]
-    });
-}
-
-function whyTeamMessage(userId, isTest = false) {
-    return {
-        content:
-            `# 5️⃣ Why do we want a large team?\n\n` +
-            `If any teammate under you:\n\n` +
-            `• Wins a **giveaway**\n` +
-            `• Earns the **daily recruit bonus**\n` +
-            `• Earns money from **spawner trading**\n\n` +
-            `You can earn a portion through your commission chain.\n\n` +
-            `That is the point of building a strong tree: when your team wins, the whole branch can eat.`,
-        components: [
-            row(scopedButton('giveaway_prompt', userId, 'Next', ButtonStyle.Success, isTest))
+            row(scopedButton('rank_up', userId, 'Next', ButtonStyle.Success, isTest))
         ]
     };
 }
 
-async function activeGiveawaySummary(guild) {
-    const rows = await database()`
-        select
-            count(*)::int as active_count,
-            coalesce(sum(amount), 0)::bigint as total_amount
-        from giveaways
-        where guild_id = ${guild.id}
-            and status = 'active'
-            and ends_at > now()
-    `;
-
-    return rows[0] || {
-        active_count: 0,
-        total_amount: 0n
-    };
-}
-
-async function giveawayJoinPromptMessage(guild, userId, isTest = false) {
-    let giveawayLine;
-
-    if (isTest) {
-        giveawayLine = '🧪 Test preview: no live giveaway data will be read or changed.';
-    } else {
-        const summary = await activeGiveawaySummary(guild);
-        const activeCount = Number(summary.active_count || 0);
-        const totalAmount = BigInt(summary.total_amount || 0);
-        giveawayLine = activeCount > 0
-            ? `There ${activeCount === 1 ? 'is' : 'are'} currently **${activeCount}** active giveaway${activeCount === 1 ? '' : 's'} with **${formatDonationAmount(totalAmount)}** in prize pools.`
-            : `There are no active giveaways right now, but this is where new active giveaways will appear.`;
-    }
-
+function rankUpMessage(userId, isTest = false) {
     return {
         content:
-            `# 6️⃣ Active giveaways\n\n` +
-            `${giveawayLine}\n\n` +
-            `Do you want to join all active giveaways at once?`,
+            `# 👑 Climb the Ranks\n\n` +
+            `🐧 Penguin Soldier\n` +
+            `🎩 Penguin Captain\n` +
+            `⭐ Penguin General\n` +
+            `👑 Emperor Penguin\n\n` +
+            `Recruit active players and help them grow to unlock higher ranks and better commission bonuses.\n\n` +
+            `Check #🐧-rank-info for the full breakdown of how ranks and commissions work.`,
         components: [
-            row(
-                scopedButton('giveaway_join_all_yes', userId, 'Yes', ButtonStyle.Success, isTest),
-                scopedButton('giveaway_join_all_no', userId, 'No', ButtonStyle.Secondary, isTest)
-            )
+            row(scopedButton('link_minecraft', userId, 'Next', ButtonStyle.Success, isTest))
         ]
     };
 }
 
-function joinAllGiveawaysInfoMessage(userId, isTest = false) {
+function linkMinecraftMessage(userId, isTest = false) {
     return {
         content:
-            `# 💰 Instant giveaway payouts\n\n` +
-            `Our giveaways are hosted by players in the community, and the best part is that we have **instant payouts**.\n\n` +
-            `Please give us your Minecraft IGN and edition so we can pay you if you win. After you link here, you will automatically be entered into all active giveaways you are eligible for.\n\n` +
-            `If you do not give us your IGN now, we can still handle payout manually later, but it will be slower.`,
+            `# 🎮 One Last Step\n\n` +
+            `To send you DonutSMP rewards automatically, we need:\n\n` +
+            `📝 Your Minecraft IGN\n` +
+            `💻 Your edition (Java or Bedrock)\n\n` +
+            `We only use this information to identify your in-game account for payouts and giveaways. We will never ask for your password, email, Microsoft account, or login information.\n\n` +
+            `Without your IGN, we can't automatically send giveaway prizes or other rewards.`,
         components: [
             row(
                 scopedButton('join_all_ign_java', userId, 'Java', ButtonStyle.Success, isTest),
@@ -572,7 +318,7 @@ function joinAllGiveawaysInfoMessage(userId, isTest = false) {
 
 function finalMessage(userId, linkedIgn = null, edition = null, options = {}) {
     const linkedLine = linkedIgn
-        ? `✅ Linked account: **${linkedIgn}**${edition ? ` (${minecraftEditionLabel(edition)})` : ''}`
+        ? `Your account has been linked successfully.\n\n✅ **${linkedIgn}**${edition ? ` (${minecraftEditionLabel(edition)})` : ''}`
         : (options.skipMessage || `⏭️ IGN skipped. Use \`/penguinlink\` later for faster payouts.`);
     const giveawayLine = options.giveawayEntryResult
         ? `\n🎉 Entered **${options.giveawayEntryResult.inserted_count}** new active giveaway${options.giveawayEntryResult.inserted_count === 1 ? '' : 's'} out of **${options.giveawayEntryResult.eligible_count}** eligible.`
@@ -580,11 +326,12 @@ function finalMessage(userId, linkedIgn = null, edition = null, options = {}) {
 
     return {
         content:
-            `# 🐧 Tutorial complete\n\n` +
-            `You've completed the tutorial. **Welcome to the Penguin Mafia!**\n\n` +
+            `# ✅ You're In!\n\n` +
+            `🐧 Welcome to the Penguin Mafia!\n\n` +
             `${linkedLine}${giveawayLine}\n\n` +
-            `🎖️ Rank ready: **${DEFAULT_RANK_NAME}**\n\n` +
-            `Use \`/graph\` to view your recruit tree at any time.`,
+            `🎉 You're now a **${DEFAULT_RANK_NAME}**.\n\n` +
+            `Use \`/graph\` anytime to view your recruit tree, and visit #🐧-rank-info to learn how ranks and commissions work.\n\n` +
+            `Good luck, and start building your empire!`,
         components: []
     };
 }
@@ -618,18 +365,97 @@ async function scheduleWelcomeChannelDelete(interaction, seconds = WELCOME_SELF_
         }
     }
 
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (seconds > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
 
-    setTimeout(async () => {
-        try {
-            if (channel?.deletable) {
-                await channel.delete('Penguin Mafia welcome flow completed');
-            }
-        } catch (error) {
-            console.error(`Failed to delete welcome channel ${channel?.id || 'unknown'}:`);
-            console.error(error);
+    try {
+        if (!channel?.deletable) {
+            console.error(`Failed to delete welcome channel ${channel?.id || 'unknown'}: channel is not deletable.`);
+            return false;
         }
-    }, 1_000);
+
+        await channel.delete('Penguin Mafia welcome flow completed');
+        return true;
+    } catch (error) {
+        // Unknown channel means another cleanup path already deleted it.
+        if (error?.code === 10003) {
+            return true;
+        }
+
+        console.error(`Failed to delete welcome channel ${channel?.id || 'unknown'}:`);
+        console.error(error);
+        return false;
+    }
+}
+
+async function scheduleWelcomeMessageDelete(interaction, seconds = WELCOME_SELF_DESTRUCT_SECONDS) {
+    const channelId = interaction.channel.id;
+    let finalMessageId = null;
+
+    try {
+        const finalMessage = interaction.message || await interaction.fetchReply();
+        finalMessageId = finalMessage?.id || null;
+    } catch (error) {
+        console.error('Failed to resolve welcome final message id for self-destruct tracking:');
+        console.error(error);
+    }
+
+    let countdownMessage = null;
+
+    try {
+        countdownMessage = await interaction.followUp({
+            content: `💣 This message will self destruct in **${seconds}**...`,
+            fetchReply: true
+        });
+    } catch (error) {
+        console.error('Failed to start welcome message countdown:');
+        console.error(error);
+    }
+
+    const pendingMessageIds = [finalMessageId, countdownMessage?.id].filter(Boolean);
+
+    if (pendingMessageIds.length > 0) {
+        recordPendingWelcomeDmCleanup(channelId, pendingMessageIds);
+    }
+
+    for (let remaining = seconds - 1; remaining >= 1; remaining--) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        if (!countdownMessage) continue;
+
+        try {
+            await countdownMessage.edit({
+                content: `💣 This message will self destruct in **${remaining}**...`
+            });
+        } catch {
+            countdownMessage = null;
+        }
+    }
+
+    if (seconds > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    const remainingMessageIds = [];
+
+    for (const messageId of pendingMessageIds) {
+        try {
+            await interaction.channel.messages.delete(messageId);
+        } catch (error) {
+            if (error?.code !== 10008) {
+                remainingMessageIds.push(messageId);
+                console.error(`Failed to delete welcome DM message ${messageId} in channel ${channelId}:`);
+                console.error(error);
+            }
+        }
+    }
+
+    if (remainingMessageIds.length > 0) {
+        recordPendingWelcomeDmCleanup(channelId, remainingMessageIds);
+    } else {
+        clearPendingWelcomeDmCleanup(channelId);
+    }
 }
 
 async function getOnboardingChannels(guild, context = {}) {
@@ -879,6 +705,55 @@ async function cleanupWelcomeChannelsForMissingMembers(guild, members) {
     return deletedChannels;
 }
 
+async function cleanupCompletedWelcomeChannels(guild) {
+    const channels = await guild.channels.fetch();
+    const welcomeChannels = channels.filter(channel => {
+        return channel?.type === ChannelType.GuildText &&
+            /^Penguin Mafia onboarding:(\d{15,25})$/.test(String(channel.topic || ''));
+    });
+
+    if (welcomeChannels.size === 0) {
+        return [];
+    }
+
+    const memberIds = [...welcomeChannels.values()].map(channel => {
+        return String(channel.topic).match(/^Penguin Mafia onboarding:(\d{15,25})$/)[1];
+    });
+
+    const rows = await database()`
+        select discord_id
+        from players
+        where discord_id = any(${memberIds})
+            and welcome_completed = true
+    `;
+    const completedMemberIds = new Set(rows.map(row => row.discord_id));
+    const deletedChannels = [];
+
+    for (const [, channel] of welcomeChannels) {
+        const match = String(channel.topic).match(/^Penguin Mafia onboarding:(\d{15,25})$/);
+        const memberId = match[1];
+
+        if (!completedMemberIds.has(memberId)) {
+            continue;
+        }
+
+        try {
+            if (!channel.deletable) {
+                console.log(`Could not delete completed welcome channel ${channel.name} (${channel.id}): channel is not deletable.`);
+                continue;
+            }
+
+            await channel.delete('Penguin Mafia onboarding already completed; self-destruct did not finish before a restart');
+            deletedChannels.push(channel);
+        } catch (error) {
+            console.error(`Could not delete completed welcome channel ${channel.name} (${channel.id}):`);
+            console.error(error);
+        }
+    }
+
+    return deletedChannels;
+}
+
 async function cleanupWelcomeChannelForMember(guild, userId) {
     const channels = await guild.channels.fetch();
     const welcomeChannel = channels.find(channel => {
@@ -933,20 +808,6 @@ async function completeOnboarding(member, linkedIgn = null, minecraftEdition = n
     }
 }
 
-async function saveOnboardingIgn(member, linkedIgn, minecraftEdition) {
-    await database()`
-        update players
-        set
-            minecraft_ign = ${linkedIgn},
-            minecraft_edition = ${minecraftEdition},
-            account_link_reminders_disabled = false,
-            updated_at = now()
-        where discord_id = ${member.id}
-    `;
-
-    return setMemberNicknameToIgn(member, linkedIgn);
-}
-
 async function skipOnboardingIgn(userId) {
     await database()`
         update players
@@ -979,6 +840,57 @@ function validMinecraftIgn(minecraftIgn) {
     return /^[A-Za-z0-9_]{3,16}$/.test(minecraftIgn);
 }
 
+async function acknowledgeWelcomeCompletion(interaction) {
+    if (interaction.deferred || interaction.replied) {
+        return;
+    }
+
+    if (typeof interaction.deferUpdate === 'function' && interaction.message) {
+        await interaction.deferUpdate();
+        return;
+    }
+
+    await interaction.deferReply();
+}
+
+async function payWelcomeCompletionBonus(interaction, minecraftIgn) {
+    const bonusRows = await database()`
+        select value from bot_state where key = 'welcome_bonus_paid:' || ${interaction.user.id} limit 1
+    `;
+
+    if (bonusRows[0]?.value) {
+        return;
+    }
+
+    try {
+        await commissionPaymentActions().ensureMinecraftBotConnected({
+            guild: interaction.guild,
+            source: 'Welcome bonus'
+        });
+
+        await commissionPaymentActions().payPlayerAfterBusyWait(minecraftIgn, '1000', {
+            guild: interaction.guild,
+            source: `Welcome bonus for ${interaction.user.id}`,
+            actorId: interaction.user.id,
+            suppressPaymentLog: true
+        });
+
+        await database()`
+            insert into bot_state (key, value)
+            values ('welcome_bonus_paid:' || ${interaction.user.id}, 'true')
+            on conflict (key) do nothing
+        `;
+
+        await interaction.user.send(
+            `🐧 **Welcome to the Penguin Mafia!**\n\n` +
+            `You've received a **1,000** welcome bonus for linking your account!\n\n` +
+            `Start recruiting to climb the ranks and earn more rewards. Use \`/graph\` to see your tree.`
+        ).catch(() => {});
+    } catch (bonusError) {
+        console.log(`Welcome bonus failed during onboarding for ${interaction.user.tag}: ${bonusError.message}`);
+    }
+}
+
 async function respondWithWelcomeFinal(interaction, payload) {
     if (typeof interaction.update === 'function' && interaction.message) {
         if (!interaction.deferred && !interaction.replied) {
@@ -1005,43 +917,63 @@ async function finishOnboardingInteraction(interaction, options) {
         minecraftEdition = null,
         skipMessage = null,
         giveawaySkippedLine = null,
-        enterAllGiveaways = false,
-        allowUnlinkedGiveawayEntry = false
+        enterAllGiveaways = false
     } = options;
     let giveawayEntryResult = null;
     let finalGiveawaySkippedLine = giveawaySkippedLine;
+
+    // Acknowledge before database, Discord role, giveaway, or Minecraft work.
+    // Discord invalidates an unacknowledged component/modal interaction after
+    // roughly three seconds, which previously prevented the countdown from
+    // ever being scheduled when those operations were slow.
+    await acknowledgeWelcomeCompletion(interaction);
 
     if (!isTest) {
         const member = await interaction.guild.members.fetch(targetUserId);
         await completeOnboarding(member, linkedIgn, minecraftEdition);
 
-        if (enterAllGiveaways && ((linkedIgn && minecraftEdition) || allowUnlinkedGiveawayEntry)) {
-            const entryResult = await giveawayActions().enterAllActiveGiveawaysForUser(
-                interaction.guild,
-                targetUserId,
-                database()
-            );
+        if (enterAllGiveaways && linkedIgn && minecraftEdition) {
+            try {
+                const entryResult = await giveawayActions().enterAllActiveGiveawaysForUser(
+                    interaction.guild,
+                    targetUserId,
+                    database()
+                );
 
-            if (entryResult.eligible_count > 0 || entryResult.own_skipped > 0) {
-                giveawayEntryResult = entryResult;
-            } else {
-                finalGiveawaySkippedLine = 'ℹ️ There were no active eligible giveaways to enter right now.';
+                if (entryResult.eligible_count > 0 || entryResult.own_skipped > 0) {
+                    giveawayEntryResult = entryResult;
+                } else {
+                    finalGiveawaySkippedLine = 'ℹ️ There were no active eligible giveaways to enter right now.';
+                }
+            } catch (error) {
+                finalGiveawaySkippedLine = '⚠️ Automatic giveaway entry could not finish. You can enter active giveaways normally after welcome.';
+                console.error(`Welcome giveaway entry failed for ${targetUserId}:`);
+                console.error(error);
             }
         }
-    } else if (enterAllGiveaways) {
-        finalGiveawaySkippedLine = '🧪 Test preview: no giveaways were entered and no rank was assigned.';
     }
 
-    await respondWithWelcomeFinal(
-        interaction,
-        finalMessage(targetUserId, linkedIgn, minecraftEdition, {
-            skipMessage,
-            giveawayEntryResult,
-            giveawaySkippedLine: finalGiveawaySkippedLine
-        })
-    );
-    if (!isTest || !interaction.channel?.isDMBased?.()) {
-        await scheduleWelcomeChannelDelete(interaction);
+    try {
+        await respondWithWelcomeFinal(
+            interaction,
+            finalMessage(targetUserId, linkedIgn, minecraftEdition, {
+                skipMessage,
+                giveawayEntryResult,
+                giveawaySkippedLine: finalGiveawaySkippedLine
+            })
+        );
+    } finally {
+        const cleanupPromise = interaction.channel?.isDMBased?.()
+            ? scheduleWelcomeMessageDelete(interaction)
+            : scheduleWelcomeChannelDelete(interaction);
+
+        // The database completion flag is the durable source of truth for
+        // guild rooms. Startup and weekly maintenance remove a completed room
+        // if the process exits while this in-memory countdown is running.
+        void cleanupPromise.catch(error => {
+            console.error(`Welcome cleanup pipeline failed for channel ${interaction.channel?.id || 'unknown'}:`);
+            console.error(error);
+        });
     }
 }
 
@@ -1062,82 +994,37 @@ async function handleWelcomeButton(interaction) {
         return true;
     }
 
-    if (action === 'start' || action === 'rank_graph') {
-        await updateWithReadingDelay(interaction, () => rankIntroMessage(interaction.member, targetUserId, isTest));
+    if (
+        action === 'start' ||
+        action === 'rank_graph' ||
+        action === 'build_team' ||
+        action === 'ranks' ||
+        action.startsWith('direct_recruit_')
+    ) {
+        await updateWithReadingDelay(interaction, buildTeamMessage(targetUserId, isTest));
         return true;
     }
 
-    if (action.startsWith('direct_recruit_')) {
-        const recruitCount = Number(action.replace('direct_recruit_', ''));
-        await updateWithReadingDelay(interaction, () => directRecruitMessage(interaction.member, targetUserId, recruitCount, isTest));
+    if (
+        action === 'rank_up' ||
+        action === 'recruit' ||
+        action === 'why_team' ||
+        action.startsWith('general_train_') ||
+        action.startsWith('emperor_train_')
+    ) {
+        await updateWithReadingDelay(interaction, rankUpMessage(targetUserId, isTest));
         return true;
     }
 
-    if (action.startsWith('general_train_')) {
-        const captainCount = Number(action.replace('general_train_', ''));
-        await updateWithReadingDelay(interaction, () => generalTrainingMessage(interaction.member, targetUserId, captainCount, isTest));
-        return true;
-    }
-
-    if (action.startsWith('emperor_train_')) {
-        const generalCount = Number(action.replace('emperor_train_', ''));
-        await updateWithReadingDelay(interaction, () => emperorTrainingMessage(interaction.member, targetUserId, generalCount, isTest));
-        return true;
-    }
-
-    if (action === 'why_team') {
-        await updateWithReadingDelay(interaction, whyTeamMessage(targetUserId, isTest));
-        return true;
-    }
-
-    if (action === 'giveaway_prompt') {
-        if (isTest) {
-            await updateWithReadingDelay(
-                interaction,
-                () => giveawayJoinPromptMessage(interaction.guild, targetUserId, true)
-            );
-            return true;
-        }
-
-        const rows = await database()`
-            select minecraft_ign, minecraft_edition
-            from players
-            where discord_id = ${targetUserId}
-            limit 1
-        `;
-        const player = rows[0];
-
-        if (player?.minecraft_ign && player?.minecraft_edition) {
-            await finishOnboardingInteraction(interaction, {
-                targetUserId,
-                isTest,
-                linkedIgn: player.minecraft_ign,
-                minecraftEdition: player.minecraft_edition,
-                enterAllGiveaways: true
-            });
-            return true;
-        }
-
-        await updateWithReadingDelay(interaction, () => giveawayJoinPromptMessage(interaction.guild, targetUserId, isTest));
-        return true;
-    }
-
-    if (action === 'giveaway_join_all_yes' || action === 'giveaway_pay_yes' || action === 'ign') {
-        await updateWithReadingDelay(interaction, joinAllGiveawaysInfoMessage(targetUserId, isTest));
-        return true;
-    }
-
-    if (action === 'giveaway_join_all_no' || action === 'giveaway_pay_no') {
-        if (!isTest) {
-            await skipOnboardingIgn(targetUserId);
-        }
-
-        await finishOnboardingInteraction(interaction, {
-            targetUserId,
-            isTest,
-            skipMessage: `⏭️ No Minecraft username linked. If you ever want instant giveaway payouts, use \`/penguinlink\`.`,
-            giveawaySkippedLine: 'Skipped joining active giveaways from onboarding.'
-        });
+    if (
+        action === 'link_minecraft' ||
+        action === 'giveaway_prompt' ||
+        action === 'account_link_info' ||
+        action === 'giveaway_join_all_yes' ||
+        action === 'giveaway_pay_yes' ||
+        action === 'ign'
+    ) {
+        await updateWithReadingDelay(interaction, linkMinecraftMessage(targetUserId, isTest));
         return true;
     }
 
@@ -1148,65 +1035,40 @@ async function handleWelcomeButton(interaction) {
         action === 'enter_ign_bedrock'
     ) {
         const minecraftEdition = action.endsWith('bedrock') ? 'bedrock' : 'java';
-        const shouldEnterAll = action.startsWith('join_all_');
-        const modalId = shouldEnterAll
-            ? joinAllIgnModalId(targetUserId, minecraftEdition, isTest)
-            : ignModalId(targetUserId, minecraftEdition, isTest);
+        const modalId = joinAllIgnModalId(targetUserId, minecraftEdition, isTest);
 
         await interaction.showModal(buildIgnModal(modalId, minecraftEdition));
         return true;
     }
 
-    if (action === 'join_all_skip' || action === 'skip_ign' || action === 'skip_ign_later') {
+    if (
+        action === 'join_all_skip' ||
+        action === 'skip_ign' ||
+        action === 'skip_ign_later' ||
+        action === 'giveaway_join_all_no' ||
+        action === 'giveaway_pay_no'
+    ) {
+        await acknowledgeWelcomeCompletion(interaction);
+
         if (!isTest) {
             await skipOnboardingIgn(targetUserId);
         }
 
-        const shouldEnterAll = action === 'join_all_skip';
-
         await finishOnboardingInteraction(interaction, {
             targetUserId,
             isTest,
-            skipMessage: shouldEnterAll
-                ? `⏭️ Username skipped for now. If you win, payout may need to be handled manually and can be slower.`
-                : `⏭️ Username skipped for now. You can link it later with \`/penguinlink\`.`,
-            giveawaySkippedLine: shouldEnterAll ? null : 'Skipped automatic giveaway entry because no Minecraft account was linked.',
-            enterAllGiveaways: shouldEnterAll,
-            allowUnlinkedGiveawayEntry: shouldEnterAll
+            skipMessage: `⏭️ Username skipped for now. You can link it later with \`/penguinlink\`.`,
+            giveawaySkippedLine: 'Skipped automatic giveaway entry because no Minecraft account was linked.'
         });
         return true;
     }
 
     if (action === 'done') {
-        if (!isTest) {
-            const member = await interaction.guild.members.fetch(targetUserId);
-            await completeOnboarding(member);
-        }
-
-        await updateWithReadingDelay(interaction, {
-            content:
-                `# 🐧 WELCOME TO THE PENGUIN MAFIA\n\n` +
-                `Training complete. Your **${DEFAULT_RANK_NAME}** role is active. Enter the iceberg. 🧊✨`,
-            components: []
+        await acknowledgeWelcomeCompletion(interaction);
+        await finishOnboardingInteraction(interaction, {
+            targetUserId,
+            isTest
         });
-        if (!isTest || !interaction.channel?.isDMBased?.()) {
-            await scheduleWelcomeChannelDelete(interaction);
-        }
-        return true;
-    }
-
-    if (action === 'ranks') {
-        await updateWithReadingDelay(interaction, () => directRecruitMessage(interaction.member, targetUserId, 1, isTest));
-        return true;
-    }
-
-    if (action === 'recruit') {
-        await updateWithReadingDelay(interaction, whyTeamMessage(targetUserId, isTest));
-        return true;
-    }
-
-    if (action === 'account_link_info') {
-        await updateWithReadingDelay(interaction, () => giveawayJoinPromptMessage(interaction.guild, targetUserId, isTest));
         return true;
     }
 
@@ -1243,44 +1105,10 @@ async function handleWelcomeModal(interaction) {
         return true;
     }
 
+    await acknowledgeWelcomeCompletion(interaction);
+
     if (!isTest) {
         console.log(`Welcome IGN link for ${interaction.user.tag}: ${minecraftIgn}${minecraftEdition ? ` (${minecraftEditionLabel(minecraftEdition)})` : ''}. Join-all=${isJoinAllModal ? 'yes' : 'no'}.`);
-    }
-
-    if (!isTest) {
-        const bonusRows = await database()`
-            select value from bot_state where key = 'welcome_bonus_paid:' || ${interaction.user.id} limit 1
-        `;
-
-        if (!bonusRows[0]?.value) {
-            try {
-                await commissionPaymentActions().ensureMinecraftBotConnected({
-                    guild: interaction.guild,
-                    source: 'Welcome bonus'
-                });
-
-                await commissionPaymentActions().payPlayerAfterBusyWait(minecraftIgn, '1000', {
-                    guild: interaction.guild,
-                    source: `Welcome bonus for ${interaction.user.id}`,
-                    actorId: interaction.user.id,
-                    suppressPaymentLog: true
-                });
-
-                await database()`
-                    insert into bot_state (key, value)
-                    values ('welcome_bonus_paid:' || ${interaction.user.id}, 'true')
-                    on conflict (key) do nothing
-                `;
-
-                await interaction.user.send(
-                    `🐧 **Welcome to the Penguin Mafia!**\n\n` +
-                    `You've received a **1,000** welcome bonus for linking your account!\n\n` +
-                    `Start recruiting to climb the ranks and earn more rewards. Use \`/graph\` to see your tree.`
-                ).catch(() => {});
-            } catch (bonusError) {
-                console.log(`Welcome bonus failed during onboarding for ${interaction.user.tag}: ${bonusError.message}`);
-            }
-        }
     }
 
     await finishOnboardingInteraction(interaction, {
@@ -1290,6 +1118,13 @@ async function handleWelcomeModal(interaction) {
         minecraftEdition,
         enterAllGiveaways: isJoinAllModal
     });
+
+    // Minecraft can be disconnected or busy for up to two minutes. The
+    // durable Discord completion and cleanup countdown must already be active
+    // before this external side effect is attempted.
+    if (!isTest) {
+        await payWelcomeCompletionBonus(interaction, minecraftIgn);
+    }
 
     return true;
 }
@@ -1320,11 +1155,20 @@ async function startTestOnboardingInDm(userOrMember) {
 }
 
 module.exports = {
+    cleanupCompletedWelcomeChannels,
     cleanupWelcomeChannelForMember,
     cleanupWelcomeChannelsForMissingMembers,
     remindIncompleteWelcomeMembers,
+    resumePendingWelcomeDmCleanups,
     startTestOnboardingInDm,
     startOnboardingForMember,
     handleWelcomeButton,
-    handleWelcomeModal
+    handleWelcomeModal,
+    _test: {
+        acknowledgeWelcomeCompletion,
+        clearPendingWelcomeDmCleanup,
+        loadPendingWelcomeDmCleanups,
+        recordPendingWelcomeDmCleanup,
+        scheduleWelcomeChannelDelete
+    }
 };

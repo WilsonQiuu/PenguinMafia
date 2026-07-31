@@ -44,10 +44,12 @@ const {
     runSaturdayNoonWelcomeMaintenanceForGuild
 } = require('./utils/weeklySchedule.js');
 const {
+    cleanupCompletedWelcomeChannels,
     cleanupWelcomeChannelForMember,
     cleanupWelcomeChannelsForMissingMembers,
     handleWelcomeButton,
     handleWelcomeModal,
+    resumePendingWelcomeDmCleanups,
     startOnboardingForMember
 } = require('./utils/onboarding.js');
 const {
@@ -2294,6 +2296,20 @@ client.once(Events.ClientReady, async () => {
         }
     }
 
+    try {
+        const { channelsCleaned, messagesDeleted } = await resumePendingWelcomeDmCleanups(client);
+
+        if (channelsCleaned > 0) {
+            console.log(
+                `Resumed ${messagesDeleted} welcome tutorial message(s) left mid self-destruct ` +
+                `across ${channelsCleaned} channel(s).`
+            );
+        }
+    } catch (error) {
+        console.error('Failed to resume pending welcome DM self-destructs:', error);
+    }
+    logReadyStep('welcome DM self-destruct cleanup checked');
+
     autoStartMinecraftBot();
     logReadyStep('minecraft auto-start checked');
 
@@ -2409,6 +2425,22 @@ client.once(Events.ClientReady, async () => {
             logReadyStep(`member sync complete for ${startupContext.guild.name}`);
         } catch (error) {
             console.error(`Member sync failed for ${startupContext.guild.name}`);
+            console.error(error);
+        }
+    }
+
+    // This recovery must not depend on guild setup or the much larger member
+    // sync pipeline succeeding. welcome_completed is durable, so any room left
+    // behind by a restart during its countdown is safe to remove here.
+    for (const [, guild] of client.guilds.cache) {
+        try {
+            const deletedCompletedWelcomeChannels = await cleanupCompletedWelcomeChannels(guild);
+            logReadyStep(
+                `completed welcome cleanup for ${guild.name} ` +
+                `(${deletedCompletedWelcomeChannels.length} channels deleted)`
+            );
+        } catch (error) {
+            console.error(`Completed welcome cleanup failed for ${guild.name}:`);
             console.error(error);
         }
     }

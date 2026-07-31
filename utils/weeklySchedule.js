@@ -12,6 +12,7 @@ const {
     sendWeeklyElectionAndGiveawayReminderForGuild
 } = require('./giveaways.js');
 const {
+    cleanupCompletedWelcomeChannels,
     cleanupWelcomeChannelsForMissingMembers,
     remindIncompleteWelcomeMembers
 } = require('./onboarding.js');
@@ -151,7 +152,8 @@ async function runSaturdayNoonWelcomeMaintenanceForGuild(guild, db = sql, now = 
         if (!state.cleanupDone) {
             const members = await guild.members.fetch();
             const deletedChannels = await cleanupWelcomeChannelsForMissingMembers(guild, members);
-            deletedWelcomeChannels = deletedChannels.length;
+            const deletedCompletedChannels = await cleanupCompletedWelcomeChannels(guild);
+            deletedWelcomeChannels = deletedChannels.length + deletedCompletedChannels.length;
             cleanupDone = true;
             state = {
                 ...state,
