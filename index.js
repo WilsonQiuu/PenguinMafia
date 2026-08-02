@@ -103,6 +103,7 @@ const {
 } = require('./utils/teams.js');
 const {
     ensureMonthlyTeamRewardForGuild,
+    processPendingMonthlyTeamRewardPayoutsForGuild,
     processIncomingTeamMonthlyRewardPayment
 } = require('./utils/teamMonthlyRewards.js');
 const {
@@ -220,7 +221,7 @@ function autoStartMinecraftBot() {
 }
 
 function monthlyTeamPaymentHandled(result) {
-    return ['payouts_queued', 'too_low', 'already_processing'].includes(result?.status);
+    return ['payouts_queued', 'paused', 'too_low', 'already_processing'].includes(result?.status);
 }
 
 function logMonthlyTeamPaymentResult(guild, payment, result) {
@@ -240,6 +241,33 @@ function logMonthlyTeamPaymentResult(guild, payment, result) {
                     ? `<@${result.donationCredit.playerId}>`
                     : 'Not credited — payer not linked',
                 'Payout recipients': String(payoutCount)
+            }
+        );
+        updateDonationLeaderboardForGuild(guild, sql).catch(error => {
+            console.error(`Donation leaderboard refresh failed for ${guild.name}:`);
+            console.error(error);
+        });
+        updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql).catch(error => {
+            console.error(`Monthly team leaderboard refresh failed for ${guild.name}:`);
+            console.error(error);
+        });
+        return;
+    }
+
+    if (result.status === 'paused') {
+        emitMinecraftEvent(
+            'Monthly Team Reward Payment Recorded',
+            `${payment.player} authorized the monthly team reward payout, but scheduled payouts are paused.`,
+            'warning',
+            {
+                Team: result.reward.team_name,
+                'Team recruits': String(result.reward.recruit_count),
+                'Prize pool': formatDonationAmount(result.reward.prize_amount),
+                'Paid amount': formatDonationAmount(result.paidAmount),
+                'Donation credited to': result.donationCredit
+                    ? `<@${result.donationCredit.playerId}>`
+                    : 'Not credited — payer not linked',
+                Status: 'Skipped while scheduled payouts were paused'
             }
         );
         updateDonationLeaderboardForGuild(guild, sql).catch(error => {
@@ -2355,6 +2383,7 @@ client.once(Events.ClientReady, async () => {
             await processPendingDailyRecruitRewardPayoutsForGuild(guild, sql);
             await checkDailyRecruitRewardBalanceForGuild(guild, sql);
             await ensureMonthlyTeamRewardForGuild(guild, sql);
+            await processPendingMonthlyTeamRewardPayoutsForGuild(guild, sql);
             const teamChannelCleanup = await cleanupLegacyTeamChannelsForGuild(guild, sql);
             if (
                 teamChannelCleanup.deletedChannels > 0 ||
@@ -2372,7 +2401,8 @@ client.once(Events.ClientReady, async () => {
             await checkPendingStaffApplicationApprovalsForGuild(guild, sql);
             await processPendingCommissionPayoutsForGuild(guild, sql, {
                 guild,
-                source: 'Startup commission payout recovery'
+                source: 'Startup commission payout recovery',
+                respectScheduledGiveawayPause: true
             });
             await cleanupEndedGiveawaysForGuild(guild, sql);
             await upsertActiveGiveawaysBoard(guild, sql);
@@ -2505,6 +2535,7 @@ client.once(Events.ClientReady, async () => {
                 await processPendingDailyRecruitRewardPayoutsForGuild(guild, sql);
                 await checkDailyRecruitRewardBalanceForGuild(guild, sql);
                 await ensureMonthlyTeamRewardForGuild(guild, sql);
+                await processPendingMonthlyTeamRewardPayoutsForGuild(guild, sql);
                 await updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql);
             } catch (error) {
                 console.error(`Daily recruits leaderboard/reward refresh failed for ${guild.name}:`);
@@ -2571,9 +2602,11 @@ client.once(Events.ClientReady, async () => {
             try {
                 await processPendingGiveawayPayoutsForGuild(guild, sql);
                 await processPendingDailyRecruitRewardPayoutsForGuild(guild, sql);
+                await processPendingMonthlyTeamRewardPayoutsForGuild(guild, sql);
                 await processPendingCommissionPayoutsForGuild(guild, sql, {
                     guild,
-                    source: 'Scheduled commission payout recovery'
+                    source: 'Scheduled commission payout recovery',
+                    respectScheduledGiveawayPause: true
                 });
             } catch (error) {
                 console.error(`Payout queue failed for ${guild.name}:`);

@@ -10,6 +10,9 @@ const {
     playerName
 } = require('./payouts.js');
 const {
+    scheduledGiveawayPayoutsPaused
+} = require('./scheduledGiveawayPayouts.js');
+const {
     checkBalance,
     emitMinecraftEvent,
     minecraftBotStatus,
@@ -468,6 +471,10 @@ async function ensureMinecraftBotConnected(context = {}) {
     const firstStatus = minecraftBotStatus();
     let reconnectRestarted = false;
 
+    if (firstStatus.status === 'frozen') {
+        throw new Error('Minecraft bot connections are frozen. Use /bot start to resume Minecraft payments.');
+    }
+
     if (firstStatus.status === 'connected') {
         return firstStatus;
     }
@@ -484,6 +491,10 @@ async function ensureMinecraftBotConnected(context = {}) {
 
         if (status.status === 'connected') {
             return status;
+        }
+
+        if (status.status === 'frozen') {
+            throw new Error('Minecraft bot connections are frozen. Use /bot start to resume Minecraft payments.');
         }
 
         if (status.status === 'reconnecting' && !reconnectRestarted) {
@@ -1691,6 +1702,15 @@ async function processPendingCommissionPayoutsForGuild(guild, db = sql, context 
             processed: 0,
             results: [],
             skipped: true
+        };
+    }
+
+    if (context.respectScheduledGiveawayPause && await scheduledGiveawayPayoutsPaused(db)) {
+        return {
+            processed: 0,
+            results: [],
+            skipped: true,
+            paused: true
         };
     }
 

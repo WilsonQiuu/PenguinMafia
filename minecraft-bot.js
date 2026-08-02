@@ -40,6 +40,7 @@ const DEFAULT_BALANCE_FAILURE_PATTERN =
 let bot = null;
 let reconnectTimer = null;
 let shuttingDown = false;
+let connectionsFrozen = false;
 let pendingPayment = null;
 let pendingBalance = null;
 let lastSmsAlertAt = 0;
@@ -1907,6 +1908,11 @@ function randomReconnectDelayMinutes(random = Math.random) {
 }
 
 function scheduleReconnect() {
+    if (connectionsFrozen) {
+        console.log('Minecraft bot connections are frozen; automatic reconnect skipped.');
+        return;
+    }
+
     if (shuttingDown || reconnectTimer) {
         return;
     }
@@ -1933,6 +1939,15 @@ function scheduleReconnect() {
 }
 
 function connect(context = {}) {
+    if (connectionsFrozen) {
+        console.log('Minecraft bot connection request ignored because connections are frozen.');
+        return {
+            status: 'frozen',
+            username: null,
+            host: process.env.MINECRAFT_HOST?.trim() || null
+        };
+    }
+
     shuttingDown = false;
 
     if (bot) {
@@ -2134,7 +2149,49 @@ function disconnect() {
 }
 
 function startMinecraftBot(context = {}) {
+    if (connectionsFrozen) {
+        if (!context.clearFreeze) {
+            console.log('Minecraft bot start request ignored because connections are frozen.');
+            return {
+                status: 'frozen',
+                username: null,
+                host: process.env.MINECRAFT_HOST?.trim() || null
+            };
+        }
+
+        connectionsFrozen = false;
+        emitMinecraftEvent(
+            'Minecraft Bot Unfrozen',
+            'Minecraft bot connections resumed from /bot start.',
+            'info',
+            actionDetails(context)
+        );
+    }
+
     return connect(context);
+}
+
+function freezeMinecraftBotConnections(context = {}) {
+    const wasRunning = Boolean(bot || reconnectTimer);
+    connectionsFrozen = true;
+    shuttingDown = true;
+    disconnect();
+
+    emitMinecraftEvent(
+        'Minecraft Bot Frozen',
+        wasRunning
+            ? 'The Minecraft bot was disconnected. Future Minecraft connection attempts are paused until /bot start.'
+            : 'Future Minecraft connection attempts are paused until /bot start.',
+        'warning',
+        actionDetails(context)
+    );
+
+    return {
+        status: 'frozen',
+        username: null,
+        host: process.env.MINECRAFT_HOST?.trim() || null,
+        wasRunning
+    };
 }
 
 function stopMinecraftBot(context = {}) {
@@ -2156,6 +2213,14 @@ function stopMinecraftBot(context = {}) {
 
 function minecraftBotStatus() {
     const host = process.env.MINECRAFT_HOST?.trim() || null;
+
+    if (connectionsFrozen) {
+        return {
+            status: 'frozen',
+            username: bot?.username || null,
+            host
+        };
+    }
 
     if (isConnected()) {
         return {
@@ -2201,7 +2266,9 @@ function printHelp() {
             '  bal                          Send /bal and wait for the balance response',
             '  cobble [start|stop|status]   Hold sneak/left click and pulse right click/use',
             '  unstuck                      Release held controls and print position/velocity',
-            '  reconnect                    Reconnect to the Minecraft server',
+            '  start                        Resume connections and start the Minecraft bot',
+            '  reconnect                    Resume connections and reconnect to the Minecraft server',
+            '  freeze                       Disconnect and pause future connection attempts',
             '  quit                         Disconnect and stop this process',
             ''
         ].join('\n')
@@ -2221,10 +2288,11 @@ async function handleTerminalCommand(input) {
         if (command === 'help') {
             printHelp();
         } else if (command === 'status') {
+            const status = minecraftBotStatus();
             console.log(
-                isConnected()
-                    ? `Connected as ${bot.username} to ${bot._client.socket.remoteAddress}.`
-                    : 'Not connected.'
+                status.status === 'connected'
+                    ? `Connected as ${status.username} to ${bot._client.socket.remoteAddress}.`
+                    : `Minecraft bot status: ${status.status}.`
             );
         } else if (command === 'say') {
             const message = args.join(' ');
@@ -2280,9 +2348,29 @@ async function handleTerminalCommand(input) {
                 `Controls reset. Position=${formatVectorSnapshot(result.position)} ` +
                 `Velocity=${formatVectorSnapshot(result.velocity)}`
             );
+        } else if (command === 'start') {
+            const result = startMinecraftBot({
+                actorTag: 'Terminal',
+                source: 'Terminal command',
+                clearFreeze: true
+            });
+            console.log(`Minecraft bot start requested: ${result.status}.`);
         } else if (command === 'reconnect') {
             disconnect();
-            connect();
+            const result = startMinecraftBot({
+                actorTag: 'Terminal',
+                source: 'Terminal reconnect',
+                clearFreeze: true
+            });
+            console.log(`Minecraft bot reconnect requested: ${result.status}.`);
+        } else if (command === 'freeze') {
+            const result = freezeMinecraftBotConnections({
+                actorTag: 'Terminal',
+                source: 'Terminal command'
+            });
+            console.log(result.wasRunning
+                ? 'Minecraft bot frozen and disconnected.'
+                : 'Minecraft bot connections frozen.');
         } else if (command === 'quit' || command === 'exit') {
             shuttingDown = true;
             disconnect();
@@ -2349,6 +2437,7 @@ module.exports = {
     logIncomingPayment,
     messagePlayer,
     emitMinecraftEvent,
+    freezeMinecraftBotConnections,
     minecraftEvents,
     parseIncomingPayment,
     parsePrivateMessage,

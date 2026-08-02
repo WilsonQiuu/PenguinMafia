@@ -18,6 +18,7 @@ const {
     checkBalance,
     cobbleModeStatus,
     emitMinecraftEvent,
+    freezeMinecraftBotConnections,
     goHomeNumber,
     messagePlayer,
     minecraftBotStatus,
@@ -232,6 +233,11 @@ module.exports = {
         )
         .addSubcommand(subcommand =>
             subcommand
+                .setName('freeze')
+                .setDescription('Disconnect and pause future Minecraft bot connection attempts.')
+        )
+        .addSubcommand(subcommand =>
+            subcommand
                 .setName('quit')
                 .setDescription('Disconnect and stop the Minecraft bot.')
         ),
@@ -282,9 +288,17 @@ module.exports = {
                     return;
                 }
 
-                const started = startMinecraftBot(actionContext);
+                const started = startMinecraftBot({
+                    ...actionContext,
+                    clearFreeze: true
+                });
                 await interaction.editReply(
-                    before.status === 'reconnecting'
+                    before.status === 'frozen'
+                        ? `✅ Minecraft bot connections resumed. Minecraft bot is starting${connectionLabel({
+                            ...started,
+                            host: process.env.MINECRAFT_HOST?.trim() || null
+                        })}.`
+                        : before.status === 'reconnecting'
                         ? `✅ The automatic reconnect wait was skipped. Minecraft bot is reconnecting now${connectionLabel({
                             ...started,
                             host: process.env.MINECRAFT_HOST?.trim() || null
@@ -293,6 +307,16 @@ module.exports = {
                             ...started,
                             host: process.env.MINECRAFT_HOST?.trim() || null
                         })}.`
+                );
+                return;
+            }
+
+            if (subcommand === 'freeze') {
+                const result = freezeMinecraftBotConnections(actionContext);
+                await interaction.editReply(
+                    result.wasRunning
+                        ? '✅ Minecraft bot disconnected and future connection attempts are frozen until `/bot start`.'
+                        : '✅ Minecraft bot connection attempts are frozen until `/bot start`.'
                 );
                 return;
             }

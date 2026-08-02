@@ -19,6 +19,11 @@ const {
     playerName
 } = require('./payouts.js');
 const {
+    scheduledGiveawayPayoutState,
+    scheduledGiveawayPayoutsPaused,
+    scheduledRewardPeriodShouldBeSkipped
+} = require('./scheduledGiveawayPayouts.js');
+const {
     creditUnpaidCommission,
     ensureMinecraftBotConnected,
     formatMinecraftPaymentAmountFromCents,
@@ -423,11 +428,29 @@ async function enqueueDailyRecruitReward(guild, winner, prizeAmount, payoutResul
 }
 
 async function ensureDailyRecruitRewardsForGuild(guild, db = sql) {
+    const payoutState = await scheduledGiveawayPayoutState(db);
+
+    if (payoutState.paused) {
+        return {
+            status: 'paused'
+        };
+    }
+
     const winners = await fetchPreviousDayTopRecruiters(db);
 
     if (winners.length === 0) {
         return {
             status: 'no_winners'
+        };
+    }
+
+    const rewardEndedAt = winners[0]?.reward_ended_at;
+
+    if (scheduledRewardPeriodShouldBeSkipped(payoutState, rewardEndedAt)) {
+        return {
+            status: 'skipped_paused_period',
+            rewardEndedAt,
+            resumedAt: payoutState.updatedAt
         };
     }
 
@@ -928,6 +951,14 @@ async function finalizeCompletedHourlyRecruitRewards(guild, db = sql) {
 }
 
 async function processPendingHourlyRecruitRewardPayoutsForGuild(guild, db = sql) {
+    if (await scheduledGiveawayPayoutsPaused(db)) {
+        return {
+            processed: 0,
+            skipped: true,
+            paused: true
+        };
+    }
+
     if (activeHourlyRewardPayoutProcessors.has(guild.id)) {
         return {
             processed: 0,
@@ -992,6 +1023,14 @@ async function claimDailyBalanceCheck(guildId, db = sql) {
 }
 
 async function checkDailyRecruitRewardBalanceForGuild(guild, db = sql) {
+    if (await scheduledGiveawayPayoutsPaused(db)) {
+        return {
+            checked: false,
+            skipped: true,
+            paused: true
+        };
+    }
+
     const shouldCheck = await claimDailyBalanceCheck(guild.id, db);
 
     if (!shouldCheck) {

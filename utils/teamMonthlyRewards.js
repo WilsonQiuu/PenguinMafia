@@ -8,6 +8,11 @@ const {
     playerName
 } = require('./payouts.js');
 const {
+    scheduledGiveawayPayoutState,
+    scheduledGiveawayPayoutsPaused,
+    scheduledRewardPeriodShouldBeSkipped
+} = require('./scheduledGiveawayPayouts.js');
+const {
     payoutMinecraftTarget,
     processPendingCommissionPayoutsForGuild
 } = require('./commissionPayments.js');
@@ -305,6 +310,7 @@ async function fetchPreviousMonthTopTeam(guildId, db = sql) {
             select
                 team_totals.*,
                 month_window.started_at as reward_month,
+                month_window.ended_at as reward_ended_at,
                 team_progress.reached_at
             from team_totals
             cross join month_window
@@ -335,6 +341,7 @@ async function fetchPreviousMonthTopTeam(guildId, db = sql) {
             ranked_teams.owner_discord_id,
             ranked_teams.recruit_count,
             ranked_teams.reward_month,
+            ranked_teams.reward_ended_at,
             ranked_teams.reached_at
         from ranked_teams
         order by
@@ -641,11 +648,27 @@ function calculateMemberPrizeShares(members, prizeAmount, totalRecruitCount) {
 }
 
 async function ensureMonthlyTeamRewardForGuild(guild, db = sql) {
+    const payoutState = await scheduledGiveawayPayoutState(db);
+
+    if (payoutState.paused) {
+        return {
+            status: 'paused'
+        };
+    }
+
     const topTeam = await fetchPreviousMonthTopTeam(guild.id, db);
 
     if (!topTeam) {
         return {
             status: 'no_winner'
+        };
+    }
+
+    if (scheduledRewardPeriodShouldBeSkipped(payoutState, topTeam.reward_ended_at)) {
+        return {
+            status: 'skipped_paused_period',
+            rewardEndedAt: topTeam.reward_ended_at,
+            resumedAt: payoutState.updatedAt
         };
     }
 
@@ -755,6 +778,19 @@ function aggregatePayout(aggregate, payout, source) {
 }
 
 async function enqueueMonthlyTeamRewardPayouts(guild, reward, db = sql) {
+    if (await scheduledGiveawayPayoutsPaused(db)) {
+        return {
+            payouts: [],
+            processed: {
+                processed: 0,
+                results: [],
+                skipped: true,
+                paused: true
+            },
+            paused: true
+        };
+    }
+
     const memberShares = Array.isArray(reward.member_recruits)
         ? reward.member_recruits
         : JSON.parse(reward.member_recruits || '[]');
@@ -887,12 +923,74 @@ async function enqueueMonthlyTeamRewardPayouts(guild, reward, db = sql) {
 
     const processed = await processPendingCommissionPayoutsForGuild(guild, db, {
         guild,
-        source: `Monthly team recruit reward ${reward.id}`
+        source: `Monthly team recruit reward ${reward.id}`,
+        respectScheduledGiveawayPause: true
     });
 
     return {
         payouts,
         processed
+    };
+}
+
+async function processPendingMonthlyTeamRewardPayoutsForGuild(guild, db = sql) {
+    const payoutState = await scheduledGiveawayPayoutState(db);
+
+    if (payoutState.paused) {
+        return {
+            processed: 0,
+            results: [],
+            skipped: true,
+            paused: true
+        };
+    }
+
+    const rows = await db`
+        select *
+        from team_monthly_rewards
+        where guild_id = ${guild.id}
+            and status = 'processing'
+        order by paid_at asc nulls last, reward_month asc
+    `;
+    const results = [];
+
+    for (const reward of rows) {
+        if (scheduledRewardPeriodShouldBeSkipped(payoutState, reward.paid_at || reward.reward_month)) {
+            const cancelledRows = await db`
+                update team_monthly_rewards
+                set
+                    status = 'cancelled',
+                    updated_at = now()
+                where id = ${reward.id}
+                    and status = 'processing'
+                returning *
+            `;
+
+            results.push({
+                reward: cancelledRows[0] || reward,
+                payouts: [],
+                processed: {
+                    processed: 0,
+                    results: [],
+                    skipped: true,
+                    pausedPeriod: true
+                },
+                skipped: true,
+                pausedPeriod: true
+            });
+            continue;
+        }
+
+        const result = await enqueueMonthlyTeamRewardPayouts(guild, reward, db);
+        results.push({
+            reward,
+            ...result
+        });
+    }
+
+    return {
+        processed: results.length,
+        results
     };
 }
 
@@ -976,6 +1074,42 @@ async function processIncomingTeamMonthlyRewardPayment(guild, payment, db = sql)
     }
 
     try {
+        if (await scheduledGiveawayPayoutsPaused(db)) {
+            const donationCredit = await recordMonthlyTeamRewardDonationCredit(
+                guild,
+                claimedReward.payer_minecraft_ign || payment.player,
+                paidAmount,
+                db
+            );
+
+            emitMinecraftEvent(
+                'Monthly Team Reward Payout Paused',
+                'The monthly team reward payment was recorded, but payouts are paused.',
+                'warning',
+                {
+                    Team: claimedReward.team_name,
+                    'Prize pool': formatDonationAmount(claimedReward.prize_amount),
+                    'Paid amount': formatDonationAmount(paidAmount)
+                }
+            );
+            const cancelledRows = await db`
+                update team_monthly_rewards
+                set
+                    status = 'cancelled',
+                    updated_at = now()
+                where id = ${claimedReward.id}
+                    and status = 'processing'
+                returning *
+            `;
+
+            return {
+                status: 'paused',
+                reward: cancelledRows[0] || claimedReward,
+                paidAmount,
+                donationCredit
+            };
+        }
+
         const payoutResult = await enqueueMonthlyTeamRewardPayouts(guild, claimedReward, db);
         const donationCredit = await recordMonthlyTeamRewardDonationCredit(
             guild,
@@ -983,6 +1117,15 @@ async function processIncomingTeamMonthlyRewardPayment(guild, payment, db = sql)
             paidAmount,
             db
         );
+
+        if (payoutResult.paused) {
+            return {
+                status: 'paused',
+                reward: claimedReward,
+                paidAmount,
+                donationCredit
+            };
+        }
 
         return {
             status: 'payouts_queued',
@@ -1006,6 +1149,7 @@ async function processIncomingTeamMonthlyRewardPayment(guild, payment, db = sql)
 
 module.exports = {
     ensureMonthlyTeamRewardForGuild,
+    processPendingMonthlyTeamRewardPayoutsForGuild,
     processIncomingTeamMonthlyRewardPayment,
     teamMonthlyRewardAmount,
     teamMonthlyRewardPayer
