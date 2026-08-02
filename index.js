@@ -123,6 +123,8 @@ const {
 } = require('./utils/staff.js');
 const {
     emitMinecraftEvent,
+    freezeMinecraftBotConnections,
+    loadMinecraftBotConnectionFreezeState,
     minecraftEvents,
     startMinecraftBot,
     stopMinecraftBot
@@ -2337,6 +2339,21 @@ client.once(Events.ClientReady, async () => {
         console.error('Failed to resume pending welcome DM self-destructs:', error);
     }
     logReadyStep('welcome DM self-destruct cleanup checked');
+
+    try {
+        const freezeState = await loadMinecraftBotConnectionFreezeState(sql);
+
+        if (freezeState.frozen) {
+            console.log('Minecraft bot auto-start is frozen until /bot start is used.');
+        }
+    } catch (error) {
+        console.error('Could not load Minecraft bot freeze state. Keeping Minecraft connections frozen for safety.');
+        console.error(error);
+        freezeMinecraftBotConnections({
+            actorTag: 'Railway/process startup',
+            source: 'Minecraft freeze state load failed'
+        });
+    }
 
     autoStartMinecraftBot();
     logReadyStep('minecraft auto-start checked');

@@ -36,6 +36,7 @@ const DEFAULT_BALANCE_RESPONSE_PATTERN =
     String.raw`\b(?:balance|bal|money|cash)\b[^0-9$]*\$?\s*([\d,]+(?:\.\d+)?\s*[kmbt]?)|\$?\s*([\d,]+(?:\.\d+)?\s*[kmbt]?)\s*(?:is\s+)?(?:your\s+)?(?:balance|money|cash)\b|\byou\s+have\s+\$?\s*([\d,]+(?:\.\d+)?\s*[kmbt]?)\b`;
 const DEFAULT_BALANCE_FAILURE_PATTERN =
     String.raw`\b(?:unknown command|command not found|unknown or incomplete command|invalid command|incorrect argument|usage:.*(?:bal|balance|money)|you do not have permission|no permission)\b`;
+const MINECRAFT_CONNECTIONS_FROZEN_STATE_KEY = 'minecraft_connections_frozen';
 
 let bot = null;
 let reconnectTimer = null;
@@ -76,6 +77,65 @@ function actionDetails(context = {}) {
     if (context.source) details.Source = context.source;
 
     return details;
+}
+
+function stateValueIsFrozen(value) {
+    return ['1', 'true', 'yes', 'on', 'frozen'].includes(
+        String(value || '').trim().toLowerCase()
+    );
+}
+
+async function loadMinecraftBotConnectionFreezeState(db) {
+    const rows = await db`
+        select value, updated_at
+        from bot_state
+        where key = ${MINECRAFT_CONNECTIONS_FROZEN_STATE_KEY}
+        limit 1
+    `;
+    const frozen = stateValueIsFrozen(rows[0]?.value);
+
+    connectionsFrozen = frozen;
+
+    if (frozen) {
+        shuttingDown = true;
+    }
+
+    return {
+        frozen,
+        value: rows[0]?.value || null,
+        updatedAt: rows[0]?.updated_at || null
+    };
+}
+
+async function setMinecraftBotConnectionFreezeState(frozen, db) {
+    const rows = await db`
+        insert into bot_state (
+            key,
+            value,
+            updated_at
+        )
+        values (
+            ${MINECRAFT_CONNECTIONS_FROZEN_STATE_KEY},
+            ${frozen ? 'frozen' : 'active'},
+            now()
+        )
+        on conflict (key) do update
+        set
+            value = excluded.value,
+            updated_at = now()
+        returning value, updated_at
+    `;
+
+    connectionsFrozen = Boolean(frozen);
+
+    if (connectionsFrozen) {
+        shuttingDown = true;
+    }
+
+    return {
+        frozen: stateValueIsFrozen(rows[0]?.value),
+        updatedAt: rows[0]?.updated_at || null
+    };
 }
 
 function shouldSuppressPaymentLog(context = {}) {
@@ -2438,6 +2498,7 @@ module.exports = {
     messagePlayer,
     emitMinecraftEvent,
     freezeMinecraftBotConnections,
+    loadMinecraftBotConnectionFreezeState,
     minecraftEvents,
     parseIncomingPayment,
     parsePrivateMessage,
@@ -2456,6 +2517,7 @@ module.exports = {
     startMinecraftBot,
     stopCobbleMode,
     stopMinecraftBot,
+    setMinecraftBotConnectionFreezeState,
     validatePaymentAmount,
     validatePlayer
 };

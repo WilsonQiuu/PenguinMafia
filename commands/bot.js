@@ -24,6 +24,7 @@ const {
     minecraftBotStatus,
     payPlayer,
     resetMinecraftBotControls,
+    setMinecraftBotConnectionFreezeState,
     startCobbleMode,
     startMinecraftBot,
     stopCobbleMode,
@@ -288,6 +289,8 @@ module.exports = {
                     return;
                 }
 
+                await setMinecraftBotConnectionFreezeState(false, sql);
+
                 const started = startMinecraftBot({
                     ...actionContext,
                     clearFreeze: true
@@ -312,6 +315,7 @@ module.exports = {
             }
 
             if (subcommand === 'freeze') {
+                await setMinecraftBotConnectionFreezeState(true, sql);
                 const result = freezeMinecraftBotConnections(actionContext);
                 await interaction.editReply(
                     result.wasRunning
