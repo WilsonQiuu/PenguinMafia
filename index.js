@@ -591,7 +591,7 @@ async function setupGuildOnStartup(guild) {
     } = await ensureTrainerRole(guild);
     logStartupStep('trainer role ready');
 
-    await ensureInfoChannels(guild, rankRoles, staffRoles);
+    await ensureInfoChannels(guild, rankRoles, staffRoles, sql);
     logStartupStep('managed channels ready');
 
     const { updateIcebergChannel, updateMembersListChannel, checkExpiredClaims } = require('./utils/iceberg.js');

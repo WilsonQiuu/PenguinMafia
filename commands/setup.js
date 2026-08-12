@@ -188,7 +188,7 @@ module.exports = {
                 promotionEventsChannel,
                 rankInfoChannel,
                 weeklyRecruitsChannel
-            } = await ensureInfoChannels(interaction.guild, rankRoles, staffRoles);
+            } = await ensureInfoChannels(interaction.guild, rankRoles, staffRoles, sql);
             const envUpdate = updateEnvIds({
                 ...idsFromRoles(rankRoles, staffRoles, trainerRole),
                 PROMOTION_EVENTS_CHANNEL_ID: promotionEventsChannel.id,

@@ -257,7 +257,7 @@ module.exports = {
                 modLogChannel,
                 promotionEventsChannel,
                 weeklyRecruitsChannel
-            } = await ensureInfoChannels(interaction.guild, rankRoles, staffRoles);
+            } = await ensureInfoChannels(interaction.guild, rankRoles, staffRoles, sql);
 
             const members = await interaction.guild.members.fetch();
 

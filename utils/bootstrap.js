@@ -1936,7 +1936,7 @@ async function ensureInfoChannel(guild, name, content, rankRoles, options = {}) 
         channel = null;
     }
 
-    if (!channel && !options.channelId) {
+    if (!channel) {
         channel = channels.find(existingChannel => {
             return existingChannel?.type === ChannelType.GuildText && existingChannel.name === name;
         });
@@ -2160,11 +2160,18 @@ async function ensureManagedChannel(guild, name, type, permissionOverwrites, opt
 }
 
 async function ensureManagedInfoMessage(channel, content, options = {}) {
-    const recentMessages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
+    const savedInfoMessageId = await savedManagedChannelId(db, options.infoMessageStateKey);
+    const savedInfoMessage = savedInfoMessageId
+        ? await channel.messages.fetch(savedInfoMessageId).catch(() => null)
+        : null;
+    const recentMessages = await channel.messages.fetch({ limit: 100 }).catch(() => null);
     const matchingInfoMessages = [...(recentMessages?.filter(message => {
         return message.author.id === channel.client.user.id && message.content.includes(content.marker);
     }).values() || [])];
-    const existingInfoMessage = matchingInfoMessages[0];
+    const savedInfoMessageMatches = savedInfoMessage &&
+        savedInfoMessage.author.id === channel.client.user.id &&
+        savedInfoMessage.content.includes(content.marker);
+    const existingInfoMessage = savedInfoMessageMatches ? savedInfoMessage : matchingInfoMessages[0];
 
     let infoMessage = existingInfoMessage;
     const payload = infoMessagePayload(content);
@@ -2174,6 +2181,8 @@ async function ensureManagedInfoMessage(channel, content, options = {}) {
     } else {
         infoMessage = await channel.send(payload);
     }
+
+    await saveManagedChannelId(db, options.infoMessageStateKey, infoMessage.id);
 
     if (options.pinInfoMessage && infoMessage && !infoMessage.pinned) {
         await infoMessage.pin('Pin Penguin Mafia information message').catch(error => {
@@ -2302,7 +2311,32 @@ function staffReadOnlyOverwrites(guild, allowedRoles) {
     return overwrites;
 }
 
-async function ensureInfoChannels(guild, rankRoles, staffRoles = null) {
+async function savedManagedChannelId(db, key) {
+    if (!db) return null;
+
+    const rows = await db`
+        select value
+        from bot_state
+        where key = ${key}
+        limit 1
+    `;
+
+    return rows[0]?.value || null;
+}
+
+async function saveManagedChannelId(db, key, channelId) {
+    if (!db || !channelId) return;
+
+    await db`
+        insert into bot_state (key, value)
+        values (${key}, ${String(channelId)})
+        on conflict (key) do update
+        set value = excluded.value,
+            updated_at = now()
+    `;
+}
+
+async function ensureInfoChannels(guild, rankRoles, staffRoles = null, db = null) {
     const logChannelSetupStep = createBootstrapTimer(`channel-setup:${guild.name}`);
     logChannelSetupStep('starting managed channel setup');
 
@@ -2375,11 +2409,17 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null) {
     });
     logChannelSetupStep('rank info channel ready');
 
+    const weeklyLeaderboardStateKey = `managed_weekly_recruits_leaderboard_channel:${guild.id}`;
+    const savedWeeklyLeaderboardChannelId = await savedManagedChannelId(db, weeklyLeaderboardStateKey);
+
     logChannelSetupStep('starting weekly recruits leaderboard channel');
     const managedWeeklyRecruitsChannel = await ensureInfoChannel(guild, WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME, managedWeeklyRecruitsLeaderboard, rankRoles, {
         ...sharedChannelOptions,
-        channelId: WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID
+        db,
+        channelId: savedWeeklyLeaderboardChannelId || WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
+        infoMessageStateKey: `managed_weekly_recruits_leaderboard_message:${guild.id}`
     });
+    await saveManagedChannelId(db, weeklyLeaderboardStateKey, managedWeeklyRecruitsChannel.id);
     logChannelSetupStep('weekly recruits leaderboard channel ready');
 
     logChannelSetupStep('starting donations leaderboard channel');

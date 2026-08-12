@@ -21,6 +21,8 @@ const {
 
 const PREVIOUS_WEEKLY_RECRUITS_STATE_KEY = 'previous_weekly_recruits_top_three';
 const WEEKLY_RECRUITS_LAST_RESET_STATE_KEY = 'weekly_recruits_last_reset_at';
+const WEEKLY_RECRUITS_CHANNEL_STATE_KEY_PREFIX = 'managed_weekly_recruits_leaderboard_channel:';
+const WEEKLY_RECRUITS_MESSAGE_STATE_KEY_PREFIX = 'managed_weekly_recruits_leaderboard_message:';
 const WEEKLY_RECRUITS_TIME_ZONE = 'America/Toronto';
 const DEFAULT_DAILY_RECRUIT_REWARD_PRIZES = ['30m', '20m', '10m'];
 const LEADERBOARD_REFRESH_DELAY_MS = 2_000;
@@ -71,7 +73,32 @@ function formatDuration(seconds) {
     return parts.join(' ');
 }
 
-async function updateLeaderboardChannel(guild, channelId, channelName, marker, content) {
+async function storedStateValue(db, key) {
+    if (!db || !key) return null;
+
+    const rows = await db`
+        select value
+        from bot_state
+        where key = ${key}
+        limit 1
+    `;
+
+    return rows[0]?.value || null;
+}
+
+async function saveStateValue(db, key, value) {
+    if (!db || !key || !value) return;
+
+    await db`
+        insert into bot_state (key, value)
+        values (${key}, ${String(value)})
+        on conflict (key) do update
+        set value = excluded.value,
+            updated_at = now()
+    `;
+}
+
+async function updateLeaderboardChannel(guild, channelId, channelName, marker, content, options = {}) {
     const channel = guild.channels.cache.get(channelId) ||
         (await guild.channels.fetch(channelId).catch(() => null));
 
@@ -81,12 +108,19 @@ async function updateLeaderboardChannel(guild, channelId, channelName, marker, c
     }
 
     const markers = Array.isArray(marker) ? marker : [marker];
-    const recentMessages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
+    const storedMessageId = await storedStateValue(options.db, options.messageStateKey);
+    const storedMessage = storedMessageId
+        ? await channel.messages.fetch(storedMessageId).catch(() => null)
+        : null;
+    const recentMessages = await channel.messages.fetch({ limit: 100 }).catch(() => null);
     const matchingMessages = [...(recentMessages?.filter(message => {
         return message.author.id === guild.client.user.id &&
             markers.some(searchMarker => message.content.includes(searchMarker));
     }).values() || [])];
-    const existingMessage = matchingMessages[0];
+    const storedMessageMatches = storedMessage &&
+        storedMessage.author.id === guild.client.user.id &&
+        markers.some(searchMarker => storedMessage.content.includes(searchMarker));
+    const existingMessage = storedMessageMatches ? storedMessage : matchingMessages[0];
 
     if (existingMessage) {
         await existingMessage.edit({
@@ -96,12 +130,17 @@ async function updateLeaderboardChannel(guild, channelId, channelName, marker, c
             }
         });
     } else {
-        await channel.send({
+        const createdMessage = await channel.send({
             content,
             allowedMentions: {
                 parse: []
             }
         });
+        await saveStateValue(options.db, options.messageStateKey, createdMessage.id);
+    }
+
+    if (existingMessage) {
+        await saveStateValue(options.db, options.messageStateKey, existingMessage.id);
     }
 
     for (const duplicateMessage of matchingMessages.filter(message => message.id !== existingMessage?.id)) {
@@ -214,9 +253,14 @@ async function updateWeeklyRecruitsLeaderboardForGuild(guild, sql) {
         }).join('\n')
         : 'No previous weekly results have been saved yet.';
 
+    const weeklyChannelId = await storedStateValue(
+        sql,
+        `${WEEKLY_RECRUITS_CHANNEL_STATE_KEY_PREFIX}${guild.id}`
+    ) || WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID;
+
     return updateLeaderboardChannel(
         guild,
-        WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
+        weeklyChannelId,
         WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME,
         'Penguin Mafia Weekly Recruit Leaderboard',
         `🏆🐧 **Penguin Mafia Weekly Recruit Leaderboard** 🐧🏆\n\n` +
@@ -226,7 +270,11 @@ async function updateWeeklyRecruitsLeaderboardForGuild(guild, sql) {
         `**Weekly Prizes**\n` +
         `1st: **30m** • 2nd: **20m** • 3rd: **10m**\n\n` +
         `## Current Week\n${weeklyLines}\n\n` +
-        `## Previous Week Top 3\n${previousLines}\n\n`
+        `## Previous Week Top 3\n${previousLines}\n\n`,
+        {
+            db: sql,
+            messageStateKey: `${WEEKLY_RECRUITS_MESSAGE_STATE_KEY_PREFIX}${guild.id}`
+        }
     );
 }
 
