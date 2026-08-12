@@ -13,6 +13,7 @@ const {
 
 const {
     DEFAULT_RANK_NAME,
+    RANKS,
     ensureRankRoles,
     syncMemberRankRole
 } = require('./bootstrap.js');
@@ -28,6 +29,7 @@ const WELCOME_SELF_DESTRUCT_SECONDS = 30;
 const LEGACY_ONBOARDING_CATEGORY_PATTERN = /^🐧-penguin-processing(?:-\d+)?$/i;
 const WELCOME_DM_CLEANUP_STATE_FILE = process.env.WELCOME_DM_CLEANUP_STATE_FILE ||
     path.join(__dirname, '..', '.welcome-dm-cleanup-queue.json');
+const PENGUIN_RANK_ROLE_NAMES = new Set(RANKS.map(rank => rank.name.toLowerCase()));
 
 // Tracks exact message ids pending self-destruct in a DM welcome flow, keyed
 // by channel id, so a restart mid-countdown can finish deleting precisely
@@ -539,11 +541,11 @@ async function enforceWelcomeMessageGate(message) {
         return false;
     }
 
-    const hasSoldierRole = message.member.roles.cache.some(role => {
-        return role.name.toLowerCase() === DEFAULT_RANK_NAME.toLowerCase();
+    const hasPenguinRankRole = message.member.roles.cache.some(role => {
+        return PENGUIN_RANK_ROLE_NAMES.has(role.name.toLowerCase());
     });
 
-    if (hasSoldierRole) {
+    if (hasPenguinRankRole) {
         return false;
     }
 

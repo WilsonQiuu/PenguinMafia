@@ -369,3 +369,25 @@ test('chat gate deletes a message and resumes the existing DM onboarding', async
     assert.equal(handled, true);
     assert.deepEqual(calls, ['delete', 'notice', 'resume']);
 });
+
+for (const rankName of ['Penguin Soldier', 'Penguin Captain', 'Penguin General', 'Emperor Penguin']) {
+    test(`chat gate allows ${rankName}`, async () => {
+        const calls = [];
+        const handled = await onboarding.enforceWelcomeMessageGate({
+            guild: {},
+            member: {
+                roles: {
+                    cache: new Collection([['rank', { name: rankName }]])
+                }
+            },
+            author: { bot: false },
+            webhookId: null,
+            async delete() {
+                calls.push('delete');
+            }
+        });
+
+        assert.equal(handled, false);
+        assert.deepEqual(calls, []);
+    });
+}
