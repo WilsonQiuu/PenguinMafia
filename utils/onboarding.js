@@ -23,7 +23,7 @@ const {
 const BUTTON_PREFIX = 'welcome';
 const MODAL_PREFIX = 'welcome_ign_submit';
 const JOIN_ALL_MODAL_PREFIX = 'welcome_join_all_ign';
-const WELCOME_REMINDER_INTERVAL_MS = 2 * 24 * 60 * 60 * 1000;
+const WELCOME_REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 const WELCOME_SELF_DESTRUCT_SECONDS = 30;
 const LEGACY_ONBOARDING_CATEGORY_PATTERN = /^🐧-penguin-processing(?:-\d+)?$/i;
 const WELCOME_DM_CLEANUP_STATE_FILE = process.env.WELCOME_DM_CLEANUP_STATE_FILE ||
@@ -237,6 +237,9 @@ function introMessage(member, context = {}) {
     return {
         content:
             `# 🐧 Welcome to the Penguin Mafia!\n\n` +
+            (context.isWeeklyRefresh
+                ? `This is your weekly reminder to finish onboarding.\n\n`
+                : '') +
             `Recruit players, grow your team, win giveaways, and earn rewards together.\n\n` +
             `Let's get you set up in under a minute.\n\n` +
             `${parentLine}`,
@@ -248,6 +251,27 @@ function introMessage(member, context = {}) {
             row(scopedButton('build_team', member.id, 'Next', ButtonStyle.Success, isTest))
         ]
     };
+}
+
+async function deleteActiveWelcomeMessages(channel, userId) {
+    const messages = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+    const activeMessages = messages
+        ? [...messages.values()].filter(message => isWelcomeFlowMessage(message, userId))
+        : [];
+    let deleted = 0;
+
+    for (const message of activeMessages) {
+        try {
+            await message.delete();
+            deleted++;
+        } catch (error) {
+            if (error?.code !== 10008) {
+                console.error(`Could not delete stale welcome DM message ${message.id} for ${userId}: ${error.message}`);
+            }
+        }
+    }
+
+    return deleted;
 }
 
 function buildTeamMessage(userId, isTest = false) {
@@ -441,7 +465,7 @@ async function scheduleWelcomeMessageDelete(interaction, seconds = WELCOME_SELF_
     }
 }
 
-async function sendWelcomeReminderIfDue(member) {
+async function sendWelcomeReminderIfDue(member, context = {}) {
     const rows = await database()`
         select welcome_completed, welcome_reminder_sent_at
         from players
@@ -463,11 +487,10 @@ async function sendWelcomeReminderIfDue(member) {
     }
 
     try {
-        await member.send({
-            content:
-                `🐧 Hey! You still need to finish your **Penguin Mafia** welcome setup.\n\n` +
-                `Return to the welcome message in this DM and press **Next** until you finish.\n\n` +
-                `Once you complete it, you’ll get your **${DEFAULT_RANK_NAME}** role and full server access.`
+        const channel = await startOnboardingForMember(member, {
+            ...context,
+            refresh: true,
+            isWeeklyRefresh: true
         });
 
         await database()`
@@ -478,7 +501,7 @@ async function sendWelcomeReminderIfDue(member) {
             where discord_id = ${member.id}
         `;
 
-        console.log(`Welcome reminder DM sent to ${member.user.tag}.`);
+        console.log(`Weekly welcome onboarding refresh sent to ${member.user.tag} in DM ${channel.id}.`);
         return true;
     } catch (error) {
         console.log(`Could not DM welcome reminder to ${member.user.tag}: ${error.message}`);
@@ -492,8 +515,11 @@ async function startOnboardingForMember(member, context = {}) {
         ? context.grandRecruiterId
         : await resolveGrandRecruiterId(context.recruiterId);
     const channel = await member.createDM();
+    if (context.refresh) {
+        await deleteActiveWelcomeMessages(channel, member.id);
+    }
     const recentMessages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
-    const alreadyStarted = recentMessages?.some(message => {
+    const alreadyStarted = !context.refresh && recentMessages?.some(message => {
         return isWelcomeFlowMessage(message, member.id);
     });
 
@@ -563,13 +589,13 @@ async function cleanupLegacyOnboardingChannels(guild) {
         }
     }
 
-    const category = channels.find(channel => {
+    const categories = channels.filter(channel => {
         return channel?.type === ChannelType.GuildCategory &&
             LEGACY_ONBOARDING_CATEGORY_PATTERN.test(channel.name);
     });
-    let categoryDeleted = false;
+    let categoriesDeleted = 0;
 
-    if (category) {
+    for (const [, category] of categories) {
         const remainingChildren = channels.filter(channel => {
             return channel?.parentId === category.id && !deletedChannelIds.has(channel.id);
         });
@@ -577,7 +603,7 @@ async function cleanupLegacyOnboardingChannels(guild) {
         if (remainingChildren.size === 0 && category.deletable) {
             try {
                 await category.delete('Penguin Mafia onboarding moved to DMs');
-                categoryDeleted = true;
+                categoriesDeleted++;
             } catch (error) {
                 console.error(`Could not delete legacy onboarding category ${category.id}: ${error.message}`);
             }
@@ -586,7 +612,7 @@ async function cleanupLegacyOnboardingChannels(guild) {
 
     return {
         channelsDeleted: deletedChannelIds.size,
-        categoryDeleted
+        categoriesDeleted
     };
 }
 
@@ -597,7 +623,7 @@ async function remindIncompleteWelcomeMembers(guild) {
         where welcome_completed = false
             and (
                 welcome_reminder_sent_at is null
-                or welcome_reminder_sent_at <= now() - interval '2 days'
+                or welcome_reminder_sent_at <= now() - interval '7 days'
             )
     `;
 
@@ -617,10 +643,9 @@ async function remindIncompleteWelcomeMembers(guild) {
             continue;
         }
 
-        await startOnboardingForMember(member, {
+        const reminderSent = await sendWelcomeReminderIfDue(member, {
             recruiterId: player.parent_discord_id
         });
-        const reminderSent = await sendWelcomeReminderIfDue(member);
 
         if (reminderSent) {
             sent++;
@@ -1101,6 +1126,7 @@ module.exports = {
         clearPendingWelcomeDmCleanup,
         loadPendingWelcomeDmCleanups,
         recordPendingWelcomeDmCleanup,
-        scheduleWelcomeChannelDelete
+        scheduleWelcomeChannelDelete,
+        deleteActiveWelcomeMessages
     }
 };

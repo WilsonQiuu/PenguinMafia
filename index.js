@@ -2485,7 +2485,7 @@ client.once(Events.ClientReady, async () => {
             const legacyCleanup = await cleanupLegacyOnboardingChannels(guild);
             logReadyStep(
                 `legacy onboarding cleanup for ${guild.name} ` +
-                `(${legacyCleanup.channelsDeleted} channels deleted, category deleted=${legacyCleanup.categoryDeleted})`
+                `(${legacyCleanup.channelsDeleted} channels deleted, categories deleted=${legacyCleanup.categoriesDeleted})`
             );
         } catch (error) {
             console.error(`Legacy onboarding cleanup failed for ${guild.name}:`);

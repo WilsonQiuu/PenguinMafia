@@ -250,9 +250,63 @@ test('legacy welcome, trainer, and trial-mod rooms are deleted with an empty pro
 
     assert.deepEqual(result, {
         channelsDeleted: 3,
-        categoryDeleted: true
+        categoriesDeleted: 1
     });
     assert.deepEqual(new Set(deleted), new Set(['welcome-1', 'trainer-1', 'trial-1', 'category-1']));
+});
+
+test('weekly DM refresh deletes the active tutorial message and sends a fresh first step', async () => {
+    const calls = [];
+    const botUser = {
+        id: 'bot-1'
+    };
+    const priorMessage = {
+        id: 'prior-welcome',
+        author: botUser,
+        client: {
+            user: botUser
+        },
+        content: '<@123456789012345>',
+        components: [{
+            components: [{
+                customId: 'welcome:rank_up:123456789012345:live'
+            }]
+        }],
+        async delete() {
+            calls.push('delete-prior');
+        }
+    };
+    const dm = {
+        messages: {
+            async fetch() {
+                return new Collection([
+                    ['prior-welcome', priorMessage]
+                ]);
+            }
+        },
+        async send(payload) {
+            calls.push('send-fresh');
+            assert.match(payload.content, /weekly reminder/i);
+        }
+    };
+    const member = {
+        id: '123456789012345',
+        user: {
+            id: '123456789012345',
+            username: 'NewPenguin'
+        },
+        async createDM() {
+            return dm;
+        }
+    };
+
+    const result = await onboarding.startOnboardingForMember(member, {
+        refresh: true,
+        isWeeklyRefresh: true
+    });
+
+    assert.equal(result, dm);
+    assert.deepEqual(calls, ['delete-prior', 'send-fresh']);
 });
 
 test('chat gate deletes a message and resumes the existing DM onboarding', async () => {
