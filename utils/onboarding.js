@@ -308,11 +308,11 @@ function linkMinecraftMessage(userId, isTest = false) {
     return {
         content:
             `# 🎮 One Last Step\n\n` +
-            `To identify your DonutSMP account for giveaways and manual payouts, we need:\n\n` +
+            `To identify your DonutSMP account for Penguin Mafia activities, we need:\n\n` +
             `📝 Your Minecraft IGN\n` +
             `💻 Your edition (Java or Bedrock)\n\n` +
             `We only use this information to identify your in-game account. We will never ask for your password, email, Microsoft account, or login information.\n\n` +
-            `Giveaway hosts handle prize payments; the bot does not transfer money automatically.`,
+            `Giveaway hosts coordinate prizes directly.`,
         components: [
             row(
                 scopedButton('join_all_ign_java', userId, 'Java', ButtonStyle.Success, isTest),
@@ -907,7 +907,7 @@ async function finishOnboardingInteraction(interaction, options) {
                     finalGiveawaySkippedLine = 'ℹ️ There were no active eligible giveaways to enter right now.';
                 }
             } catch (error) {
-                finalGiveawaySkippedLine = '⚠️ Automatic giveaway entry could not finish. You can enter active giveaways normally after welcome.';
+                finalGiveawaySkippedLine = '⚠️ Giveaway entry could not finish. You can enter active giveaways normally after welcome.';
                 console.error(`Welcome giveaway entry failed for ${targetUserId}:`);
                 console.error(error);
             }
@@ -1019,7 +1019,7 @@ async function handleWelcomeButton(interaction) {
             targetUserId,
             isTest,
             skipMessage: `⏭️ Username skipped for now. You can link it later with \`/penguinlink\`.`,
-            giveawaySkippedLine: 'Skipped automatic giveaway entry because no Minecraft account was linked.'
+            giveawaySkippedLine: 'Skipped giveaway entry because no Minecraft account was linked.'
         });
         return true;
     }

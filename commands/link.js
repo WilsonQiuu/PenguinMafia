@@ -13,11 +13,6 @@ const {
 const {
     setMemberNicknameToIgn
 } = require('../utils/nicknames.js');
-const {
-    ensureMinecraftBotConnected,
-    formatMinecraftPaymentAmountFromCents,
-    payPlayerAfterBusyWait
-} = require('../utils/commissionPayments.js');
 
 const DEFAULT_RANK_NAME = 'Penguin Soldier';
 
@@ -117,14 +112,6 @@ module.exports = {
                 interaction.user.globalName ||
                 interaction.user.username;
 
-            const beforeRows = await sql`
-                select minecraft_ign from players where discord_id = ${interaction.user.id} limit 1
-            `;
-            const bonusRows = await sql`
-                select value from bot_state where key = 'welcome_bonus_paid:' || ${interaction.user.id} limit 1
-            `;
-            const wasFirstLink = !beforeRows[0]?.minecraft_ign && !bonusRows[0]?.value;
-
             await sql`
                 insert into players (
                     discord_id,
@@ -159,77 +146,6 @@ module.exports = {
                     updated_at = now()
             `;
 
-            let welcomeLine = '';
-
-            if (wasFirstLink) {
-                try {
-                    await ensureMinecraftBotConnected({
-                        guild: interaction.guild,
-                        source: 'Welcome bonus'
-                    });
-
-                    await payPlayerAfterBusyWait(minecraftIGN, '1000', {
-                        guild: interaction.guild,
-                        source: `Welcome bonus for ${interaction.user.id}`,
-                        actorId: interaction.user.id,
-                        suppressPaymentLog: true
-                    });
-
-                    await sql`
-                        insert into bot_state (key, value)
-                        values ('welcome_bonus_paid:' || ${interaction.user.id}, 'true')
-                        on conflict (key) do nothing
-                    `;
-
-                    await interaction.user.send(
-                        `🐧 **Welcome to the Penguin Mafia!**\n\n` +
-                        `You've received a **1,000** welcome bonus for linking your account!\n\n` +
-                        `Start recruiting to climb the ranks and earn more rewards. Use \`/graph\` to see your tree.`
-                    ).catch(() => {});
-
-                    welcomeLine = `\n🎉 Welcome bonus of **1,000** has been sent to your Minecraft account!`;
-                } catch (bonusError) {
-                    console.log(`Welcome bonus failed for ${interaction.user.tag}: ${bonusError.message}`);
-                }
-            }
-
-            const commRows = await sql`
-                select unpaid_commissions from players
-                where discord_id = ${interaction.user.id} and unpaid_commissions > 0
-                limit 1
-            `;
-            let payoutLine = '';
-
-            if (commRows[0]?.unpaid_commissions) {
-                try {
-                    await ensureMinecraftBotConnected({
-                        guild: interaction.guild,
-                        source: '/penguinlink commission payout'
-                    });
-
-                    const amountCents = BigInt(commRows[0].unpaid_commissions);
-                    const amount = formatMinecraftPaymentAmountFromCents(amountCents);
-                    const payment = await payPlayerAfterBusyWait(minecraftIGN, amount, {
-                        guild: interaction.guild,
-                        source: `/penguinlink payout for ${interaction.user.id}`,
-                        actorId: interaction.user.id,
-                        suppressPaymentLog: true
-                    });
-
-                    await sql`
-                        update players
-                        set
-                            unpaid_commissions = greatest(unpaid_commissions - ${amountCents.toString()}::bigint, 0),
-                            updated_at = now()
-                        where discord_id = ${interaction.user.id}
-                    `;
-
-                    payoutLine = `\n💸 Unpaid commissions of **${formatMinecraftPaymentAmountFromCents(amountCents)}** have been paid out!`;
-                } catch (payoutError) {
-                    console.log(`Commission payout failed during /penguinlink for ${interaction.user.tag}: ${payoutError.message}`);
-                }
-            }
-
             const nicknameUpdated = await setMemberNicknameToIgn(
                 buttonInteraction.member,
                 minecraftIGN
@@ -241,7 +157,7 @@ module.exports = {
                     `✅ **Minecraft IGN linked successfully!**\n\n` +
                     `Discord: ${interaction.user}\n` +
                     `Minecraft IGN: **${minecraftIGN}**\n` +
-                    `Edition: **${editionLabel}**${welcomeLine}${payoutLine}\n\n` +
+                    `Edition: **${editionLabel}**\n\n` +
                     `You can run \`/penguinlink\` again if this was wrong.`,
                 components: []
             });

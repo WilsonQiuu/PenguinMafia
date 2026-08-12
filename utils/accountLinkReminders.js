@@ -54,7 +54,7 @@ function accountLinkModal(userId, player) {
         .addLabelComponents(
             new LabelBuilder()
                 .setLabel('Minecraft IGN')
-                .setDescription('Enter the account name that should receive payment.')
+                .setDescription('Enter the account name you use in Minecraft.')
                 .setTextInputComponent(ignInput),
             new LabelBuilder()
                 .setLabel('Minecraft Edition')
