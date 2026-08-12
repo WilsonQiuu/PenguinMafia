@@ -111,13 +111,13 @@ module.exports = {
                 return;
             }
 
-            const channel = await startTrainerOnboardingForMember(member);
+            await startTrainerOnboardingForMember(member);
 
             await interaction.editReply(
                 `✅ **Trainer offer started.**\n\n` +
                 `Player: **${playerName(player, playerUser.username)}** ${playerUser}\n` +
                 `Current Penguin rank: **${player.rank_name}**\n` +
-                `Onboarding room: ${channel}\n\n` +
+                `Onboarding: **sent by DM**\n\n` +
                 `The ${TRAINER_ROLE_NAME} role will be added only if they accept.`
             );
         } catch (error) {

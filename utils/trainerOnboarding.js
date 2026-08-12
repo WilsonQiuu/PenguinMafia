@@ -2,21 +2,18 @@ const {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
-    ChannelType,
-    PermissionFlagsBits,
     MessageFlags
 } = require('discord.js');
 
 const {
-    ensureTrainerRole,
-    ensureWelcomeCategory
+    ensureTrainerRole
 } = require('./bootstrap.js');
 const {
     postTrainerPromotionEvent
 } = require('./events.js');
 const {
-    donDiscordIds
-} = require('./staff.js');
+    scheduleDmOnboardingMessageDelete
+} = require('./onboarding.js');
 
 const BUTTON_PREFIX = 'trainer';
 
@@ -33,18 +30,6 @@ function button(action, userId, label = 'Next', style = ButtonStyle.Success) {
 
 function row(...components) {
     return new ActionRowBuilder().addComponents(...components);
-}
-
-function sanitizeChannelName(name) {
-    return name
-        .toLowerCase()
-        .replace(/[^a-z0-9_-]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 28) || 'trainer';
-}
-
-function trainerChannelTopic(userId) {
-    return `Penguin Mafia trainer onboarding:${userId}`;
 }
 
 function introMessage(member) {
@@ -219,80 +204,6 @@ async function scheduleTrainerChannelDelete(interaction, reason = 'Penguin Mafia
     }, 1_000);
 }
 
-async function ensureTrainerOnboardingChannel(member, context = {}) {
-    const guild = member.guild;
-    const channels = context.channelCache || await guild.channels.fetch();
-    const topic = trainerChannelTopic(member.id);
-    let channel = channels.find(existingChannel => {
-        return existingChannel?.type === ChannelType.GuildText && existingChannel.topic === topic;
-    });
-    const category = await ensureWelcomeCategory(guild, {
-        channelCache: context.channelCache,
-        requireAvailableSlot: true
-    });
-    const permissionOverwrites = [
-        {
-            id: guild.roles.everyone.id,
-            deny: [
-                PermissionFlagsBits.ViewChannel
-            ]
-        },
-        {
-            id: guild.client.user.id,
-            allow: [
-                PermissionFlagsBits.ViewChannel,
-                PermissionFlagsBits.SendMessages,
-                PermissionFlagsBits.ReadMessageHistory,
-                PermissionFlagsBits.ManageMessages,
-                PermissionFlagsBits.ManageChannels
-            ]
-        },
-        {
-            id: member.id,
-            allow: [
-                PermissionFlagsBits.ViewChannel,
-                PermissionFlagsBits.SendMessages,
-                PermissionFlagsBits.ReadMessageHistory
-            ]
-        }
-    ];
-
-    for (const donDiscordId of donDiscordIds()) {
-        permissionOverwrites.push({
-            id: donDiscordId,
-            allow: [
-                PermissionFlagsBits.ViewChannel,
-                PermissionFlagsBits.SendMessages,
-                PermissionFlagsBits.ReadMessageHistory,
-                PermissionFlagsBits.ManageMessages,
-                PermissionFlagsBits.ManageChannels
-            ]
-        });
-    }
-
-    if (!channel) {
-        channel = await guild.channels.create({
-            name: `🎓-trainer-${sanitizeChannelName(member.user.username)}`,
-            type: ChannelType.GuildText,
-            parent: category.id,
-            topic,
-            permissionOverwrites,
-            reason: 'Penguin Mafia Trainer onboarding'
-        });
-
-        if (context.channelCache) {
-            context.channelCache.set(channel.id, channel);
-        }
-    } else {
-        await channel.permissionOverwrites.set(
-            permissionOverwrites,
-            'Penguin Mafia Trainer onboarding permissions'
-        );
-    }
-
-    return channel;
-}
-
 function isTrainerOfferMessage(message, userId) {
     if (message.author.id !== message.client.user.id) {
         return false;
@@ -309,7 +220,7 @@ function isTrainerOfferMessage(message, userId) {
 }
 
 async function startTrainerOnboardingForMember(member, context = {}) {
-    const channel = await ensureTrainerOnboardingChannel(member, context);
+    const channel = await member.createDM();
     const recentMessages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
     const offerAlreadyStarted = recentMessages?.some(message => {
         return isTrainerOfferMessage(message, member.id);
@@ -324,10 +235,23 @@ async function startTrainerOnboardingForMember(member, context = {}) {
 }
 
 async function startTrainerTrainingForMember(member, context = {}) {
-    const channel = await ensureTrainerOnboardingChannel(member, context);
+    const channel = await member.createDM();
 
     await channel.send(welcomeRecruitsMessage(member.id));
     return channel;
+}
+
+async function resolveTrainerMember(interaction, targetUserId) {
+    if (interaction.guild) {
+        return interaction.guild.members.fetch(targetUserId);
+    }
+
+    for (const [, guild] of interaction.client.guilds.cache) {
+        const member = await guild.members.fetch(targetUserId).catch(() => null);
+        if (member) return member;
+    }
+
+    throw new Error('Could not find this Trainer in a shared Penguin Mafia server.');
 }
 
 async function handleTrainerButton(interaction) {
@@ -348,22 +272,26 @@ async function handleTrainerButton(interaction) {
 
     if (action === 'reject') {
         await interaction.update({
-            content: '# ❌ TRAINER POSITION REJECTED\n\nNo Trainer role was added. This room will now self destruct.',
+            content: '# ❌ TRAINER POSITION REJECTED\n\nNo Trainer role was added. This message will now self destruct.',
             components: []
         });
-        await scheduleTrainerChannelDelete(interaction, 'Penguin Mafia Trainer onboarding rejected');
+        if (interaction.channel?.isDMBased?.()) {
+            await scheduleDmOnboardingMessageDelete(interaction, 10);
+        } else {
+            await scheduleTrainerChannelDelete(interaction, 'Penguin Mafia Trainer onboarding rejected');
+        }
         return true;
     }
 
     if (action === 'accept') {
-        const member = await interaction.guild.members.fetch(targetUserId);
-        const { trainerRole } = await ensureTrainerRole(interaction.guild);
+        const member = await resolveTrainerMember(interaction, targetUserId);
+        const { trainerRole } = await ensureTrainerRole(member.guild);
         const wasAlreadyTrainer = member.roles.cache.has(trainerRole.id);
 
         if (!wasAlreadyTrainer) {
             await member.roles.add(trainerRole, 'Penguin Mafia Trainer accepted onboarding');
 
-            await postTrainerPromotionEvent(interaction.guild, {
+            await postTrainerPromotionEvent(member.guild, {
                 playerId: targetUserId
             }).catch(error => {
                 console.error('Promotion event channel post failed after Trainer acceptance:');
@@ -408,10 +336,14 @@ async function handleTrainerButton(interaction) {
 
     if (action === 'done') {
         await interaction.update({
-            content: '# ✅ TRAINER TRAINING COMPLETE\n\nThis room will now self destruct.',
+            content: '# ✅ TRAINER TRAINING COMPLETE\n\nThis training message will now self destruct.',
             components: []
         });
-        await scheduleTrainerChannelDelete(interaction);
+        if (interaction.channel?.isDMBased?.()) {
+            await scheduleDmOnboardingMessageDelete(interaction, 10);
+        } else {
+            await scheduleTrainerChannelDelete(interaction);
+        }
         return true;
     }
 

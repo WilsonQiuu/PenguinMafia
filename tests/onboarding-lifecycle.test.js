@@ -3,6 +3,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const {
+    ChannelType,
+    Collection
+} = require('discord.js');
 
 const testDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'penguin-welcome-lifecycle-'));
 const stateFile = path.join(testDirectory, 'dm-cleanup.json');
@@ -146,4 +150,168 @@ test('failed DM deletions remain queued and are removed after a successful retry
     } finally {
         console.error = originalConsoleError;
     }
+});
+
+test('live onboarding starts in DMs and never creates a guild channel', async () => {
+    const sent = [];
+    const dm = {
+        messages: {
+            async fetch() {
+                return new Collection();
+            }
+        },
+        async send(payload) {
+            sent.push(payload);
+            return {
+                id: 'intro-1'
+            };
+        }
+    };
+    const member = {
+        id: '123456789012345',
+        user: {
+            id: '123456789012345',
+            username: 'NewPenguin'
+        },
+        guild: {
+            channels: {
+                async create() {
+                    throw new Error('guild onboarding channel must not be created');
+                }
+            }
+        },
+        async createDM() {
+            return dm;
+        }
+    };
+
+    const result = await onboarding.startOnboardingForMember(member);
+
+    assert.equal(result, dm);
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].content, /Welcome to the Penguin Mafia/);
+});
+
+test('legacy welcome, trainer, and trial-mod rooms are deleted with an empty processing category', async () => {
+    const deleted = [];
+    const category = {
+        id: 'category-1',
+        name: '🐧-penguin-processing',
+        type: ChannelType.GuildCategory,
+        deletable: true,
+        async delete() {
+            deleted.push(this.id);
+        }
+    };
+    const channels = new Collection([
+        ['category-1', category],
+        ['welcome-1', {
+            id: 'welcome-1',
+            name: 'welcome',
+            type: ChannelType.GuildText,
+            parentId: 'category-1',
+            topic: 'Penguin Mafia onboarding:123456789012345',
+            deletable: true,
+            async delete() {
+                deleted.push(this.id);
+            }
+        }],
+        ['trainer-1', {
+            id: 'trainer-1',
+            name: 'trainer',
+            type: ChannelType.GuildText,
+            parentId: 'category-1',
+            topic: 'Penguin Mafia trainer onboarding:123456789012346',
+            deletable: true,
+            async delete() {
+                deleted.push(this.id);
+            }
+        }],
+        ['trial-1', {
+            id: 'trial-1',
+            name: 'trial',
+            type: ChannelType.GuildText,
+            parentId: 'category-1',
+            topic: 'Penguin Mafia trial mod onboarding:123456789012347',
+            deletable: true,
+            async delete() {
+                deleted.push(this.id);
+            }
+        }]
+    ]);
+
+    const result = await onboarding.cleanupLegacyOnboardingChannels({
+        channels: {
+            async fetch() {
+                return channels;
+            }
+        }
+    });
+
+    assert.deepEqual(result, {
+        channelsDeleted: 3,
+        categoryDeleted: true
+    });
+    assert.deepEqual(new Set(deleted), new Set(['welcome-1', 'trainer-1', 'trial-1', 'category-1']));
+});
+
+test('chat gate deletes a message and resumes the existing DM onboarding', async () => {
+    const calls = [];
+    const botUser = {
+        id: 'bot-1'
+    };
+    const dm = {
+        messages: {
+            async fetch() {
+                return new Collection([
+                    ['intro-1', {
+                        author: botUser,
+                        client: {
+                            user: botUser
+                        },
+                        content: '',
+                        components: [{
+                            components: [{
+                                customId: 'welcome:build_team:123456789012345:live'
+                            }]
+                        }]
+                    }]
+                ]);
+            }
+        },
+        async send() {
+            calls.push('intro');
+        }
+    };
+    const member = {
+        id: '123456789012345',
+        user: {
+            tag: 'new-penguin'
+        },
+        roles: {
+            cache: new Collection()
+        },
+        async send() {
+            calls.push('notice');
+        },
+        async createDM() {
+            calls.push('resume');
+            return dm;
+        }
+    };
+    const handled = await onboarding.enforceWelcomeMessageGate({
+        id: 'server-message-1',
+        guild: {},
+        member,
+        author: {
+            bot: false
+        },
+        webhookId: null,
+        async delete() {
+            calls.push('delete');
+        }
+    });
+
+    assert.equal(handled, true);
+    assert.deepEqual(calls, ['delete', 'notice', 'resume']);
 });

@@ -6,8 +6,6 @@ const {
     ButtonStyle,
     ChannelType,
     ModalBuilder,
-    OverwriteType,
-    PermissionFlagsBits,
     TextInputBuilder,
     TextInputStyle,
     MessageFlags
@@ -16,21 +14,18 @@ const {
 const {
     DEFAULT_RANK_NAME,
     ensureRankRoles,
-    ensureWelcomeCategory,
     syncMemberRankRole
 } = require('./bootstrap.js');
 const {
     setMemberNicknameToIgn
 } = require('./nicknames.js');
-const {
-    donDiscordIds
-} = require('./staff.js');
 
 const BUTTON_PREFIX = 'welcome';
 const MODAL_PREFIX = 'welcome_ign_submit';
 const JOIN_ALL_MODAL_PREFIX = 'welcome_join_all_ign';
 const WELCOME_REMINDER_INTERVAL_MS = 2 * 24 * 60 * 60 * 1000;
 const WELCOME_SELF_DESTRUCT_SECONDS = 30;
+const LEGACY_ONBOARDING_CATEGORY_PATTERN = /^🐧-penguin-processing(?:-\d+)?$/i;
 const WELCOME_DM_CLEANUP_STATE_FILE = process.env.WELCOME_DM_CLEANUP_STATE_FILE ||
     path.join(__dirname, '..', '.welcome-dm-cleanup-queue.json');
 
@@ -140,10 +135,6 @@ function giveawayActions() {
     return require('./giveaways.js');
 }
 
-function commissionPaymentActions() {
-    return require('./commissionPayments.js');
-}
-
 function buttonId(action, userId, isTest = false) {
     return `${BUTTON_PREFIX}:${action}:${userId}:${isTest ? 'test' : 'live'}`;
 }
@@ -187,14 +178,6 @@ async function updateWithReadingDelay(interaction, message) {
         : await message;
 
     await interaction.editReply(normalizeWelcomePayload(interaction, resolvedMessage));
-}
-
-function sanitizeChannelName(name) {
-    return name
-        .toLowerCase()
-        .replace(/[^a-z0-9_-]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 28) || 'new-penguin';
 }
 
 function welcomeChannelTopic(userId) {
@@ -247,7 +230,7 @@ function introMessage(member, context = {}) {
         .filter(Boolean);
     const safeInviterDisplayName = escapeDiscordMarkdown(context.inviterDisplayName || 'your recruiter');
     const parentLine = context.inviterDisplayName
-        ? `Our bots detected ${context.recruiterId ? `<@${context.recruiterId}>` : `**${safeInviterDisplayName}**`} as your recruiter. They${context.grandRecruiterId ? ` and <@${context.grandRecruiterId}>` : ''} can see this room and help if you get stuck.`
+        ? `Our bots detected ${context.recruiterId ? `<@${context.recruiterId}>` : `**${safeInviterDisplayName}**`} as your recruiter. They${context.grandRecruiterId ? ` and <@${context.grandRecruiterId}>` : ''} can help if you get stuck.`
         : `No recruiter was detected for this join. If someone invited you, use \`/join recruiter:@TheirDiscord\` after this tutorial.`;
     const isTest = Boolean(context.isTest);
 
@@ -301,11 +284,11 @@ function linkMinecraftMessage(userId, isTest = false) {
     return {
         content:
             `# 🎮 One Last Step\n\n` +
-            `To send you DonutSMP rewards automatically, we need:\n\n` +
+            `To identify your DonutSMP account for giveaways and manual payouts, we need:\n\n` +
             `📝 Your Minecraft IGN\n` +
             `💻 Your edition (Java or Bedrock)\n\n` +
-            `We only use this information to identify your in-game account for payouts and giveaways. We will never ask for your password, email, Microsoft account, or login information.\n\n` +
-            `Without your IGN, we can't automatically send giveaway prizes or other rewards.`,
+            `We only use this information to identify your in-game account. We will never ask for your password, email, Microsoft account, or login information.\n\n` +
+            `Giveaway hosts handle prize payments; the bot does not transfer money automatically.`,
         components: [
             row(
                 scopedButton('join_all_ign_java', userId, 'Java', ButtonStyle.Success, isTest),
@@ -319,7 +302,7 @@ function linkMinecraftMessage(userId, isTest = false) {
 function finalMessage(userId, linkedIgn = null, edition = null, options = {}) {
     const linkedLine = linkedIgn
         ? `Your account has been linked successfully.\n\n✅ **${linkedIgn}**${edition ? ` (${minecraftEditionLabel(edition)})` : ''}`
-        : (options.skipMessage || `⏭️ IGN skipped. Use \`/penguinlink\` later for faster payouts.`);
+        : (options.skipMessage || `⏭️ IGN skipped. You can link it later from the server.`);
     const giveawayLine = options.giveawayEntryResult
         ? `\n🎉 Entered **${options.giveawayEntryResult.inserted_count}** new active giveaway${options.giveawayEntryResult.inserted_count === 1 ? '' : 's'} out of **${options.giveawayEntryResult.eligible_count}** eligible.`
         : (options.giveawaySkippedLine ? `\n${options.giveawaySkippedLine}` : '');
@@ -458,107 +441,7 @@ async function scheduleWelcomeMessageDelete(interaction, seconds = WELCOME_SELF_
     }
 }
 
-async function getOnboardingChannels(guild, context = {}) {
-    if (context.channelCache) {
-        return context.channelCache;
-    }
-
-    return guild.channels.fetch();
-}
-
-function rememberOnboardingChannel(context, channel) {
-    if (context.channelCache && channel) {
-        context.channelCache.set(channel.id, channel);
-    }
-}
-
-async function ensureWelcomeChannel(member, context = {}) {
-    const guild = member.guild;
-    const channels = await getOnboardingChannels(guild, context);
-    const topic = welcomeChannelTopic(member.id);
-    const grandRecruiterId = context.grandRecruiterId !== undefined
-        ? context.grandRecruiterId
-        : await resolveGrandRecruiterId(context.recruiterId);
-    let channel = channels.find(existingChannel => {
-        return existingChannel?.type === ChannelType.GuildText && existingChannel.topic === topic;
-    });
-
-    const category = await ensureWelcomeCategory(guild, {
-        channelCache: context.channelCache,
-        requireAvailableSlot: true
-    });
-    const permissionOverwrites = [
-        {
-            id: guild.roles.everyone.id,
-            type: OverwriteType.Role,
-            deny: [
-                PermissionFlagsBits.ViewChannel
-            ]
-        },
-        {
-            id: member.id,
-            type: OverwriteType.Member,
-            allow: [
-                PermissionFlagsBits.ViewChannel,
-                PermissionFlagsBits.SendMessages,
-                PermissionFlagsBits.ReadMessageHistory
-            ]
-        }
-    ];
-
-    const addMemberOverwrite = (userId, allow) => {
-        if (!userId || permissionOverwrites.some(overwrite => overwrite.id === userId)) {
-            return;
-        }
-
-        permissionOverwrites.push({
-            id: userId,
-            type: OverwriteType.Member,
-            allow
-        });
-    };
-
-    addMemberOverwrite(context.recruiterId, [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.SendMessages,
-        PermissionFlagsBits.ReadMessageHistory
-    ]);
-    addMemberOverwrite(grandRecruiterId, [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.SendMessages,
-        PermissionFlagsBits.ReadMessageHistory
-    ]);
-
-    for (const donDiscordId of donDiscordIds()) {
-        addMemberOverwrite(donDiscordId, [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.ManageMessages
-        ]);
-    }
-
-    if (!channel) {
-        channel = await guild.channels.create({
-            name: `🐧-welcome-${sanitizeChannelName(member.user.username)}`,
-            type: ChannelType.GuildText,
-            parent: category.id,
-            topic,
-            permissionOverwrites,
-            reason: 'Penguin Mafia private welcome onboarding'
-        });
-        rememberOnboardingChannel(context, channel);
-    } else {
-        await channel.permissionOverwrites.set(
-            permissionOverwrites,
-            'Penguin Mafia private welcome onboarding permissions'
-        );
-    }
-
-    return channel;
-}
-
-async function sendWelcomeReminderIfDue(member, channel) {
+async function sendWelcomeReminderIfDue(member) {
     const rows = await database()`
         select welcome_completed, welcome_reminder_sent_at
         from players
@@ -579,14 +462,11 @@ async function sendWelcomeReminderIfDue(member, channel) {
         return false;
     }
 
-    const channelLink = `https://discord.com/channels/${member.guild.id}/${channel.id}`;
-
     try {
         await member.send({
             content:
                 `🐧 Hey! You still need to finish your **Penguin Mafia** welcome setup.\n\n` +
-                `Please go to ${channel} and press **Next** until you finish.\n\n` +
-                `Direct link: ${channelLink}\n\n` +
+                `Return to the welcome message in this DM and press **Next** until you finish.\n\n` +
                 `Once you complete it, you’ll get your **${DEFAULT_RANK_NAME}** role and full server access.`
         });
 
@@ -598,7 +478,7 @@ async function sendWelcomeReminderIfDue(member, channel) {
             where discord_id = ${member.id}
         `;
 
-        console.log(`Welcome reminder DM sent to ${member.user.tag} for ${channel.name} (${channel.id}).`);
+        console.log(`Welcome reminder DM sent to ${member.user.tag}.`);
         return true;
     } catch (error) {
         console.log(`Could not DM welcome reminder to ${member.user.tag}: ${error.message}`);
@@ -607,11 +487,11 @@ async function sendWelcomeReminderIfDue(member, channel) {
 }
 
 async function startOnboardingForMember(member, context = {}) {
-    const channel = await ensureWelcomeChannel(member, context);
     const isTest = Boolean(context.isTest);
     const grandRecruiterId = context.grandRecruiterId !== undefined
         ? context.grandRecruiterId
         : await resolveGrandRecruiterId(context.recruiterId);
+    const channel = await member.createDM();
     const recentMessages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
     const alreadyStarted = recentMessages?.some(message => {
         return isWelcomeFlowMessage(message, member.id);
@@ -626,6 +506,88 @@ async function startOnboardingForMember(member, context = {}) {
         grandRecruiterId
     }));
     return channel;
+}
+
+async function enforceWelcomeMessageGate(message) {
+    if (!message?.guild || !message.member || message.author?.bot || message.webhookId) {
+        return false;
+    }
+
+    const hasSoldierRole = message.member.roles.cache.some(role => {
+        return role.name.toLowerCase() === DEFAULT_RANK_NAME.toLowerCase();
+    });
+
+    if (hasSoldierRole) {
+        return false;
+    }
+
+    await message.delete().catch(error => {
+        console.error(`Could not delete onboarding-blocked message ${message.id || 'unknown'}: ${error.message}`);
+    });
+
+    await message.member.send({
+        content:
+            `🐧 Your server message was removed because you have not finished onboarding yet.\n\n` +
+            `Finish the welcome buttons in this DM to receive the **${DEFAULT_RANK_NAME}** role and unlock server chat.`
+    }).catch(error => {
+        console.log(`Could not DM onboarding gate notice to ${message.member.user.tag}: ${error.message}`);
+    });
+
+    await startOnboardingForMember(message.member).catch(error => {
+        console.error(`Could not resume DM onboarding for ${message.member.user.tag}: ${error.message}`);
+    });
+
+    return true;
+}
+
+async function cleanupLegacyOnboardingChannels(guild) {
+    const channels = await guild.channels.fetch();
+    const managedTopic = /^Penguin Mafia (?:onboarding|trainer onboarding|trial mod onboarding):\d{15,25}$/;
+    const legacyChannels = channels.filter(channel => {
+        return channel?.type === ChannelType.GuildText &&
+            managedTopic.test(String(channel.topic || ''));
+    });
+    const deletedChannelIds = new Set();
+
+    for (const [, channel] of legacyChannels) {
+        if (!channel.deletable) {
+            console.log(`Could not delete legacy onboarding channel ${channel.name} (${channel.id}): channel is not deletable.`);
+            continue;
+        }
+
+        try {
+            await channel.delete('Penguin Mafia onboarding moved to DMs');
+            deletedChannelIds.add(channel.id);
+        } catch (error) {
+            console.error(`Could not delete legacy onboarding channel ${channel.name} (${channel.id}): ${error.message}`);
+        }
+    }
+
+    const category = channels.find(channel => {
+        return channel?.type === ChannelType.GuildCategory &&
+            LEGACY_ONBOARDING_CATEGORY_PATTERN.test(channel.name);
+    });
+    let categoryDeleted = false;
+
+    if (category) {
+        const remainingChildren = channels.filter(channel => {
+            return channel?.parentId === category.id && !deletedChannelIds.has(channel.id);
+        });
+
+        if (remainingChildren.size === 0 && category.deletable) {
+            try {
+                await category.delete('Penguin Mafia onboarding moved to DMs');
+                categoryDeleted = true;
+            } catch (error) {
+                console.error(`Could not delete legacy onboarding category ${category.id}: ${error.message}`);
+            }
+        }
+    }
+
+    return {
+        channelsDeleted: deletedChannelIds.size,
+        categoryDeleted
+    };
 }
 
 async function remindIncompleteWelcomeMembers(guild) {
@@ -646,7 +608,6 @@ async function remindIncompleteWelcomeMembers(guild) {
         };
     }
 
-    const channelCache = await guild.channels.fetch();
     let sent = 0;
 
     for (const player of rows) {
@@ -656,11 +617,10 @@ async function remindIncompleteWelcomeMembers(guild) {
             continue;
         }
 
-        const channel = await ensureWelcomeChannel(member, {
-            channelCache,
+        await startOnboardingForMember(member, {
             recruiterId: player.parent_discord_id
         });
-        const reminderSent = await sendWelcomeReminderIfDue(member, channel);
+        const reminderSent = await sendWelcomeReminderIfDue(member);
 
         if (reminderSent) {
             sent++;
@@ -853,42 +813,17 @@ async function acknowledgeWelcomeCompletion(interaction) {
     await interaction.deferReply();
 }
 
-async function payWelcomeCompletionBonus(interaction, minecraftIgn) {
-    const bonusRows = await database()`
-        select value from bot_state where key = 'welcome_bonus_paid:' || ${interaction.user.id} limit 1
-    `;
-
-    if (bonusRows[0]?.value) {
-        return;
+async function resolveOnboardingMember(interaction, targetUserId) {
+    if (interaction.guild) {
+        return interaction.guild.members.fetch(targetUserId);
     }
 
-    try {
-        await commissionPaymentActions().ensureMinecraftBotConnected({
-            guild: interaction.guild,
-            source: 'Welcome bonus'
-        });
-
-        await commissionPaymentActions().payPlayerAfterBusyWait(minecraftIgn, '1000', {
-            guild: interaction.guild,
-            source: `Welcome bonus for ${interaction.user.id}`,
-            actorId: interaction.user.id,
-            suppressPaymentLog: true
-        });
-
-        await database()`
-            insert into bot_state (key, value)
-            values ('welcome_bonus_paid:' || ${interaction.user.id}, 'true')
-            on conflict (key) do nothing
-        `;
-
-        await interaction.user.send(
-            `🐧 **Welcome to the Penguin Mafia!**\n\n` +
-            `You've received a **1,000** welcome bonus for linking your account!\n\n` +
-            `Start recruiting to climb the ranks and earn more rewards. Use \`/graph\` to see your tree.`
-        ).catch(() => {});
-    } catch (bonusError) {
-        console.log(`Welcome bonus failed during onboarding for ${interaction.user.tag}: ${bonusError.message}`);
+    for (const [, guild] of interaction.client.guilds.cache) {
+        const member = await guild.members.fetch(targetUserId).catch(() => null);
+        if (member) return member;
     }
+
+    throw new Error('Could not find this player in a shared Penguin Mafia server.');
 }
 
 async function respondWithWelcomeFinal(interaction, payload) {
@@ -921,6 +856,7 @@ async function finishOnboardingInteraction(interaction, options) {
     } = options;
     let giveawayEntryResult = null;
     let finalGiveawaySkippedLine = giveawaySkippedLine;
+    let member = null;
 
     // Acknowledge before database, Discord role, giveaway, or Minecraft work.
     // Discord invalidates an unacknowledged component/modal interaction after
@@ -929,13 +865,13 @@ async function finishOnboardingInteraction(interaction, options) {
     await acknowledgeWelcomeCompletion(interaction);
 
     if (!isTest) {
-        const member = await interaction.guild.members.fetch(targetUserId);
+        member = await resolveOnboardingMember(interaction, targetUserId);
         await completeOnboarding(member, linkedIgn, minecraftEdition);
 
         if (enterAllGiveaways && linkedIgn && minecraftEdition) {
             try {
                 const entryResult = await giveawayActions().enterAllActiveGiveawaysForUser(
-                    interaction.guild,
+                    member.guild,
                     targetUserId,
                     database()
                 );
@@ -1119,13 +1055,6 @@ async function handleWelcomeModal(interaction) {
         enterAllGiveaways: isJoinAllModal
     });
 
-    // Minecraft can be disconnected or busy for up to two minutes. The
-    // durable Discord completion and cleanup countdown must already be active
-    // before this external side effect is attempted.
-    if (!isTest) {
-        await payWelcomeCompletionBonus(interaction, minecraftIgn);
-    }
-
     return true;
 }
 
@@ -1155,11 +1084,14 @@ async function startTestOnboardingInDm(userOrMember) {
 }
 
 module.exports = {
+    cleanupLegacyOnboardingChannels,
     cleanupCompletedWelcomeChannels,
     cleanupWelcomeChannelForMember,
     cleanupWelcomeChannelsForMissingMembers,
+    enforceWelcomeMessageGate,
     remindIncompleteWelcomeMembers,
     resumePendingWelcomeDmCleanups,
+    scheduleDmOnboardingMessageDelete: scheduleWelcomeMessageDelete,
     startTestOnboardingInDm,
     startOnboardingForMember,
     handleWelcomeButton,

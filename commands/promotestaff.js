@@ -302,7 +302,7 @@ module.exports = {
                         ? `\nTrusted Penguin role sync failures: **${trustRoleSyncFailures}**`
                         : '')
                     : '') +
-                (trialModOnboardingStarted ? `\nTrial Mod onboarding: **started**` : '')
+                (trialModOnboardingStarted ? `\nTrial Mod onboarding: **sent by DM**` : '')
             );
 
             const eventPosted = await postStaffPromotionEvent(interaction.guild, {

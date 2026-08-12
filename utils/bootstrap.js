@@ -91,7 +91,6 @@ const ICEBERG_ROLE_ID = process.env.ICEBERG_ROLE_ID || '1524126922295218310';
 const ICEBERG_ENTRY_FEE_CENTS = 30_000_000n;
 const ICEBERG_MIN_PLOT_PRICE_CENTS = 10_000_000n;
 const DONATIONS_LEADERBOARD_CHANNEL_ID = process.env.DONATIONS_LEADERBOARD_CHANNEL_ID || '1512488380280082493';
-const WELCOME_CATEGORY_NAME = '🐧-penguin-processing';
 const MOD_LOG_CHANNEL_NAME = 'mod-log';
 const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || '1512488393232355522';
 const ROLE_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -2303,63 +2302,6 @@ function staffReadOnlyOverwrites(guild, allowedRoles) {
     return overwrites;
 }
 
-function welcomeCategoryIndex(name) {
-    if (name === WELCOME_CATEGORY_NAME) {
-        return 1;
-    }
-
-    const escapedName = WELCOME_CATEGORY_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = name.match(new RegExp(`^${escapedName}-(\\d+)$`));
-
-    return match ? Number(match[1]) : null;
-}
-
-function categoryChildCount(channels, category) {
-    return channels.filter(channel => {
-        return channel?.parentId === category.id;
-    }).size;
-}
-
-async function ensureWelcomeCategory(guild, options = {}) {
-    const channels = await getGuildChannels(guild, options);
-    const processingCategories = channels.filter(existingChannel => {
-        return existingChannel?.type === ChannelType.GuildCategory &&
-            welcomeCategoryIndex(existingChannel.name) !== null;
-    }).sort((first, second) => {
-        return welcomeCategoryIndex(first.name) - welcomeCategoryIndex(second.name);
-    });
-
-    let category = options.requireAvailableSlot
-        ? processingCategories.find(existingCategory => categoryChildCount(channels, existingCategory) < 50)
-        : processingCategories.find(existingCategory => existingCategory.name === WELCOME_CATEGORY_NAME);
-
-    if (!category) {
-        const existingIndexes = processingCategories.map(existingCategory => {
-            return welcomeCategoryIndex(existingCategory.name) || 1;
-        });
-        const nextIndex = existingIndexes.length > 0
-            ? Math.max(...existingIndexes) + 1
-            : 1;
-        category = await guild.channels.create({
-            name: nextIndex === 1 ? WELCOME_CATEGORY_NAME : `${WELCOME_CATEGORY_NAME}-${nextIndex}`,
-            type: ChannelType.GuildCategory,
-            permissionOverwrites: [
-                {
-                    id: guild.roles.everyone.id,
-                    type: OverwriteType.Role,
-                    deny: [
-                        PermissionFlagsBits.ViewChannel
-                    ]
-                }
-            ],
-            reason: 'Penguin Mafia private welcome category setup'
-        });
-        rememberChannel(options, category);
-    }
-
-    return category;
-}
-
 async function ensureInfoChannels(guild, rankRoles, staffRoles = null) {
     const logChannelSetupStep = createBootstrapTimer(`channel-setup:${guild.name}`);
     logChannelSetupStep('starting managed channel setup');
@@ -2577,10 +2519,8 @@ module.exports = {
     TRAINER_ROLE_NAME,
     WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
     WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME,
-    WELCOME_CATEGORY_NAME,
     ensureDatabaseSchema,
     ensureInfoChannels,
-    ensureWelcomeCategory,
     ensureRankRoles,
     ensureStaffRoles,
     ensureTrainerRole,

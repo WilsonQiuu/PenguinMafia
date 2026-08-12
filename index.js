@@ -44,9 +44,10 @@ const {
     runSaturdayNoonWelcomeMaintenanceForGuild
 } = require('./utils/weeklySchedule.js');
 const {
-    cleanupCompletedWelcomeChannels,
+    cleanupLegacyOnboardingChannels,
     cleanupWelcomeChannelForMember,
     cleanupWelcomeChannelsForMissingMembers,
+    enforceWelcomeMessageGate,
     handleWelcomeButton,
     handleWelcomeModal,
     resumePendingWelcomeDmCleanups,
@@ -2476,18 +2477,18 @@ client.once(Events.ClientReady, async () => {
         }
     }
 
-    // This recovery must not depend on guild setup or the much larger member
-    // sync pipeline succeeding. welcome_completed is durable, so any room left
-    // behind by a restart during its countdown is safe to remove here.
+    // DM onboarding owns all welcome/training transport now. Remove every
+    // legacy Penguin Processing room after the member sync has re-sent any
+    // incomplete welcome flow through DMs.
     for (const [, guild] of client.guilds.cache) {
         try {
-            const deletedCompletedWelcomeChannels = await cleanupCompletedWelcomeChannels(guild);
+            const legacyCleanup = await cleanupLegacyOnboardingChannels(guild);
             logReadyStep(
-                `completed welcome cleanup for ${guild.name} ` +
-                `(${deletedCompletedWelcomeChannels.length} channels deleted)`
+                `legacy onboarding cleanup for ${guild.name} ` +
+                `(${legacyCleanup.channelsDeleted} channels deleted, category deleted=${legacyCleanup.categoryDeleted})`
             );
         } catch (error) {
-            console.error(`Completed welcome cleanup failed for ${guild.name}:`);
+            console.error(`Legacy onboarding cleanup failed for ${guild.name}:`);
             console.error(error);
         }
     }
@@ -3235,6 +3236,15 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
         await logVoiceDisconnectChange(oldState, newState);
     } catch (error) {
         console.error('Could not log voice state update:');
+        console.error(error);
+    }
+});
+
+client.on(Events.MessageCreate, async message => {
+    try {
+        await enforceWelcomeMessageGate(message);
+    } catch (error) {
+        console.error(`Could not enforce onboarding chat access for message ${message.id || 'unknown'}:`);
         console.error(error);
     }
 });

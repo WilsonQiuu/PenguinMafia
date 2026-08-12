@@ -2,17 +2,11 @@ const {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
-    ChannelType,
-    PermissionFlagsBits,
     MessageFlags
 } = require('discord.js');
-
 const {
-    ensureWelcomeCategory
-} = require('./bootstrap.js');
-const {
-    donDiscordIds
-} = require('./staff.js');
+    scheduleDmOnboardingMessageDelete
+} = require('./onboarding.js');
 
 const BUTTON_PREFIX = 'trialmod';
 
@@ -29,18 +23,6 @@ function button(action, userId, label = 'Next') {
 
 function row(...components) {
     return new ActionRowBuilder().addComponents(...components);
-}
-
-function sanitizeChannelName(name) {
-    return name
-        .toLowerCase()
-        .replace(/[^a-z0-9_-]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 28) || 'trial-mod';
-}
-
-function trialModChannelTopic(userId) {
-    return `Penguin Mafia trial mod onboarding:${userId}`;
 }
 
 function introMessage(member) {
@@ -184,80 +166,6 @@ async function scheduleTrialModChannelDelete(interaction) {
     }, 1_000);
 }
 
-async function ensureTrialModOnboardingChannel(member, context = {}) {
-    const guild = member.guild;
-    const channels = context.channelCache || await guild.channels.fetch();
-    const topic = trialModChannelTopic(member.id);
-    let channel = channels.find(existingChannel => {
-        return existingChannel?.type === ChannelType.GuildText && existingChannel.topic === topic;
-    });
-    const category = await ensureWelcomeCategory(guild, {
-        channelCache: context.channelCache,
-        requireAvailableSlot: true
-    });
-    const permissionOverwrites = [
-        {
-            id: guild.roles.everyone.id,
-            deny: [
-                PermissionFlagsBits.ViewChannel
-            ]
-        },
-        {
-            id: guild.client.user.id,
-            allow: [
-                PermissionFlagsBits.ViewChannel,
-                PermissionFlagsBits.SendMessages,
-                PermissionFlagsBits.ReadMessageHistory,
-                PermissionFlagsBits.ManageMessages,
-                PermissionFlagsBits.ManageChannels
-            ]
-        },
-        {
-            id: member.id,
-            allow: [
-                PermissionFlagsBits.ViewChannel,
-                PermissionFlagsBits.SendMessages,
-                PermissionFlagsBits.ReadMessageHistory
-            ]
-        }
-    ];
-
-    for (const donDiscordId of donDiscordIds()) {
-        permissionOverwrites.push({
-            id: donDiscordId,
-            allow: [
-                PermissionFlagsBits.ViewChannel,
-                PermissionFlagsBits.SendMessages,
-                PermissionFlagsBits.ReadMessageHistory,
-                PermissionFlagsBits.ManageMessages,
-                PermissionFlagsBits.ManageChannels
-            ]
-        });
-    }
-
-    if (!channel) {
-        channel = await guild.channels.create({
-            name: `🛡️-trial-mod-${sanitizeChannelName(member.user.username)}`,
-            type: ChannelType.GuildText,
-            parent: category.id,
-            topic,
-            permissionOverwrites,
-            reason: 'Penguin Mafia Trial Mod onboarding'
-        });
-
-        if (context.channelCache) {
-            context.channelCache.set(channel.id, channel);
-        }
-    } else {
-        await channel.permissionOverwrites.set(
-            permissionOverwrites,
-            'Penguin Mafia Trial Mod onboarding permissions'
-        );
-    }
-
-    return channel;
-}
-
 function isTrialModFlowMessage(message, userId) {
     if (message.author.id !== message.client.user.id) {
         return false;
@@ -272,7 +180,7 @@ function isTrialModFlowMessage(message, userId) {
 }
 
 async function startTrialModOnboardingForMember(member, context = {}) {
-    const channel = await ensureTrialModOnboardingChannel(member, context);
+    const channel = await member.createDM();
     const recentMessages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
     const alreadyStarted = recentMessages?.some(message => {
         return isTrialModFlowMessage(message, member.id);
@@ -334,10 +242,14 @@ async function handleTrialModButton(interaction) {
 
     if (action === 'done') {
         await interaction.update({
-            content: '# ✅ TRIAL MOD TRAINING COMPLETE\n\nThis room will now self destruct.',
+            content: '# ✅ TRIAL MOD TRAINING COMPLETE\n\nThis training message will now self destruct.',
             components: []
         });
-        await scheduleTrialModChannelDelete(interaction);
+        if (interaction.channel?.isDMBased?.()) {
+            await scheduleDmOnboardingMessageDelete(interaction, 10);
+        } else {
+            await scheduleTrialModChannelDelete(interaction);
+        }
         return true;
     }
 
