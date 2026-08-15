@@ -416,6 +416,27 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        create table if not exists vc_levels (
+            guild_id text not null,
+            discord_id text not null,
+            voice_minutes bigint not null default 0 check (voice_minutes >= 0),
+            voice_xp bigint not null default 0 check (voice_xp >= 0),
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            primary key (guild_id, discord_id)
+        )
+    `;
+
+    await sql`
+        create table if not exists vc_level_ticks (
+            guild_id text not null,
+            tick_bucket timestamptz not null,
+            created_at timestamptz not null default now(),
+            primary key (guild_id, tick_bucket)
+        )
+    `;
+
+    await sql`
         create table if not exists teams (
             id bigserial primary key,
             guild_id text not null,
