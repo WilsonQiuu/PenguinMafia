@@ -123,6 +123,14 @@ const {
     isDon: hasDonAccess
 } = require('./utils/staff.js');
 const {
+    VOICE_CREDIT_MINUTES,
+    creditVoiceTimeForGuild,
+    ensureVoiceLevelInfoBoard,
+    postVoiceLevelUps,
+    postVoiceXpModLogs,
+    voiceXpModLoggingEnabled
+} = require('./utils/voiceLeveling.js');
+const {
     emitMinecraftEvent,
     freezeMinecraftBotConnections,
     loadMinecraftBotConnectionFreezeState,
@@ -2385,6 +2393,11 @@ client.once(Events.ClientReady, async () => {
             }
 
             await ensureGettingPromotedInfoBoard(guild);
+            await ensureVoiceLevelInfoBoard(guild, sql).catch(error => {
+                console.error(`VC leveling info board refresh failed for ${guild.name}:`);
+                console.error(error);
+                return false;
+            });
             await ensureElectionCommandsBoard(guild);
             await ensureReactionRolesMessage(guild);
             try {
@@ -2580,6 +2593,32 @@ client.once(Events.ClientReady, async () => {
     });
 
     setInterval(runStaffApplicationReviewScan, 5 * 60 * 1000);
+
+    const runVoiceLevelingScan = createNonOverlappingRunner('VC leveling scan', async () => {
+        for (const [, guild] of client.guilds.cache) {
+            try {
+                const result = await creditVoiceTimeForGuild(guild, sql);
+
+                if (!result.skippedDuplicate && result.credited > 0) {
+                    console.log(
+                        `Credited ${result.credited} voice member(s) for ${guild.name}; ` +
+                        `level ups=${result.levelUps.length}.`
+                    );
+                }
+
+                await postVoiceLevelUps(guild, result.levelUps);
+
+                if (await voiceXpModLoggingEnabled(guild.id, sql)) {
+                    await postVoiceXpModLogs(guild, result);
+                }
+            } catch (error) {
+                console.error(`VC leveling scan failed for ${guild.name}:`);
+                console.error(error);
+            }
+        }
+    });
+
+    setInterval(runVoiceLevelingScan, VOICE_CREDIT_MINUTES * 60 * 1000);
 
     let giveawayTimerCheckRunning = false;
     async function runGiveawayTimerCheck() {
