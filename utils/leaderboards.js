@@ -13,7 +13,6 @@ const {
 } = require('./donations.js');
 const {
     VOICE_CREDIT_SECONDS,
-    formatVoiceTime,
     levelForXp
 } = require('./voiceLeveling.js');
 
@@ -60,10 +59,11 @@ function voiceLeaderboardName(member, row) {
 function voiceLeaderboardLine(index, row, member) {
     const medals = ['🥇', '🥈', '🥉'];
     const marker = medals[index] || `**${index + 1}.**`;
+    const totalMinutes = Math.floor(Math.max(0, Number(row.voice_seconds) || 0) / 60);
 
     return `${marker} **${voiceLeaderboardName(member, row)}** — ` +
         `Level **${row.level}** • **${row.voice_xp} VC XP** • ` +
-        `**${formatVoiceTime(row.voice_seconds)}** in VC`;
+        `**${totalMinutes} minute${totalMinutes === 1 ? '' : 's'}** in VC`;
 }
 
 function formatDuration(seconds) {
