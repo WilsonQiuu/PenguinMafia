@@ -56,14 +56,31 @@ function voiceLeaderboardName(member, row) {
         'Unknown Penguin';
 }
 
-function voiceLeaderboardLine(index, row, member) {
-    const medals = ['🥇', '🥈', '🥉'];
-    const marker = medals[index] || `**${index + 1}.**`;
-    const totalMinutes = Math.floor(Math.max(0, Number(row.voice_seconds) || 0) / 60);
+function voiceLeaderboardNameCell(name, width = 18) {
+    const characters = Array.from(String(name || 'Unknown Penguin').replace(/[\r\n`]/g, ' '));
+    const fitted = characters.length > width
+        ? [...characters.slice(0, width - 1), '…']
+        : characters;
 
-    return `${marker} **${voiceLeaderboardName(member, row)}** — ` +
-        `Level **${row.level}** • **${row.voice_xp} VC XP** • ` +
-        `**${totalMinutes} minute${totalMinutes === 1 ? '' : 's'}** in VC`;
+    return fitted.join('').padEnd(width, ' ');
+}
+
+function voiceLeaderboardLine(index, row, member) {
+    const position = `${String(index + 1).padStart(2, '0')}.`;
+    const name = voiceLeaderboardNameCell(voiceLeaderboardName(member, row));
+    const level = String(Math.max(0, Number(row.level) || 0)).padStart(2, ' ');
+    const xp = String(Math.max(0, Number(row.voice_xp) || 0)).padStart(3, ' ');
+    const totalMinutes = Math.floor(Math.max(0, Number(row.voice_seconds) || 0) / 60);
+    const minutes = String(totalMinutes).padStart(6, ' ');
+
+    return `${position} ${name} │ ${level} │ ${xp} │ ${minutes}`;
+}
+
+function voiceLeaderboardTable(entries) {
+    return `\`\`\`text\n` +
+        `POS PLAYER             │ LV │  XP │ VC MIN\n` +
+        `${entries.join('\n')}\n` +
+        `\`\`\``;
 }
 
 function formatDuration(seconds) {
@@ -899,7 +916,7 @@ async function updateVoiceLevelLeaderboardForGuild(guild, db) {
         }, member);
     }));
     const lines = entries.length > 0
-        ? entries.join('\n')
+        ? voiceLeaderboardTable(entries)
         : 'No VC time has been recorded yet. Join a call to start climbing!';
 
     return updateLeaderboardChannel(
@@ -1001,5 +1018,6 @@ module.exports = {
     updateWeeklyRecruitsLeaderboardForGuild,
     updateLeaderboardsForGuild,
     voiceLeaderboardLine,
-    voiceLeaderboardName
+    voiceLeaderboardName,
+    voiceLeaderboardTable
 };
