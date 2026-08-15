@@ -41,7 +41,7 @@ function countLine(count, singular, plural = `${singular}s`) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('giveawayearnings')
-        .setDescription('Check total money earned from giveaways and daily recruiter rewards.')
+        .setDescription('Check giveaway earnings and historical recruiter rewards.')
         .addUserOption(option =>
             option
                 .setName('player')
@@ -124,7 +124,7 @@ module.exports = {
                 `(${countLine(earnings.direct_payouts || 0, 'payout')})\n` +
                 `- Giveaway wins: **${formatCents(earnings.giveaway_direct_cents || 0)}** ` +
                 `(${countLine(earnings.giveaway_direct_payouts || 0, 'payout')})\n` +
-                `- Daily recruiter wins: **${formatCents(earnings.hourly_direct_cents || 0)}** ` +
+                `- Historical daily recruiter wins: **${formatCents(earnings.hourly_direct_cents || 0)}** ` +
                 `(${countLine(earnings.hourly_direct_payouts || 0, 'payout')})\n` +
                 `Commission earnings: **${formatCents(earnings.commission_cents || 0)}** ` +
                 `(${countLine(earnings.commission_payouts || 0, 'payout')})\n` +
@@ -134,7 +134,7 @@ module.exports = {
                 `(${countLine(earnings.hourly_commission_payouts || 0, 'payout')})\n` +
                 `Total earnings: **${formatCents(earnings.total_cents || 0)}** ` +
                 `(${countLine(earnings.total_payouts || 0, 'payout')})\n\n` +
-                `Daily top-recruiter winners count as direct earnings. Recruiter-chain payouts count as commissions.`
+                `Past top-recruiter rewards count as direct earnings. Recruiter-chain payouts count as commissions.`
             );
         } catch (error) {
             logCommandError(interaction, '/giveawayearnings', error);
