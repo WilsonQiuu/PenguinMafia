@@ -112,6 +112,11 @@ function formatVoiceTime(seconds) {
     return parts.join(' ');
 }
 
+function formatVoiceMinutes(seconds) {
+    const totalMinutes = Math.floor(Math.max(0, Number(seconds) || 0) / 60);
+    return `${totalMinutes} minute${totalMinutes === 1 ? '' : 's'}`;
+}
+
 function voiceLevelInfoPayload() {
     return {
         content:
@@ -542,7 +547,7 @@ async function postVoiceLevelUps(guild, levelUps) {
             content:
                 `🎙️🐧 **VC LEVEL UP!** 🐧🎙️\n\n` +
                 `<@${levelUp.discordId}> reached **VC Level ${levelUp.newLevel}** because of their time spent in voice chat!\n` +
-                `Tracked call time: **${formatVoiceTime(levelUp.voiceSeconds)}**\n\n` +
+                `Tracked call time: **${formatVoiceMinutes(levelUp.voiceSeconds)}**\n\n` +
                 `Thanks for spending time with the colony. 🧊`,
             allowedMentions: {
                 users: [levelUp.discordId]
@@ -560,6 +565,7 @@ module.exports = {
     creditVoiceTimeForGuild,
     eligibleVoiceMemberIds,
     ensureVoiceLevelInfoBoard,
+    formatVoiceMinutes,
     formatVoiceTime,
     levelForXp,
     postVoiceXpModLogs,
