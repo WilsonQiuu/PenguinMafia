@@ -21,6 +21,7 @@ const {
     updateDailyRecruitsLeaderboardForGuild,
     updateDonationLeaderboardForGuild,
     updateTeamMonthlyRecruitsLeaderboardForGuild,
+    updateVoiceLevelLeaderboardForGuild,
     updateLeaderboardsForGuild
 } = require('./utils/leaderboards.js');
 const {
@@ -80,11 +81,6 @@ const {
     processPendingGiveawayPayoutsForGuild
 } = require('./utils/commissionPayments.js');
 const {
-    checkDailyRecruitRewardBalanceForGuild,
-    ensureDailyRecruitRewardsForGuild,
-    processPendingDailyRecruitRewardPayoutsForGuild
-} = require('./utils/hourlyRecruitRewards.js');
-const {
     ensureReactionRolesMessage,
     handleReactionRole
 } = require('./utils/reactionRoles.js');
@@ -102,11 +98,6 @@ const {
     syncPlayerTeamRole,
     teamLineForRecruiter
 } = require('./utils/teams.js');
-const {
-    ensureMonthlyTeamRewardForGuild,
-    processPendingMonthlyTeamRewardPayoutsForGuild,
-    processIncomingTeamMonthlyRewardPayment
-} = require('./utils/teamMonthlyRewards.js');
 const {
     editModLog,
     findModLogChannel,
@@ -231,81 +222,6 @@ function autoStartMinecraftBot() {
     }
 }
 
-function monthlyTeamPaymentHandled(result) {
-    return ['payouts_queued', 'paused', 'too_low', 'already_processing'].includes(result?.status);
-}
-
-function logMonthlyTeamPaymentResult(guild, payment, result) {
-    if (result.status === 'payouts_queued') {
-        const payoutCount = result.payoutResult?.payouts?.length || 0;
-
-        emitMinecraftEvent(
-            'Monthly Team Reward Authorized',
-            `${payment.player} authorized the monthly team reward payout.`,
-            'success',
-            {
-                Team: result.reward.team_name,
-                'Team recruits': String(result.reward.recruit_count),
-                'Prize pool': formatDonationAmount(result.reward.prize_amount),
-                'Paid amount': formatDonationAmount(result.paidAmount),
-                'Donation credited to': result.donationCredit
-                    ? `<@${result.donationCredit.playerId}>`
-                    : 'Not credited — payer not linked',
-                'Payout recipients': String(payoutCount)
-            }
-        );
-        updateDonationLeaderboardForGuild(guild, sql).catch(error => {
-            console.error(`Donation leaderboard refresh failed for ${guild.name}:`);
-            console.error(error);
-        });
-        updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql).catch(error => {
-            console.error(`Monthly team leaderboard refresh failed for ${guild.name}:`);
-            console.error(error);
-        });
-        return;
-    }
-
-    if (result.status === 'paused') {
-        emitMinecraftEvent(
-            'Monthly Team Reward Payment Recorded',
-            `${payment.player} authorized the monthly team reward payout, but scheduled payouts are paused.`,
-            'warning',
-            {
-                Team: result.reward.team_name,
-                'Team recruits': String(result.reward.recruit_count),
-                'Prize pool': formatDonationAmount(result.reward.prize_amount),
-                'Paid amount': formatDonationAmount(result.paidAmount),
-                'Donation credited to': result.donationCredit
-                    ? `<@${result.donationCredit.playerId}>`
-                    : 'Not credited — payer not linked',
-                Status: 'Skipped while scheduled payouts were paused'
-            }
-        );
-        updateDonationLeaderboardForGuild(guild, sql).catch(error => {
-            console.error(`Donation leaderboard refresh failed for ${guild.name}:`);
-            console.error(error);
-        });
-        updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql).catch(error => {
-            console.error(`Monthly team leaderboard refresh failed for ${guild.name}:`);
-            console.error(error);
-        });
-        return;
-    }
-
-    if (result.status === 'too_low') {
-        emitMinecraftEvent(
-            'Monthly Team Reward Payment Too Low',
-            `${payment.player} paid less than the pending monthly team reward prize pool.`,
-            'warning',
-            {
-                Team: result.reward.team_name,
-                'Required amount': formatDonationAmount(result.reward.prize_amount),
-                'Paid amount': formatDonationAmount(result.paidAmount)
-            }
-        );
-    }
-}
-
 function logGiveawayOrDonationPaymentResult(payment, result) {
     if (result.status === 'hosted') {
         emitMinecraftEvent(
@@ -379,13 +295,6 @@ function logGiveawayOrDonationPaymentResult(payment, result) {
 }
 
 async function processIncomingPaymentForGuild(guild, payment) {
-    const teamRewardResult = await processIncomingTeamMonthlyRewardPayment(guild, payment, sql);
-
-    if (monthlyTeamPaymentHandled(teamRewardResult)) {
-        logMonthlyTeamPaymentResult(guild, payment, teamRewardResult);
-        return;
-    }
-
     const giveawayResult = await processIncomingGiveawayPayment(guild, payment, sql);
     logGiveawayOrDonationPaymentResult(payment, giveawayResult);
 }
@@ -2410,11 +2319,6 @@ client.once(Events.ClientReady, async () => {
             await resetExpiredElectionResultBoardForGuild(guild, sql);
             await finishExpiredGiveawaysForGuild(guild, sql);
             await processPendingGiveawayPayoutsForGuild(guild, sql);
-            await ensureDailyRecruitRewardsForGuild(guild, sql);
-            await processPendingDailyRecruitRewardPayoutsForGuild(guild, sql);
-            await checkDailyRecruitRewardBalanceForGuild(guild, sql);
-            await ensureMonthlyTeamRewardForGuild(guild, sql);
-            await processPendingMonthlyTeamRewardPayoutsForGuild(guild, sql);
             const teamChannelCleanup = await cleanupLegacyTeamChannelsForGuild(guild, sql);
             if (
                 teamChannelCleanup.deletedChannels > 0 ||
@@ -2562,14 +2466,9 @@ client.once(Events.ClientReady, async () => {
         for (const [, guild] of client.guilds.cache) {
             try {
                 await updateDailyRecruitsLeaderboardForGuild(guild, sql);
-                await ensureDailyRecruitRewardsForGuild(guild, sql);
-                await processPendingDailyRecruitRewardPayoutsForGuild(guild, sql);
-                await checkDailyRecruitRewardBalanceForGuild(guild, sql);
-                await ensureMonthlyTeamRewardForGuild(guild, sql);
-                await processPendingMonthlyTeamRewardPayoutsForGuild(guild, sql);
                 await updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql);
             } catch (error) {
-                console.error(`Daily recruits leaderboard/reward refresh failed for ${guild.name}:`);
+                console.error(`Recruit leaderboard refresh failed for ${guild.name}:`);
                 console.error(error);
             }
         }
@@ -2607,6 +2506,10 @@ client.once(Events.ClientReady, async () => {
                 }
 
                 await postVoiceLevelUps(guild, result.levelUps);
+
+                if (!result.skippedDuplicate) {
+                    await updateVoiceLevelLeaderboardForGuild(guild, sql);
+                }
 
                 if (await voiceXpModLoggingEnabled(guild.id, sql)) {
                     await postVoiceXpModLogs(guild, result);
@@ -2658,8 +2561,6 @@ client.once(Events.ClientReady, async () => {
         for (const [, guild] of client.guilds.cache) {
             try {
                 await processPendingGiveawayPayoutsForGuild(guild, sql);
-                await processPendingDailyRecruitRewardPayoutsForGuild(guild, sql);
-                await processPendingMonthlyTeamRewardPayoutsForGuild(guild, sql);
                 await processPendingCommissionPayoutsForGuild(guild, sql, {
                     guild,
                     source: 'Scheduled commission payout recovery',

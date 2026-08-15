@@ -4,27 +4,23 @@ const {
     DONATIONS_LEADERBOARD_CHANNEL_NAME,
     HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
     TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID,
+    VC_LEVEL_LEADERBOARD_CHANNEL_ID,
     WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
     WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_NAME
 } = require('./bootstrap.js');
 const {
-    formatDonationAmount,
-    parseDonationAmount
+    formatDonationAmount
 } = require('./donations.js');
 const {
-    formatEasternDate
-} = require('./time.js');
-const {
-    teamMonthlyRewardAmount,
-    teamMonthlyRewardPayer
-} = require('./teamMonthlyRewards.js');
+    formatVoiceTime,
+    levelForXp
+} = require('./voiceLeveling.js');
 
 const PREVIOUS_WEEKLY_RECRUITS_STATE_KEY = 'previous_weekly_recruits_top_three';
 const WEEKLY_RECRUITS_LAST_RESET_STATE_KEY = 'weekly_recruits_last_reset_at';
 const WEEKLY_RECRUITS_CHANNEL_STATE_KEY_PREFIX = 'managed_weekly_recruits_leaderboard_channel:';
 const WEEKLY_RECRUITS_MESSAGE_STATE_KEY_PREFIX = 'managed_weekly_recruits_leaderboard_message:';
 const WEEKLY_RECRUITS_TIME_ZONE = 'America/Toronto';
-const DEFAULT_DAILY_RECRUIT_REWARD_PRIZES = ['30m', '20m', '10m'];
 const LEADERBOARD_REFRESH_DELAY_MS = 2_000;
 const leaderboardRefreshes = new Map();
 
@@ -50,13 +46,22 @@ function teamLeaderboardLine(index, team) {
     return `${marker} **${team.name}** - **${team.recruit_count}** monthly team recruits${ownerLine}`;
 }
 
-function dailyRecruitRewardPrizeAmounts() {
-    const configured = process.env.DAILY_RECRUIT_REWARD_PRIZES;
-    const prizeTexts = configured
-        ? configured.split(',').map(value => value.trim()).filter(Boolean)
-        : DEFAULT_DAILY_RECRUIT_REWARD_PRIZES;
+function voiceLeaderboardName(member, row) {
+    return member?.nickname ||
+        member?.displayName ||
+        member?.user?.username ||
+        row.discord_display_name ||
+        row.discord_username ||
+        'Unknown Penguin';
+}
 
-    return prizeTexts.slice(0, 3).map(parseDonationAmount);
+function voiceLeaderboardLine(index, row, member) {
+    const medals = ['🥇', '🥈', '🥉'];
+    const marker = medals[index] || `**${index + 1}.**`;
+
+    return `${marker} **${voiceLeaderboardName(member, row)}** — ` +
+        `Level **${row.level}** • **${row.voice_xp} VC XP** • ` +
+        `**${formatVoiceTime(row.voice_minutes)}** in VC`;
 }
 
 function formatDuration(seconds) {
@@ -267,8 +272,6 @@ async function updateWeeklyRecruitsLeaderboardForGuild(guild, sql) {
         `Top 10 penguins by **direct recruits this week**.\n` +
         `Tie-breaker: if players have the same recruit count, whoever reached that count first ranks higher.\n` +
         `This board resets every **Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time).\n\n` +
-        `**Weekly Prizes**\n` +
-        `1st: **30m** • 2nd: **20m** • 3rd: **10m**\n\n` +
         `## Current Week\n${weeklyLines}\n\n` +
         `## Previous Week Top 3\n${previousLines}\n\n`,
         {
@@ -451,8 +454,7 @@ async function updateDonationLeaderboardForGuild(guild, sql) {
 }
 
 async function updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql) {
-    const [teamRows, previousRewardRows] = await Promise.all([
-        sql`
+    const teamRows = await sql`
         with month_window as (
             select
                 (date_trunc('month', now() at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) as started_at,
@@ -615,36 +617,11 @@ async function updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql) {
             team_progress.reached_at asc nulls last,
             team_totals.name asc
         limit 10
-        `,
-        sql`
-            with previous_month as (
-                select (date_trunc('month', now() at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) at time zone ${WEEKLY_RECRUITS_TIME_ZONE}) - interval '1 month' as reward_month
-            )
-            select reward.*
-            from team_monthly_rewards reward
-            join previous_month
-                on reward.reward_month = previous_month.reward_month
-            where reward.guild_id = ${guild.id}
-            limit 1
-        `
-    ]);
+    `;
 
     const teamLines = teamRows.length > 0
         ? teamRows.map((row, i) => teamLeaderboardLine(i, row)).join('\n')
         : 'No team recruits yet this month.';
-    const previousReward = previousRewardRows[0] || null;
-    const rewardAmount = teamMonthlyRewardAmount();
-    const payer = teamMonthlyRewardPayer();
-    const previousRewardLine = previousReward
-        ? (
-            `Last month’s winner: **${previousReward.team_name}** with **${previousReward.recruit_count}** recruits.\n` +
-            `Reward status: **${String(previousReward.status).replace(/_/g, ' ')}**` +
-            (previousReward.status === 'pending_payment'
-                ? ` — waiting for **${payer}** to pay **${formatDonationAmount(previousReward.prize_amount)}** to the bot.`
-                : '.')
-        )
-        : 'No previous monthly team reward has been created yet.';
-
     return updateLeaderboardChannel(
         guild,
         TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID,
@@ -657,12 +634,9 @@ async function updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql) {
         `Top 10 teams by adding up each effective team member’s **personal monthly direct recruits**.\n` +
         `Emperor Penguin branches count as their own team branch. If an Emperor has not created a custom team yet, their default branch name is **team-player** style, like **team-rainbowbeltzz**.\n` +
         `Tie-breaker: if teams have the same recruit count, whichever team reached that count first ranks higher.\n` +
-        `This board resets on the **1st of every month at 12:00 AM Eastern Time**.\n` +
-        `Top team prize pool: **${formatDonationAmount(rewardAmount)}**. It is split by each member’s share of the winning team’s monthly recruits, then each share pays through the normal commission structure.\n` +
-        `If needed, **${payer}** can authorize the payout by paying the bot after the month ends.\n\n` +
+        `This board resets on the **1st of every month at 12:00 AM Eastern Time**.\n\n` +
         `## Current Month\n` +
-        `${teamLines}\n\n` +
-        `## Previous Month Reward\n${previousRewardLine}\n\n`
+        `${teamLines}\n\n`
     );
 }
 
@@ -796,24 +770,16 @@ async function updateDailyRecruitsLeaderboardForGuild(guild, sql) {
             recruiter_totals.discord_username asc nulls last
         limit 3
     `;
-    const prizeAmounts = dailyRecruitRewardPrizeAmounts();
-    const prizeLine = prizeAmounts
-        .map((amount, index) => `${index + 1}${index === 0 ? 'st' : index === 1 ? 'nd' : 'rd'}: **${formatDonationAmount(amount)}**`)
-        .join(' • ');
-    const previousDayLabel = previousDayRows[0]
-        ? formatEasternDate(previousDayRows[0].reward_day)
-        : 'yesterday';
-    const previousWinnerLines = previousDayRows.length > 0
+    const previousDayLines = previousDayRows.length > 0
         ? previousDayRows.map((player, index) => {
-            const prize = prizeAmounts[index] || 0n;
             return leaderboardLine(
                 index,
                 player,
                 player.recruit_count,
-                `daily direct recruits — prize pool ${formatDonationAmount(prize)}`
+                'daily direct recruits'
             );
         }).join('\n')
-        : `No one had a recruit during the last completed Eastern day (**${previousDayLabel}**).`;
+        : 'No one had a recruit yesterday.';
     const currentDayLines = currentDayRows.length > 0
         ? currentDayRows.map((player, index) => {
             return leaderboardLine(
@@ -831,12 +797,9 @@ async function updateDailyRecruitsLeaderboardForGuild(guild, sql) {
         'daily-recruits',
         'Penguin Mafia Daily Recruit Leaderboard',
         `🏆🐧 **Penguin Mafia Daily Recruit Leaderboard** 🐧🏆\n\n` +
-        `Rewards are automatically paid every day after **12:00 AM Eastern Time** using the last completed Eastern day.\n` +
-        `Prize pools: ${prizeLine}.\n` +
-        `Each prize pays like \`/pay\`: the winner receives their commission share, and recruiter overrides receive the rest.\n` +
         `Tie-breaker: if players have the same recruit count, whoever reached that count first ranks higher.\n\n` +
         `## Today’s Top Recruiters\n${currentDayLines}\n\n` +
-        `## Yesterday’s Winners\n${previousWinnerLines}\n\n`
+        `## Yesterday’s Top Recruiters\n${previousDayLines}\n\n`
     );
 }
 
@@ -889,12 +852,58 @@ async function updateCaptainSpeedLeaderboardForGuild(guild, db) {
     );
 }
 
+async function updateVoiceLevelLeaderboardForGuild(guild, db) {
+    const rows = await db`
+        select
+            stats.discord_id,
+            stats.voice_minutes::text,
+            stats.voice_xp::text,
+            player.discord_username,
+            player.discord_display_name
+        from vc_levels stats
+        left join players player
+            on player.discord_id = stats.discord_id
+        where stats.guild_id = ${guild.id}
+        order by stats.voice_xp desc, stats.voice_minutes desc, stats.updated_at asc
+        limit 10
+    `;
+    const entries = await Promise.all(rows.map(async (row, index) => {
+        const member = guild.members.cache.get(row.discord_id) ||
+            await guild.members.fetch(row.discord_id).catch(() => null);
+        const level = levelForXp(row.voice_xp);
+
+        return voiceLeaderboardLine(index, {
+            ...row,
+            level
+        }, member);
+    }));
+    const lines = entries.length > 0
+        ? entries.join('\n')
+        : 'No VC time has been recorded yet. Join a call to start climbing!';
+
+    return updateLeaderboardChannel(
+        guild,
+        VC_LEVEL_LEADERBOARD_CHANNEL_ID,
+        'vc-level-leaderboard',
+        'Penguin Mafia VC Level Leaderboard',
+        `🏆🎙️ **Penguin Mafia VC Level Leaderboard** 🎙️🏆\n\n` +
+        `Top 10 penguins by **VC level and XP**. Names use each member’s current server nickname.\n\n` +
+        `${lines}\n\n` +
+        `Voice time is credited in 10-minute segments. Use \`/vchours\` for your full progress.`,
+        {
+            db,
+            messageStateKey: `vc_level_leaderboard_message:${guild.id}`
+        }
+    );
+}
+
 async function updateLeaderboardsForGuild(guild, sql) {
     await updateWeeklyRecruitsLeaderboardForGuild(guild, sql);
     await updateTeamWeeklyRecruitsLeaderboardForGuild(guild, sql);
     await updateDonationLeaderboardForGuild(guild, sql);
     await updateDailyRecruitsLeaderboardForGuild(guild, sql);
     await updateCaptainSpeedLeaderboardForGuild(guild, sql);
+    await updateVoiceLevelLeaderboardForGuild(guild, sql);
 }
 
 function scheduleLeaderboardsRefreshForGuild(guild, sql, delayMs = LEADERBOARD_REFRESH_DELAY_MS) {
@@ -967,6 +976,9 @@ module.exports = {
     updateDonationLeaderboardForGuild,
     updateTeamMonthlyRecruitsLeaderboardForGuild,
     updateTeamWeeklyRecruitsLeaderboardForGuild,
+    updateVoiceLevelLeaderboardForGuild,
     updateWeeklyRecruitsLeaderboardForGuild,
-    updateLeaderboardsForGuild
+    updateLeaderboardsForGuild,
+    voiceLeaderboardLine,
+    voiceLeaderboardName
 };
