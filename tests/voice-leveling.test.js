@@ -5,6 +5,7 @@ const test = require('node:test');
 
 const {
     eligibleVoiceMemberIds,
+    formatVoiceMinutes,
     formatVoiceTime,
     levelForXp,
     voiceLevelInfoPayload,
@@ -41,6 +42,12 @@ test('formats exact tracked seconds as readable call time', () => {
     assert.equal(formatVoiceTime(10), '10 seconds');
     assert.equal(formatVoiceTime(60), '1 minute 0 seconds');
     assert.equal(formatVoiceTime(3_750), '1 hour 2 minutes 30 seconds');
+});
+
+test('formats level-up call time as total whole minutes only', () => {
+    assert.equal(formatVoiceMinutes(16_217), '270 minutes');
+    assert.equal(formatVoiceMinutes(60), '1 minute');
+    assert.equal(formatVoiceMinutes(59), '0 minutes');
 });
 
 test('credits connected humans while excluding bots, disconnected users, and AFK', () => {
