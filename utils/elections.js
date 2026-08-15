@@ -3,6 +3,7 @@ const sql = require('../db.js');
 const ELECTION_LEADERBOARD_CHANNEL_ID = process.env.ELECTION_LEADERBOARD_CHANNEL_ID || '1513392373437169664';
 const ELECTION_EVENTS_CHANNEL_ID = process.env.ELECTION_EVENTS_CHANNEL_ID || '1513393832845115453';
 const ELECTION_COMMANDS_CHANNEL_ID = process.env.ELECTION_COMMANDS_CHANNEL_ID || '1513405907051221092';
+const DON_ELECTION_ROLE_ID = process.env.DON_ELECTION_ROLE_ID || '1497774847630245908';
 const ELECTION_LEADERBOARD_REFRESH_DELAY_MS = 1_500;
 const electionLeaderboardRefreshes = new Map();
 const ELECTION_DURATION_HOURS = 24;
@@ -38,6 +39,68 @@ function voteRuleLine() {
 
 function medal(index) {
     return ['🥇', '🥈', '🥉'][index] || `**${index + 1}.**`;
+}
+
+function electionWinnerIds(scores) {
+    if (!scores.length) {
+        return [];
+    }
+
+    const topVotes = Number(scores[0].votes || 0);
+
+    return scores
+        .filter(player => Number(player.votes || 0) === topVotes)
+        .map(player => player.discord_id);
+}
+
+async function syncDonElectionRole(guild, scores) {
+    const winnerIds = electionWinnerIds(scores);
+
+    if (winnerIds.length === 0) {
+        return { added: 0, removed: 0, winnerIds };
+    }
+
+    const role = guild.roles.cache.get(DON_ELECTION_ROLE_ID) ||
+        await guild.roles.fetch(DON_ELECTION_ROLE_ID).catch(() => null);
+
+    if (!role) {
+        throw new Error(`The Don election role ${DON_ELECTION_ROLE_ID} could not be found.`);
+    }
+
+    if (role.editable === false) {
+        throw new Error(`The Don election role ${DON_ELECTION_ROLE_ID} is above the bot's highest role.`);
+    }
+
+    const members = await guild.members.fetch();
+    const winnerIdSet = new Set(winnerIds);
+    const winnerMembers = winnerIds.map(winnerId => members.get(winnerId));
+    const missingWinnerId = winnerIds.find((winnerId, index) => !winnerMembers[index]);
+
+    if (missingWinnerId) {
+        throw new Error(`Election winner ${missingWinnerId} is no longer a member of the server.`);
+    }
+
+    let added = 0;
+    let removed = 0;
+
+    for (const winner of winnerMembers) {
+        if (!winner.roles.cache.has(DON_ELECTION_ROLE_ID)) {
+            await winner.roles.add(role, 'Won the Penguin Mafia Don election');
+            added++;
+        }
+    }
+
+    for (const [, member] of members) {
+        if (
+            !winnerIdSet.has(member.id) &&
+            member.roles.cache.has(DON_ELECTION_ROLE_ID)
+        ) {
+            await member.roles.remove(role, 'A new Penguin Mafia Don won the election');
+            removed++;
+        }
+    }
+
+    return { added, removed, winnerIds };
 }
 
 function electionChannelLink(guild, channelId) {
@@ -947,6 +1010,10 @@ async function endElection(guild, endedById, db = sql, status = 'ended') {
         ? []
         : await getElectionScores(election.id, db);
 
+    if (status === 'ended' && scores.length > 0) {
+        await syncDonElectionRole(guild, scores);
+    }
+
     await updateElectionLeaderboard(guild, db, { election });
     await postElectionEndedEvent(guild, election, scores, status);
     return election;
@@ -965,6 +1032,9 @@ async function finishExpiredElectionsForGuild(guild, db = sql) {
 
     for (const election of rows) {
         const scores = await getElectionScores(election.id, db);
+        if (scores.length > 0) {
+            await syncDonElectionRole(guild, scores);
+        }
         await updateElectionLeaderboard(guild, db, { election });
         await postElectionEndedEvent(guild, election, scores, 'ended');
     }
@@ -1006,6 +1076,7 @@ async function getVotesForPlayer(playerId, db = sql) {
 }
 
 module.exports = {
+    DON_ELECTION_ROLE_ID,
     ELECTION_COMMANDS_CHANNEL_ID,
     ELECTION_DURATION_HOURS,
     ELECTION_EVENTS_CHANNEL_ID,
@@ -1015,6 +1086,7 @@ module.exports = {
     castElectionVote,
     clearLatestFinishedElectionBoard,
     endElection,
+    electionWinnerIds,
     ensureElectionCommandsBoard,
     ensureElectionStartingSoonBoard,
     finishExpiredElectionsForGuild,
@@ -1028,6 +1100,7 @@ module.exports = {
     resetExpiredElectionResultBoardForGuild,
     scheduleElectionLeaderboardUpdate,
     startElection,
+    syncDonElectionRole,
     transferVotesWindowStatus,
     transferReceivedElectionVotes,
     updateElectionLeaderboard
