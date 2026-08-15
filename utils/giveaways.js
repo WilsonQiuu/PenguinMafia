@@ -43,7 +43,7 @@ const {
 const GIVEAWAY_CHANNEL_ID =
     process.env.GIVEAWAY_CHANNEL_ID || '1517413426358390814';
 const GIVEAWAY_WINNER_CHANNEL_ID =
-    process.env.GIVEAWAY_WINNER_CHANNEL_ID || '1519484184425398312';
+    process.env.GIVEAWAY_WINNER_CHANNEL_ID || '1536602944605134958';
 const GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID =
     process.env.GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID || '1498442322638147604';
 const GIVEAWAY_BUTTON_PREFIX = 'giveaway_enter:';
@@ -519,7 +519,54 @@ async function fetchGiveawayChannel(guild, giveaway) {
 }
 
 async function fetchGiveawayWinnerChannel(guild) {
-    return fetchGiveawayTextChannel(guild, GIVEAWAY_WINNER_CHANNEL_ID);
+    const configuredChannel = await fetchGiveawayTextChannel(
+        guild,
+        GIVEAWAY_WINNER_CHANNEL_ID
+    );
+
+    if (configuredChannel) {
+        return configuredChannel;
+    }
+
+    // Discord channel IDs change when a channel is deleted and recreated. Find
+    // the replacement by name so a stale environment variable cannot silently
+    // suppress every winner announcement.
+    const cachedChannel = guild.channels.cache.find(channel => {
+        return channel?.isTextBased() &&
+            String(channel.name || '').toLowerCase().includes('giveaway-winners');
+    });
+
+    if (cachedChannel) {
+        console.warn(
+            `Configured giveaway winner channel ${GIVEAWAY_WINNER_CHANNEL_ID} was not found; ` +
+            `using #${cachedChannel.name} (${cachedChannel.id}).`
+        );
+        return cachedChannel;
+    }
+
+    const fetchedChannels = await guild.channels.fetch().catch(() => null);
+    const fetchedChannel = fetchedChannels?.find(channel => {
+        return channel?.isTextBased() &&
+            String(channel.name || '').toLowerCase().includes('giveaway-winners');
+    }) || null;
+
+    if (fetchedChannel) {
+        console.warn(
+            `Configured giveaway winner channel ${GIVEAWAY_WINNER_CHANNEL_ID} was not found; ` +
+            `using #${fetchedChannel.name} (${fetchedChannel.id}).`
+        );
+    }
+
+    return fetchedChannel;
+}
+
+async function fetchGiveawayResultChannels(guild, giveaway) {
+    const winnerChannel = await fetchGiveawayWinnerChannel(guild);
+    const originalChannel = await fetchGiveawayChannel(guild, giveaway);
+
+    return [winnerChannel, originalChannel].filter((channel, index, channels) => {
+        return channel && channels.findIndex(candidate => candidate.id === channel.id) === index;
+    });
 }
 
 async function fetchGiveawayMessage(channel, giveaway) {
@@ -1903,7 +1950,7 @@ async function finishGiveaway(guild, giveawayId, db = sql) {
         winnerId
     } = prepared;
 
-    const channel = await fetchGiveawayWinnerChannel(guild);
+    const resultChannels = await fetchGiveawayResultChannels(guild, giveaway);
     const cleanupMessageIds = [];
 
     await refreshActiveGiveawaysBoard(guild, db);
@@ -1912,34 +1959,60 @@ async function finishGiveaway(guild, giveawayId, db = sql) {
         await enqueueGiveawayPayouts(guild, giveaway, payoutResult, db);
     }
 
-    if (channel && winnerId) {
-        const payoutMessageIds = await sendPayoutAnnouncement(
-            channel,
-            giveaway,
-            payoutResult,
-            winnerId
-        );
-        cleanupMessageIds.push(...payoutMessageIds);
+    if (winnerId) {
+        let announced = false;
+
+        for (const resultChannel of resultChannels) {
+            try {
+                const payoutMessageIds = await sendPayoutAnnouncement(
+                    resultChannel,
+                    giveaway,
+                    payoutResult,
+                    winnerId
+                );
+                cleanupMessageIds.push(...payoutMessageIds);
+                announced = true;
+                break;
+            } catch (error) {
+                console.error(
+                    `Could not announce giveaway ${giveaway.id} in channel ${resultChannel.id}; ` +
+                    'trying the fallback channel:'
+                );
+                console.error(error);
+            }
+        }
+
+        if (!announced) {
+            console.error(
+                `Giveaway ${giveaway.id} selected winner ${winnerId}, but no result channel was available.`
+            );
+        }
 
         processPendingGiveawayPayoutsForGuild(guild, db).catch(error => {
             console.error(`Could not settle giveaway payout ${giveaway.id}:`);
             console.error(error);
         });
-    } else if (winnerId) {
-        processPendingGiveawayPayoutsForGuild(guild, db).catch(error => {
-            console.error(`Could not settle giveaway payout ${giveaway.id}:`);
-            console.error(error);
-        });
-    } else if (channel) {
-        const noWinnerMessage = await channel.send({
-            content:
-                `Hosted by: <@${giveaway.host_discord_id}>\n` +
-                'The giveaway ended with no entrants, so no winner was chosen.',
-            allowedMentions: {
-                users: []
+    } else {
+        for (const resultChannel of resultChannels) {
+            try {
+                const noWinnerMessage = await resultChannel.send({
+                    content:
+                        `Hosted by: <@${giveaway.host_discord_id}>\n` +
+                        'The giveaway ended with no entrants, so no winner was chosen.',
+                    allowedMentions: {
+                        users: []
+                    }
+                });
+                cleanupMessageIds.push(noWinnerMessage.id);
+                break;
+            } catch (error) {
+                console.error(
+                    `Could not announce empty giveaway ${giveaway.id} in channel ${resultChannel.id}; ` +
+                    'trying the fallback channel:'
+                );
+                console.error(error);
             }
-        });
-        cleanupMessageIds.push(noWinnerMessage.id);
+        }
     }
 
     await db`
@@ -1981,21 +2054,7 @@ async function finishExpiredGiveawaysForGuild(guild, db = sql) {
 }
 
 async function deleteGiveawayMessages(guild, giveaway) {
-    const winnerChannel = await fetchGiveawayWinnerChannel(guild);
-    const originalChannel = guild.channels.cache.get(giveaway.channel_id) ||
-        (await guild.channels.fetch(giveaway.channel_id).catch(() => null));
-    const channels = [];
-
-    if (winnerChannel?.isTextBased()) {
-        channels.push(winnerChannel);
-    }
-
-    if (
-        originalChannel?.isTextBased() &&
-        !channels.some(channel => channel.id === originalChannel.id)
-    ) {
-        channels.push(originalChannel);
-    }
+    const channels = await fetchGiveawayResultChannels(guild, giveaway);
 
     if (channels.length === 0) {
         return {
@@ -2155,6 +2214,7 @@ module.exports = {
     enterAllActiveGiveawaysForUser,
     finishExpiredGiveawaysForGuild,
     finishGiveaway,
+    fetchGiveawayWinnerChannel,
     giveawayPaymentBotUser,
     giveawayLinkModal,
     handleGiveawayButton,
