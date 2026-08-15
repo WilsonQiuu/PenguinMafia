@@ -119,6 +119,7 @@ const {
     ensureVoiceLevelInfoBoard,
     postVoiceLevelUps,
     postVoiceXpModLogs,
+    trackVoiceStateUpdate,
     voiceXpModLoggingEnabled
 } = require('./utils/voiceLeveling.js');
 const {
@@ -2281,6 +2282,15 @@ client.once(Events.ClientReady, async () => {
 
     console.log('Commands deployed!');
 
+    for (const [, guild] of client.guilds.cache) {
+        try {
+            await creditVoiceTimeForGuild(guild, sql);
+        } catch (error) {
+            console.error(`VC session recovery failed for ${guild.name}:`);
+            console.error(error);
+        }
+    }
+
     await updateAllLeaderboards();
     logReadyStep('leaderboards refreshed');
 
@@ -2498,9 +2508,9 @@ client.once(Events.ClientReady, async () => {
             try {
                 const result = await creditVoiceTimeForGuild(guild, sql);
 
-                if (!result.skippedDuplicate && result.credited > 0) {
+                if (result.credited > 0) {
                     console.log(
-                        `Credited ${result.credited} voice member(s) for ${guild.name}; ` +
+                        `Checked ${result.credited} active voice session(s) for ${guild.name}; ` +
                         `level ups=${result.levelUps.length}.`
                     );
                 }
@@ -3171,7 +3181,31 @@ client.on(Events.GuildBanRemove, async ban => {
 });
 
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+    const eventTime = new Date();
+
     try {
+        const trackingResult = await trackVoiceStateUpdate(oldState, newState, sql, eventTime);
+
+        if (trackingResult.changed) {
+            const guild = newState.guild || oldState.guild;
+            const result = await creditVoiceTimeForGuild(guild, sql, eventTime);
+
+            if (
+                trackingResult.credit &&
+                !result.credits.some(credit => credit.discordId === trackingResult.credit.discordId)
+            ) {
+                result.credits.unshift(trackingResult.credit);
+                result.credited = result.credits.length;
+            }
+
+            await postVoiceLevelUps(guild, result.levelUps);
+            await updateVoiceLevelLeaderboardForGuild(guild, sql);
+
+            if (await voiceXpModLoggingEnabled(guild.id, sql)) {
+                await postVoiceXpModLogs(guild, result);
+            }
+        }
+
         await logVoiceMuteChange(oldState, newState);
         await logVoiceDisconnectChange(oldState, newState);
     } catch (error) {

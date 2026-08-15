@@ -187,6 +187,7 @@ module.exports = {
                 modLogChannel,
                 promotionEventsChannel,
                 rankInfoChannel,
+                teamMonthlyRecruitsChannel,
                 weeklyRecruitsChannel
             } = await ensureInfoChannels(interaction.guild, rankRoles, staffRoles, sql);
             const envUpdate = updateEnvIds({
@@ -194,6 +195,7 @@ module.exports = {
                 PROMOTION_EVENTS_CHANNEL_ID: promotionEventsChannel.id,
                 RANK_INFO_CHANNEL_ID: rankInfoChannel.id,
                 WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID: weeklyRecruitsChannel.id,
+                TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID: teamMonthlyRecruitsChannel.id,
                 DONATIONS_LEADERBOARD_CHANNEL_ID: donationsLeaderboardChannel.id,
                 MOD_LOG_CHANNEL_ID: modLogChannel.id
             });
@@ -288,7 +290,7 @@ module.exports = {
                 `Discord staff roles updated: **${staffRolesUpdated}**\n` +
                 `Discord trainer role created: **${trainerRoleCreated ? 1 : 0}**\n` +
                 `Discord trainer role updated: **${trainerRoleUpdated ? 1 : 0}**\n` +
-                `Managed channels ready: ${promotionEventsChannel}, ${rankInfoChannel}, ${weeklyRecruitsChannel}, ${donationsLeaderboardChannel}, ${modLogChannel}\n` +
+                `Managed channels ready: ${promotionEventsChannel}, ${rankInfoChannel}, ${weeklyRecruitsChannel}, ${teamMonthlyRecruitsChannel}, ${donationsLeaderboardChannel}, ${modLogChannel}\n` +
                 `.env IDs updated: **${envUpdate.updatedKeys.length > 0 ? envUpdate.updatedKeys.join(', ') : 'already current'}**\n` +
                 `${envUpdate.updatedKeys.length > 0 ? 'Restart the bot so all modules load the new IDs.\n' : ''}` +
                 `New players added: **${addedCount}**\n` +

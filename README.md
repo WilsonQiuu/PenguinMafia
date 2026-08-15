@@ -11,7 +11,7 @@ A Discord bot for managing the Penguin Mafia recruit tree, ranks, staff moderati
 - Commission tracking and payout calculation
 - Donation and weekly recruit leaderboards
 - Promotion, donation, and first-recruit announcements
-- Minecraft-style VC levels earned in 10-minute voice-call segments
+- Minecraft-style VC levels with voice-call time tracked to the second
 - Moderation commands and structured mod logs
 - PostgreSQL database storage
 

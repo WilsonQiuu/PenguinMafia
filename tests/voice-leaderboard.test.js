@@ -24,7 +24,7 @@ test('VC leaderboard line includes level, XP, and tracked call time', () => {
     const line = voiceLeaderboardLine(0, {
         level: 1,
         voice_xp: 7,
-        voice_minutes: 70
+        voice_seconds: 4_200
     }, {
         nickname: 'Ice Boss'
     });
@@ -32,5 +32,5 @@ test('VC leaderboard line includes level, XP, and tracked call time', () => {
     assert.match(line, /Ice Boss/);
     assert.match(line, /Level \*\*1\*\*/);
     assert.match(line, /7 VC XP/);
-    assert.match(line, /1 hour 10 minutes/);
+    assert.match(line, /1 hour 10 minutes 0 seconds/);
 });
