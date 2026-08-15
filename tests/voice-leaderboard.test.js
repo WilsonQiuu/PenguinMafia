@@ -20,7 +20,7 @@ test('VC leaderboard prefers the current server nickname', () => {
     assert.equal(voiceLeaderboardName(member, row), 'Ice Boss');
 });
 
-test('VC leaderboard line includes level, XP, and tracked call time', () => {
+test('VC leaderboard line includes level, XP, and total whole minutes', () => {
     const line = voiceLeaderboardLine(0, {
         level: 1,
         voice_xp: 7,
@@ -32,5 +32,6 @@ test('VC leaderboard line includes level, XP, and tracked call time', () => {
     assert.match(line, /Ice Boss/);
     assert.match(line, /Level \*\*1\*\*/);
     assert.match(line, /7 VC XP/);
-    assert.match(line, /1 hour 10 minutes 0 seconds/);
+    assert.match(line, /70 minutes/);
+    assert.doesNotMatch(line, /hour|second/);
 });
