@@ -83,6 +83,7 @@ const RANK_INFO_CHANNEL_ID = process.env.RANK_INFO_CHANNEL_ID || '15124883637880
 const WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID = process.env.WEEKLY_RECRUITS_LEADERBOARD_CHANNEL_ID || '1512488377490870392';
 const HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID = process.env.HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID || '1517802352046768148';
 const TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID = process.env.TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID || '1521886870123057182';
+const TEAM_MONTHLY_RECRUITS_LEADERBOARD_CHANNEL_NAME = '🏆-monthly-team-recruits';
 const CAPTAIN_SPEED_LEADERBOARD_CHANNEL_ID = process.env.CAPTAIN_SPEED_LEADERBOARD_CHANNEL_ID || '1523067446167212132';
 const VC_LEVEL_LEADERBOARD_CHANNEL_ID = process.env.VC_LEVEL_LEADERBOARD_CHANNEL_ID || '1538021678414831636';
 const TEAM_CHANNEL_CATEGORY_ID = process.env.TEAM_CHANNEL_CATEGORY_ID || '1521889430548512890';
@@ -420,9 +421,44 @@ async function ensureDatabaseSchema(sql) {
         create table if not exists vc_levels (
             guild_id text not null,
             discord_id text not null,
+            voice_seconds bigint not null default 0 check (voice_seconds >= 0),
             voice_minutes bigint not null default 0 check (voice_minutes >= 0),
             voice_xp bigint not null default 0 check (voice_xp >= 0),
+            announced_level int default 0 check (announced_level is null or announced_level >= 0),
             created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            primary key (guild_id, discord_id)
+        )
+    `;
+
+    await sql`
+        alter table vc_levels
+        add column if not exists voice_seconds bigint not null default 0 check (voice_seconds >= 0)
+    `;
+
+    await sql`
+        alter table vc_levels
+        add column if not exists announced_level int check (announced_level is null or announced_level >= 0)
+    `;
+
+    await sql`
+        alter table vc_levels
+        alter column announced_level set default 0
+    `;
+
+    await sql`
+        update vc_levels
+        set voice_seconds = voice_minutes * 60
+        where voice_seconds = 0
+            and voice_minutes > 0
+    `;
+
+    await sql`
+        create table if not exists vc_active_sessions (
+            guild_id text not null,
+            discord_id text not null,
+            channel_id text not null,
+            started_at timestamptz not null default now(),
             updated_at timestamptz not null default now(),
             primary key (guild_id, discord_id)
         )
@@ -2392,6 +2428,14 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null, db = null
             `To get on this leaderboard, use \`/donate amount\` or fund a \`/giveaway\`. Direct Minecraft payments without one of those requests will not count.`
     };
 
+    const managedTeamMonthlyRecruitsLeaderboard = {
+        marker: 'Penguin Mafia Monthly Team Recruit Leaderboard',
+        body:
+            `🏆🐧 **Penguin Mafia Monthly Team Recruit Leaderboard** 🐧🏆\n\n` +
+            `The monthly team standings will appear here soon.\n\n` +
+            `This leaderboard tracks each team’s combined direct recruits for the current month and resets on the **1st of every month at 12:00 AM Eastern Time**.`
+    };
+
     const managedRankInfo = {
         marker: 'Penguin Mafia Rank Information',
         body:
@@ -2444,6 +2488,25 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null, db = null
     await saveManagedChannelId(db, weeklyLeaderboardStateKey, managedWeeklyRecruitsChannel.id);
     logChannelSetupStep('weekly recruits leaderboard channel ready');
 
+    const teamMonthlyLeaderboardStateKey = `managed_team_monthly_recruits_leaderboard_channel:${guild.id}`;
+    const savedTeamMonthlyLeaderboardChannelId = await savedManagedChannelId(db, teamMonthlyLeaderboardStateKey);
+
+    logChannelSetupStep('starting monthly team recruits leaderboard channel');
+    const managedTeamMonthlyRecruitsChannel = await ensureInfoChannel(
+        guild,
+        TEAM_MONTHLY_RECRUITS_LEADERBOARD_CHANNEL_NAME,
+        managedTeamMonthlyRecruitsLeaderboard,
+        rankRoles,
+        {
+            ...sharedChannelOptions,
+            db,
+            channelId: savedTeamMonthlyLeaderboardChannelId || TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID,
+            infoMessageStateKey: `managed_team_monthly_recruits_leaderboard_message:${guild.id}`
+        }
+    );
+    await saveManagedChannelId(db, teamMonthlyLeaderboardStateKey, managedTeamMonthlyRecruitsChannel.id);
+    logChannelSetupStep('monthly team recruits leaderboard channel ready');
+
     logChannelSetupStep('starting donations leaderboard channel');
     const managedDonationsLeaderboardChannel = await ensureInfoChannel(guild, DONATIONS_LEADERBOARD_CHANNEL_NAME, managedDonationsLeaderboard, rankRoles, {
         ...sharedChannelOptions,
@@ -2472,6 +2535,7 @@ async function ensureInfoChannels(guild, rankRoles, staffRoles = null, db = null
         promotionEventsChannel: managedPromotionEventsChannel,
         rankInfoChannel: managedRankInfoChannel,
         staffCategory: null,
+        teamMonthlyRecruitsChannel: managedTeamMonthlyRecruitsChannel,
         weeklyRecruitsChannel: managedWeeklyRecruitsChannel
     };
 }
@@ -2577,6 +2641,7 @@ module.exports = {
     STAFF_RANKS,
     TEAM_CHANNEL_CATEGORY_ID,
     TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID,
+    TEAM_MONTHLY_RECRUITS_LEADERBOARD_CHANNEL_NAME,
     TRAINER_ROLE_ID,
     TRAINER_ROLE_NAME,
     VC_LEVEL_LEADERBOARD_CHANNEL_ID,

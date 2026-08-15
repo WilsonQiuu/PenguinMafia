@@ -12,6 +12,7 @@ const {
     formatDonationAmount
 } = require('./donations.js');
 const {
+    VOICE_CREDIT_SECONDS,
     formatVoiceTime,
     levelForXp
 } = require('./voiceLeveling.js');
@@ -20,6 +21,7 @@ const PREVIOUS_WEEKLY_RECRUITS_STATE_KEY = 'previous_weekly_recruits_top_three';
 const WEEKLY_RECRUITS_LAST_RESET_STATE_KEY = 'weekly_recruits_last_reset_at';
 const WEEKLY_RECRUITS_CHANNEL_STATE_KEY_PREFIX = 'managed_weekly_recruits_leaderboard_channel:';
 const WEEKLY_RECRUITS_MESSAGE_STATE_KEY_PREFIX = 'managed_weekly_recruits_leaderboard_message:';
+const TEAM_MONTHLY_RECRUITS_CHANNEL_STATE_KEY_PREFIX = 'managed_team_monthly_recruits_leaderboard_channel:';
 const WEEKLY_RECRUITS_TIME_ZONE = 'America/Toronto';
 const LEADERBOARD_REFRESH_DELAY_MS = 2_000;
 const leaderboardRefreshes = new Map();
@@ -61,7 +63,7 @@ function voiceLeaderboardLine(index, row, member) {
 
     return `${marker} **${voiceLeaderboardName(member, row)}** — ` +
         `Level **${row.level}** • **${row.voice_xp} VC XP** • ` +
-        `**${formatVoiceTime(row.voice_minutes)}** in VC`;
+        `**${formatVoiceTime(row.voice_seconds)}** in VC`;
 }
 
 function formatDuration(seconds) {
@@ -622,9 +624,14 @@ async function updateTeamMonthlyRecruitsLeaderboardForGuild(guild, sql) {
     const teamLines = teamRows.length > 0
         ? teamRows.map((row, i) => teamLeaderboardLine(i, row)).join('\n')
         : 'No team recruits yet this month.';
+    const teamMonthlyChannelId = await storedStateValue(
+        sql,
+        `${TEAM_MONTHLY_RECRUITS_CHANNEL_STATE_KEY_PREFIX}${guild.id}`
+    ) || TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID;
+
     return updateLeaderboardChannel(
         guild,
-        TEAM_WEEKLY_LEADERBOARD_CHANNEL_ID,
+        teamMonthlyChannelId,
         'team-monthly-leaderboard',
         [
             'Penguin Mafia Monthly Team Recruit Leaderboard',
@@ -856,24 +863,38 @@ async function updateVoiceLevelLeaderboardForGuild(guild, db) {
     const rows = await db`
         select
             stats.discord_id,
-            stats.voice_minutes::text,
-            stats.voice_xp::text,
+            (
+                stats.voice_seconds + coalesce(
+                    greatest(0, floor(extract(epoch from (now() - session.started_at))))::bigint,
+                    0
+                )
+            )::text as voice_seconds,
             player.discord_username,
             player.discord_display_name
         from vc_levels stats
+        left join vc_active_sessions session
+            on session.guild_id = stats.guild_id
+            and session.discord_id = stats.discord_id
         left join players player
             on player.discord_id = stats.discord_id
         where stats.guild_id = ${guild.id}
-        order by stats.voice_xp desc, stats.voice_minutes desc, stats.updated_at asc
+        order by
+            stats.voice_seconds + coalesce(
+                greatest(0, floor(extract(epoch from (now() - session.started_at))))::bigint,
+                0
+            ) desc,
+            stats.updated_at asc
         limit 10
     `;
     const entries = await Promise.all(rows.map(async (row, index) => {
         const member = guild.members.cache.get(row.discord_id) ||
             await guild.members.fetch(row.discord_id).catch(() => null);
-        const level = levelForXp(row.voice_xp);
+        const voiceXp = Math.floor(Number(row.voice_seconds) / VOICE_CREDIT_SECONDS);
+        const level = levelForXp(voiceXp);
 
         return voiceLeaderboardLine(index, {
             ...row,
+            voice_xp: voiceXp,
             level
         }, member);
     }));
@@ -889,7 +910,7 @@ async function updateVoiceLevelLeaderboardForGuild(guild, db) {
         `🏆🎙️ **Penguin Mafia VC Level Leaderboard** 🎙️🏆\n\n` +
         `Top 10 penguins by **VC level and XP**. Names use each member’s current server nickname.\n\n` +
         `${lines}\n\n` +
-        `Voice time is credited in 10-minute segments. Use \`/vchours\` for your full progress.`,
+        `Voice time is tracked to the second. Every 600 seconds earns 1 VC XP. Use \`/vchours\` for your live progress.`,
         {
             db,
             messageStateKey: `vc_level_leaderboard_message:${guild.id}`

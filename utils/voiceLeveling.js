@@ -10,6 +10,7 @@ const {
 } = require('./modlogs.js');
 
 const VOICE_CREDIT_MINUTES = 10;
+const VOICE_CREDIT_SECONDS = VOICE_CREDIT_MINUTES * 60;
 const VOICE_CREDIT_XP = 1;
 const VOICE_LEVEL_INFO_MARKER = 'VC TIME LEVELING';
 
@@ -92,29 +93,36 @@ function voiceProgress(xp) {
     };
 }
 
-function formatVoiceTime(minutes) {
-    const normalizedMinutes = Math.max(0, Math.floor(Number(minutes) || 0));
-    const hours = Math.floor(normalizedMinutes / 60);
-    const remainingMinutes = normalizedMinutes % 60;
+function formatVoiceTime(seconds) {
+    const normalizedSeconds = Math.max(0, Math.floor(Number(seconds) || 0));
+    const hours = Math.floor(normalizedSeconds / 3600);
+    const minutes = Math.floor((normalizedSeconds % 3600) / 60);
+    const remainingSeconds = normalizedSeconds % 60;
+    const parts = [];
 
-    if (hours === 0) {
-        return `${remainingMinutes} minute${remainingMinutes === 1 ? '' : 's'}`;
+    if (hours > 0) {
+        parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
     }
 
-    return `${hours} hour${hours === 1 ? '' : 's'} ${remainingMinutes} minute${remainingMinutes === 1 ? '' : 's'}`;
+    if (minutes > 0 || hours > 0) {
+        parts.push(`${minutes} minute${minutes === 1 ? '' : 's'}`);
+    }
+
+    parts.push(`${remainingSeconds} second${remainingSeconds === 1 ? '' : 's'}`);
+    return parts.join(' ');
 }
 
 function voiceLevelInfoPayload() {
     return {
         content:
             `# 🎙️🐧 ${VOICE_LEVEL_INFO_MARKER}\n\n` +
-            `Spending time together in voice chat now earns **VC levels**. Every **10 minutes**, the bot checks who is connected and credits each eligible penguin with **10 tracked minutes** and **1 VC XP**. The credit represents the previous 10-minute segment. Bots and members in the server AFK channel do not earn credit.\n\n` +
+            `Spending time together in voice chat now earns **VC levels**. The bot records exact join and leave timestamps, so eligible voice time is tracked **to the second** without writing to the database every second. Bots and members in the server AFK channel do not earn time.\n\n` +
             `## Minecraft-style level formula\n` +
             `The total VC XP needed to reach level **L** is:\n` +
             `- Levels 0–16: **L² + 6L**\n` +
             `- Levels 17–31: **2.5L² − 40.5L + 360**\n` +
             `- Levels 32+: **4.5L² − 162.5L + 2220**\n\n` +
-            `Because **1 VC XP = one credited 10-minute segment**, level 10 takes **26h 40m**, level 20 takes **91h 40m**, and level 30 takes **232h 30m**.\n\n` +
+            `Every **600 tracked seconds** earns **1 VC XP**. Level 10 takes **26h 40m**, level 20 takes **91h 40m**, and level 30 takes **232h 30m**.\n\n` +
             `Use \`/vchours\` to see your tracked call time, VC level, and progress to the next level.`
     };
 }
@@ -197,81 +205,276 @@ function eligibleVoiceMemberIds(guild) {
     return [...memberIds];
 }
 
-async function creditVoiceTimeForGuild(guild, db, now = new Date()) {
-    const memberIds = eligibleVoiceMemberIds(guild);
-    const bucketMs = VOICE_CREDIT_MINUTES * 60 * 1000;
-    const tickBucket = new Date(Math.floor(now.getTime() / bucketMs) * bucketMs);
+function voiceStateIsEligible(guild, voiceState) {
+    const member = voiceState?.member || guild.members.cache.get(voiceState?.id);
 
+    return Boolean(
+        voiceState?.channelId &&
+        voiceState.channelId !== guild.afkChannelId &&
+        member &&
+        !member.user.bot
+    );
+}
+
+async function startVoiceSession(guildId, discordId, channelId, db, startedAt = new Date(), options = {}) {
     return db.begin(async transaction => {
-        const tickRows = await transaction`
-            insert into vc_level_ticks (guild_id, tick_bucket)
-            values (${guild.id}, ${tickBucket})
-            on conflict (guild_id, tick_bucket) do nothing
-            returning tick_bucket
+        await transaction`
+            insert into vc_levels (guild_id, discord_id)
+            values (${guildId}, ${discordId})
+            on conflict (guild_id, discord_id) do nothing
         `;
 
-        if (tickRows.length === 0) {
-            return {
-                credits: [],
-                credited: 0,
-                levelUps: [],
-                skippedDuplicate: true
-            };
+        if (options.preserveExisting) {
+            await transaction`
+                insert into vc_active_sessions (guild_id, discord_id, channel_id, started_at, updated_at)
+                values (${guildId}, ${discordId}, ${channelId}, ${startedAt}, now())
+                on conflict (guild_id, discord_id) do update
+                set channel_id = excluded.channel_id, updated_at = now()
+            `;
+        } else {
+            await transaction`
+                insert into vc_active_sessions (guild_id, discord_id, channel_id, started_at, updated_at)
+                values (${guildId}, ${discordId}, ${channelId}, ${startedAt}, now())
+                on conflict (guild_id, discord_id) do update
+                set
+                    channel_id = excluded.channel_id,
+                    started_at = excluded.started_at,
+                    updated_at = now()
+            `;
         }
+    });
+}
 
-        if (memberIds.length === 0) {
-            return {
-                credits: [],
-                credited: 0,
-                levelUps: [],
-                skippedDuplicate: false
-            };
-        }
+async function moveVoiceSession(guildId, discordId, channelId, db) {
+    await db`
+        update vc_active_sessions
+        set channel_id = ${channelId}, updated_at = now()
+        where guild_id = ${guildId}
+            and discord_id = ${discordId}
+    `;
+}
 
-        const values = memberIds.map(discordId => ({
-            guild_id: guild.id,
-            discord_id: discordId,
-            voice_minutes: VOICE_CREDIT_MINUTES,
-            voice_xp: VOICE_CREDIT_XP
-        }));
-        const updatedRows = await transaction`
-            insert into vc_levels ${transaction(values, 'guild_id', 'discord_id', 'voice_minutes', 'voice_xp')}
-            on conflict (guild_id, discord_id) do update
-            set
-                voice_minutes = vc_levels.voice_minutes + excluded.voice_minutes,
-                voice_xp = vc_levels.voice_xp + excluded.voice_xp,
-                updated_at = now()
-            returning discord_id, voice_minutes::text, voice_xp::text
-        `;
-        const levelUps = updatedRows.flatMap(row => {
-            const newXp = Number(row.voice_xp);
-            const oldLevel = levelForXp(newXp - VOICE_CREDIT_XP);
-            const newLevel = levelForXp(newXp);
+async function endVoiceSession(guildId, discordId, db, endedAt = new Date()) {
+    const rows = await db`
+        with ended as (
+            delete from vc_active_sessions
+            where guild_id = ${guildId}
+                and discord_id = ${discordId}
+            returning started_at
+        ),
+        elapsed as (
+            select greatest(
+                0,
+                floor(extract(epoch from (${endedAt}::timestamptz - started_at)))
+            )::bigint as seconds
+            from ended
+        )
+        update vc_levels stats
+        set
+            voice_seconds = stats.voice_seconds + elapsed.seconds,
+            voice_minutes = (stats.voice_seconds + elapsed.seconds) / 60,
+            voice_xp = (stats.voice_seconds + elapsed.seconds) / ${VOICE_CREDIT_SECONDS},
+            updated_at = now()
+        from elapsed
+        where stats.guild_id = ${guildId}
+            and stats.discord_id = ${discordId}
+        returning
+            stats.discord_id,
+            elapsed.seconds::text as session_seconds,
+            stats.voice_seconds::text,
+            stats.voice_xp::text
+    `;
 
-            return newLevel > oldLevel
-                ? [{
-                    discordId: row.discord_id,
-                    oldLevel,
-                    newLevel,
-                    voiceMinutes: Number(row.voice_minutes),
-                    voiceXp: newXp
-                }]
-                : [];
-        });
-        const credits = updatedRows.map(row => ({
-            discordId: row.discord_id,
-            voiceMinutes: Number(row.voice_minutes),
-            voiceXp: Number(row.voice_xp),
-            level: levelForXp(row.voice_xp)
-        }));
+    return rows[0] || null;
+}
+
+async function trackVoiceStateUpdate(oldState, newState, db, now = new Date()) {
+    const guild = newState.guild || oldState.guild;
+    const member = newState.member || oldState.member;
+
+    if (!guild || !member || member.user.bot) {
+        return { changed: false, type: null };
+    }
+
+    const wasEligible = voiceStateIsEligible(guild, oldState);
+    const isEligible = voiceStateIsEligible(guild, newState);
+
+    if (!wasEligible && isEligible) {
+        await startVoiceSession(guild.id, member.id, newState.channelId, db, now);
+        return { changed: true, type: 'started', discordId: member.id };
+    }
+
+    if (wasEligible && !isEligible) {
+        const stats = await endVoiceSession(guild.id, member.id, db, now);
+        const voiceSeconds = Number(stats?.voice_seconds || 0);
+        const voiceXp = Number(stats?.voice_xp || Math.floor(voiceSeconds / VOICE_CREDIT_SECONDS));
 
         return {
-            credits,
-            credited: updatedRows.length,
-            levelUps,
-            skippedDuplicate: false
+            changed: true,
+            type: 'ended',
+            discordId: member.id,
+            credit: stats
+                ? {
+                    discordId: member.id,
+                    sessionSeconds: Number(stats.session_seconds || 0),
+                    voiceSeconds,
+                    voiceXp,
+                    level: levelForXp(voiceXp)
+                }
+                : null
+        };
+    }
+
+    if (wasEligible && isEligible && oldState.channelId !== newState.channelId) {
+        await moveVoiceSession(guild.id, member.id, newState.channelId, db);
+        return { changed: true, type: 'moved', discordId: member.id };
+    }
+
+    return { changed: false, type: null };
+}
+
+async function reconcileVoiceSessionsForGuild(guild, db, now = new Date()) {
+    const eligibleStates = new Map();
+
+    for (const [, voiceState] of guild.voiceStates.cache) {
+        if (voiceStateIsEligible(guild, voiceState)) {
+            const member = voiceState.member || guild.members.cache.get(voiceState.id);
+            eligibleStates.set(member.id, voiceState);
+        }
+    }
+
+    const activeRows = await db`
+        select discord_id, channel_id
+        from vc_active_sessions
+        where guild_id = ${guild.id}
+    `;
+    const activeIds = new Set(activeRows.map(row => row.discord_id));
+
+    for (const row of activeRows) {
+        const currentState = eligibleStates.get(row.discord_id);
+
+        if (!currentState) {
+            await endVoiceSession(guild.id, row.discord_id, db, now);
+        } else if (currentState.channelId !== row.channel_id) {
+            await moveVoiceSession(guild.id, row.discord_id, currentState.channelId, db);
+        }
+    }
+
+    for (const [discordId, voiceState] of eligibleStates) {
+        if (!activeIds.has(discordId)) {
+            await startVoiceSession(guild.id, discordId, voiceState.channelId, db, now, {
+                preserveExisting: true
+            });
+        }
+    }
+
+    return eligibleStates.size;
+}
+
+async function liveVoiceStatsForGuild(guildId, db, activeOnly = false) {
+    return db`
+        select
+            stats.discord_id,
+            (
+                stats.voice_seconds + coalesce(
+                    greatest(0, floor(extract(epoch from (now() - session.started_at))))::bigint,
+                    0
+                )
+            )::text as voice_seconds
+        from vc_levels stats
+        left join vc_active_sessions session
+            on session.guild_id = stats.guild_id
+            and session.discord_id = stats.discord_id
+        where stats.guild_id = ${guildId}
+            and (${activeOnly} = false or session.discord_id is not null)
+    `;
+}
+
+async function claimVoiceLevelUps(guildId, db) {
+    const rows = await db`
+        select
+            stats.discord_id,
+            stats.announced_level,
+            (
+                stats.voice_seconds + coalesce(
+                    greatest(0, floor(extract(epoch from (now() - session.started_at))))::bigint,
+                    0
+                )
+            )::text as voice_seconds
+        from vc_levels stats
+        left join vc_active_sessions session
+            on session.guild_id = stats.guild_id
+            and session.discord_id = stats.discord_id
+        where stats.guild_id = ${guildId}
+    `;
+    const levelUps = [];
+
+    for (const row of rows) {
+        const voiceSeconds = Number(row.voice_seconds);
+        const voiceXp = Math.floor(voiceSeconds / VOICE_CREDIT_SECONDS);
+        const newLevel = levelForXp(voiceXp);
+
+        if (row.announced_level === null) {
+            await db`
+                update vc_levels
+                set announced_level = ${newLevel}
+                where guild_id = ${guildId}
+                    and discord_id = ${row.discord_id}
+                    and announced_level is null
+            `;
+            continue;
+        }
+
+        const oldLevel = Number(row.announced_level || 0);
+
+        if (newLevel <= oldLevel) {
+            continue;
+        }
+
+        const claimed = await db`
+            update vc_levels
+            set announced_level = ${newLevel}
+            where guild_id = ${guildId}
+                and discord_id = ${row.discord_id}
+                and coalesce(announced_level, 0) < ${newLevel}
+            returning discord_id
+        `;
+
+        if (claimed.length > 0) {
+            levelUps.push({
+                discordId: row.discord_id,
+                oldLevel,
+                newLevel,
+                voiceSeconds,
+                voiceXp
+            });
+        }
+    }
+
+    return levelUps;
+}
+
+async function creditVoiceTimeForGuild(guild, db, now = new Date()) {
+    await reconcileVoiceSessionsForGuild(guild, db, now);
+    const rows = await liveVoiceStatsForGuild(guild.id, db, true);
+    const credits = rows.map(row => {
+        const voiceSeconds = Number(row.voice_seconds);
+        const voiceXp = Math.floor(voiceSeconds / VOICE_CREDIT_SECONDS);
+
+        return {
+            discordId: row.discord_id,
+            voiceSeconds,
+            voiceXp,
+            level: levelForXp(voiceXp)
         };
     });
+
+    return {
+        credits,
+        credited: credits.length,
+        levelUps: await claimVoiceLevelUps(guild.id, db),
+        skippedDuplicate: false
+    };
 }
 
 async function postVoiceXpModLogs(guild, result) {
@@ -290,7 +493,7 @@ async function postVoiceXpModLogs(guild, result) {
         const batch = batches[index];
         const fields = [{
             name: 'Scan Result',
-            value: `Credited ${result.credited} member(s) +${VOICE_CREDIT_XP} VC XP and +${VOICE_CREDIT_MINUTES} minutes each.`
+            value: `Exact live VC totals checked for ${result.credited} active member(s). No per-second database polling is used.`
         }];
 
         if (batches.length > 1) {
@@ -310,8 +513,8 @@ async function postVoiceXpModLogs(guild, result) {
                 fields.push({
                     name: `<@${credit.discordId}>`,
                     value:
-                        `+${VOICE_CREDIT_XP} XP, +${VOICE_CREDIT_MINUTES} min | ` +
-                        `total ${credit.voiceXp} XP, ${formatVoiceTime(credit.voiceMinutes)} | ` +
+                        `${credit.sessionSeconds !== undefined ? `+${credit.sessionSeconds} seconds this session | ` : ''}` +
+                        `${credit.voiceXp} XP | ${formatVoiceTime(credit.voiceSeconds)} total | ` +
                         `level ${credit.level}`
                 });
             }
@@ -339,7 +542,7 @@ async function postVoiceLevelUps(guild, levelUps) {
             content:
                 `🎙️🐧 **VC LEVEL UP!** 🐧🎙️\n\n` +
                 `<@${levelUp.discordId}> reached **VC Level ${levelUp.newLevel}** because of their time spent in voice chat!\n` +
-                `Tracked call time: **${formatVoiceTime(levelUp.voiceMinutes)}**\n\n` +
+                `Tracked call time: **${formatVoiceTime(levelUp.voiceSeconds)}**\n\n` +
                 `Thanks for spending time with the colony. 🧊`,
             allowedMentions: {
                 users: [levelUp.discordId]
@@ -352,6 +555,7 @@ async function postVoiceLevelUps(guild, levelUps) {
 
 module.exports = {
     VOICE_CREDIT_MINUTES,
+    VOICE_CREDIT_SECONDS,
     VOICE_CREDIT_XP,
     creditVoiceTimeForGuild,
     eligibleVoiceMemberIds,
@@ -360,9 +564,12 @@ module.exports = {
     levelForXp,
     postVoiceXpModLogs,
     postVoiceLevelUps,
+    reconcileVoiceSessionsForGuild,
     setVoiceXpModLogging,
     voiceLevelInfoPayload,
     voiceProgress,
+    trackVoiceStateUpdate,
+    voiceStateIsEligible,
     voiceXpModLoggingEnabled,
     xpForLevel
 };

@@ -256,6 +256,7 @@ module.exports = {
                 donationsLeaderboardChannel,
                 modLogChannel,
                 promotionEventsChannel,
+                teamMonthlyRecruitsChannel,
                 weeklyRecruitsChannel
             } = await ensureInfoChannels(interaction.guild, rankRoles, staffRoles, sql);
 
@@ -324,7 +325,7 @@ module.exports = {
                     `Discord rank roles updated: **${rolesUpdated}**\n` +
                     `Discord staff roles created: **${staffRolesCreated}**\n` +
                     `Discord staff roles updated: **${staffRolesUpdated}**\n` +
-                    `Managed channels ready: ${promotionEventsChannel}, ${weeklyRecruitsChannel}, ${donationsLeaderboardChannel}, ${modLogChannel}\n` +
+                    `Managed channels ready: ${promotionEventsChannel}, ${weeklyRecruitsChannel}, ${teamMonthlyRecruitsChannel}, ${donationsLeaderboardChannel}, ${modLogChannel}\n` +
                     `Players reset/imported: **${importedCount}**\n` +
                     `Penguin rank roles removed: **${rankRolesRemoved}**\n` +
                     `Staff roles removed: **${staffRolesRemoved}**\n` +

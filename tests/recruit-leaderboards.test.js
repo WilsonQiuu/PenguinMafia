@@ -27,3 +27,13 @@ test('scheduled bot paths do not create or pay recruiting rewards', () => {
     assert.doesNotMatch(weeklySchedule, /WEEKLY_PRIZES/);
     assert.doesNotMatch(weeklySchedule, /Weekly top .* prize/);
 });
+
+test('monthly team leaderboard remains managed without cash rewards', () => {
+    const bootstrap = source('utils/bootstrap.js');
+    const leaderboards = source('utils/leaderboards.js');
+
+    assert.match(bootstrap, /managed_team_monthly_recruits_leaderboard_channel/);
+    assert.match(bootstrap, /Penguin Mafia Monthly Team Recruit Leaderboard/);
+    assert.match(leaderboards, /updateTeamMonthlyRecruitsLeaderboardForGuild/);
+    assert.doesNotMatch(leaderboards, /cash prizes/i);
+});

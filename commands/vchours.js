@@ -8,6 +8,7 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
+    VOICE_CREDIT_SECONDS,
     formatVoiceTime,
     voiceProgress
 } = require('../utils/voiceLeveling.js');
@@ -32,27 +33,35 @@ module.exports = {
 
         try {
             const rows = await sql`
-                select voice_minutes::text, voice_xp::text
-                from vc_levels
-                where guild_id = ${interaction.guild.id}
-                    and discord_id = ${requestedUser.id}
+                select (
+                    stats.voice_seconds + coalesce(
+                        greatest(0, floor(extract(epoch from (now() - session.started_at))))::bigint,
+                        0
+                    )
+                )::text as voice_seconds
+                from vc_levels stats
+                left join vc_active_sessions session
+                    on session.guild_id = stats.guild_id
+                    and session.discord_id = stats.discord_id
+                where stats.guild_id = ${interaction.guild.id}
+                    and stats.discord_id = ${requestedUser.id}
                 limit 1
             `;
-            const voiceMinutes = Number(rows[0]?.voice_minutes || 0);
-            const voiceXp = Number(rows[0]?.voice_xp || 0);
+            const voiceSeconds = Number(rows[0]?.voice_seconds || 0);
+            const voiceXp = Math.floor(voiceSeconds / VOICE_CREDIT_SECONDS);
             const progress = voiceProgress(voiceXp);
-            const decimalHours = (voiceMinutes / 60).toFixed(2);
+            const decimalHours = (voiceSeconds / 3600).toFixed(2);
 
             await interaction.editReply(
                 `🎙️🐧 **VC Time & Level**\n\n` +
                 `Player: ${requestedUser}\n` +
-                `Tracked call time: **${formatVoiceTime(voiceMinutes)}** (**${decimalHours} hours**)\n` +
+                `Tracked call time: **${formatVoiceTime(voiceSeconds)}** (**${decimalHours} hours**)\n` +
                 `VC level: **${progress.level}**\n` +
                 `Total VC XP: **${voiceXp}**\n` +
                 `Level progress: **${progress.earnedThisLevel}/${progress.neededThisLevel} VC XP**\n` +
                 `Next level in: **${progress.xpToNextLevel} VC XP** ` +
-                `(**${formatVoiceTime(progress.xpToNextLevel * 10)}**)\n\n` +
-                `Time is credited in 10-minute segments while you are connected to voice chat.`
+                `(**${formatVoiceTime(progress.xpToNextLevel * VOICE_CREDIT_SECONDS)}**)\n\n` +
+                `VC time is tracked to the second from Discord join, leave, move, and AFK events.`
             );
         } catch (error) {
             logCommandError(interaction, '/vchours', error);
