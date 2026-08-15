@@ -1251,6 +1251,78 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        create table if not exists captain_speed_runs (
+            id bigserial primary key,
+            discord_id text not null references players(discord_id) on delete cascade,
+            started_at timestamptz not null,
+            reached_captain_at timestamptz not null,
+            promotion_seconds bigint not null check (promotion_seconds >= 0),
+            counts_for_monthly boolean not null default true,
+            created_at timestamptz not null default now(),
+            unique (discord_id, reached_captain_at)
+        )
+    `;
+
+    await sql`
+        insert into captain_speed_runs (
+            discord_id,
+            started_at,
+            reached_captain_at,
+            promotion_seconds
+        )
+        select
+            discord_id,
+            created_at,
+            reached_captain_at,
+            greatest(0, floor(extract(epoch from (reached_captain_at - created_at))))::bigint
+        from players
+        where reached_captain_at is not null
+            and created_at is not null
+        on conflict (discord_id, reached_captain_at) do nothing
+    `;
+
+    await sql`
+        create or replace function record_captain_speed_run()
+        returns trigger
+        language plpgsql
+        as $$
+        begin
+            if new.reached_captain_at is not null
+                and new.created_at is not null
+                and new.reached_captain_at is distinct from old.reached_captain_at
+            then
+                insert into captain_speed_runs (
+                    discord_id,
+                    started_at,
+                    reached_captain_at,
+                    promotion_seconds
+                )
+                values (
+                    new.discord_id,
+                    new.created_at,
+                    new.reached_captain_at,
+                    greatest(0, floor(extract(epoch from (new.reached_captain_at - new.created_at))))::bigint
+                )
+                on conflict (discord_id, reached_captain_at) do nothing;
+            end if;
+
+            return new;
+        end;
+        $$
+    `;
+
+    await sql`
+        drop trigger if exists record_captain_speed_run_after_update on players
+    `;
+
+    await sql`
+        create trigger record_captain_speed_run_after_update
+        after update of reached_captain_at on players
+        for each row
+        execute function record_captain_speed_run()
+    `;
+
+    await sql`
         create table if not exists recruit_history (
             recruit_discord_id text primary key,
             recruiter_discord_id text not null,

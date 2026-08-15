@@ -30,15 +30,27 @@ module.exports = {
         }
 
         try {
-            await sql`
-                update players
-                set reached_captain_at = null
-                where reached_captain_at is not null
-            `;
+            await sql.begin(async transaction => {
+                await transaction`
+                    update captain_speed_runs
+                    set counts_for_monthly = false
+                    where counts_for_monthly = true
+                        and date_trunc('month', reached_captain_at at time zone 'UTC') =
+                            date_trunc('month', now() at time zone 'UTC')
+                `;
+
+                await transaction`
+                    update players
+                    set reached_captain_at = null
+                    where reached_captain_at is not null
+                `;
+            });
 
             await updateCaptainSpeedLeaderboardForGuild(interaction.guild, sql).catch(() => {});
 
-            await interaction.editReply('✅ Captain speed leaderboard has been cleared for everyone.');
+            await interaction.editReply(
+                '✅ This month’s Captain speed leaderboard has been cleared. All-time records were preserved.'
+            );
         } catch (error) {
             logCommandError(interaction, '/clearcaptainlb', error);
 

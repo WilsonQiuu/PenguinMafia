@@ -828,51 +828,84 @@ async function updateDailyRecruitsLeaderboardForGuild(guild, sql) {
 }
 
 async function updateCaptainSpeedLeaderboardForGuild(guild, db) {
-    const rows = await db`
-        select
-            player.discord_id,
-            player.discord_username,
-            player.discord_display_name,
-            player.minecraft_ign,
-            player.parent_discord_id,
-            extract(epoch from (player.reached_captain_at - player.created_at))::bigint as promotion_seconds
-        from players player
-        where player.reached_captain_at is not null
-            and player.created_at is not null
-            and player.captain_leaderboard_disqualified = false
-            and date_trunc('month', player.reached_captain_at) = date_trunc('month', now() at time zone 'UTC')
-        order by promotion_seconds asc, player.reached_captain_at asc
+    const monthlyRows = await db`
+        select *
+        from (
+            select distinct on (player.discord_id)
+                player.discord_id,
+                player.discord_username,
+                player.discord_display_name,
+                player.minecraft_ign,
+                player.parent_discord_id,
+                run.promotion_seconds,
+                run.reached_captain_at
+            from captain_speed_runs run
+            join players player on player.discord_id = run.discord_id
+            where run.counts_for_monthly = true
+                and player.captain_leaderboard_disqualified = false
+                and date_trunc('month', run.reached_captain_at at time zone 'UTC') =
+                    date_trunc('month', now() at time zone 'UTC')
+            order by
+                player.discord_id,
+                run.promotion_seconds asc,
+                run.reached_captain_at asc
+        ) monthly_personal_best
+        order by promotion_seconds asc, reached_captain_at asc
         limit 10
     `;
-
-    if (rows.length === 0) {
-        return updateLeaderboardChannel(
-            guild,
-            CAPTAIN_SPEED_LEADERBOARD_CHANNEL_ID,
-            'captain-speed-leaderboard',
-            'Penguin Mafia Fastest Captains',
-            `⚡🐧 **Penguin Mafia Fastest Captains — ${new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}** 🐧⚡\n\n` +
-            `Top 10 fastest promotions from **Penguin Soldier** to **Penguin Captain** this month.\n\n` +
-            `No promotions recorded yet this month. Be the first!\n\n`
-        );
-    }
-
-    const lines = rows.map((row, index) => {
+    const allTimeRows = await db`
+        select *
+        from (
+            select distinct on (player.discord_id)
+                player.discord_id,
+                player.discord_username,
+                player.discord_display_name,
+                player.minecraft_ign,
+                player.parent_discord_id,
+                run.promotion_seconds,
+                run.reached_captain_at
+            from captain_speed_runs run
+            join players player on player.discord_id = run.discord_id
+            where player.captain_leaderboard_disqualified = false
+            order by
+                player.discord_id,
+                run.promotion_seconds asc,
+                run.reached_captain_at asc
+        ) personal_best
+        order by promotion_seconds asc, reached_captain_at asc
+        limit 10
+    `;
+    const captainSpeedLines = rows => rows.map((row, index) => {
         const medals = ['🥇', '🥈', '🥉'];
         const marker = medals[index] || `**${index + 1}.**`;
         const name = row.minecraft_ign || row.discord_display_name || row.discord_username || 'Unknown';
         return `${marker} **${name}** — ${formatDuration(row.promotion_seconds)}` +
             (row.parent_discord_id ? ` (recruited by <@${row.parent_discord_id}>)` : '');
     }).join('\n');
+    const monthlyLines = monthlyRows.length > 0
+        ? captainSpeedLines(monthlyRows)
+        : 'No promotions recorded yet this month. Be the first!';
+    const allTimeLines = allTimeRows.length > 0
+        ? captainSpeedLines(allTimeRows)
+        : 'No all-time Captain speedruns have been recorded yet.';
+    const monthName = new Date().toLocaleString('default', {
+        month: 'long',
+        year: 'numeric',
+        timeZone: 'UTC'
+    });
 
     return updateLeaderboardChannel(
         guild,
         CAPTAIN_SPEED_LEADERBOARD_CHANNEL_ID,
         'captain-speed-leaderboard',
         'Penguin Mafia Fastest Captains',
-        `⚡🐧 **Penguin Mafia Fastest Captains — ${new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}** 🐧⚡\n\n` +
+        `⚡🐧 **Penguin Mafia Fastest Captains** 🐧⚡\n\n` +
+        `## ${monthName}\n` +
         `Top 10 fastest promotions from **Penguin Soldier** to **Penguin Captain** this month.\n\n` +
-        `${lines}\n\n`
+        `${monthlyLines}\n\n` +
+        `## 🏆 Fastest of All Time\n` +
+        `Each penguin’s personal-best run can appear once. Monthly resets do not remove these records.\n\n` +
+        `${allTimeLines}\n\n`
     );
 }
 
