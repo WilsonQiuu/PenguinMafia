@@ -391,3 +391,111 @@ for (const rankName of ['Penguin Soldier', 'Penguin Captain', 'Penguin General',
         assert.deepEqual(calls, []);
     });
 }
+
+test('welcome flow matcher recognizes test-scoped buttons too', () => {
+    const botUser = { id: 'bot-1' };
+    const makeMessage = customId => ({
+        author: botUser,
+        client: { user: botUser },
+        content: '',
+        components: [{ components: [{ customId }] }]
+    });
+
+    assert.equal(onboarding._test.isWelcomeFlowMessage(makeMessage('welcome:build_team:123:live'), '123'), true);
+    assert.equal(onboarding._test.isWelcomeFlowMessage(makeMessage('welcome:build_team:123:test'), '123'), true);
+    assert.equal(onboarding._test.isWelcomeFlowMessage(makeMessage('welcome:build_team:456:test'), '123'), false);
+    assert.equal(onboarding._test.isWelcomeFlowMessage(makeMessage('dismiss:123'), '123'), false);
+});
+
+test('test-mode completion cleans up every welcome message in the DM', async () => {
+    const botUser = { id: 'bot-1' };
+    const deleted = [];
+    const channel = {
+        id: 'dm-1',
+        isDMBased: () => true,
+        messages: {
+            async fetch() {
+                return new Collection([
+                    ['final-1', {
+                        id: 'final-1',
+                        author: botUser,
+                        client: { user: botUser },
+                        content: "# ✅ You're In!",
+                        components: []
+                    }],
+                    ['step-1', {
+                        id: 'step-1',
+                        author: botUser,
+                        client: { user: botUser },
+                        content: '',
+                        components: [{ components: [{ customId: 'welcome:build_team:123456789012345:test' }] }]
+                    }],
+                    ['other-1', {
+                        id: 'other-1',
+                        author: { id: 'someone-else' },
+                        content: 'hello',
+                        components: []
+                    }]
+                ]);
+            },
+            async delete(messageId) {
+                deleted.push(messageId);
+            }
+        }
+    };
+    const interaction = {
+        channel,
+        client: { user: botUser },
+        message: { id: 'final-1' },
+        async fetchReply() {
+            return { id: 'final-1' };
+        },
+        async followUp() {
+            return {
+                id: 'countdown-1',
+                edit: async () => {}
+            };
+        }
+    };
+
+    const result = await onboarding.scheduleTestWelcomeDmCleanup(interaction, '123456789012345', 1);
+
+    assert.equal(result, true);
+    assert.ok(deleted.includes('final-1'), 'final message deleted');
+    assert.ok(deleted.includes('step-1'), 'step message deleted');
+    assert.ok(deleted.includes('countdown-1'), 'countdown message deleted');
+    assert.ok(!deleted.includes('other-1'), 'unrelated message untouched');
+    assert.deepEqual(loadPendingWelcomeDmCleanups(), {}, 'cleanup state cleared after success');
+});
+
+test('/welcome runs a Don-only test flow in DMs', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'commands/welcome.js'), 'utf8');
+
+    assert.match(source, /startTestOnboardingInDm/);
+    assert.match(source, /isDon\(interaction\.user\.id\)/);
+    assert.doesNotMatch(source, /startOnboardingForMember/);
+});
+
+test('every welcome flow message carries a dismiss X', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'utils/onboarding.js'), 'utf8');
+
+    for (const functionName of [
+        'introMessage',
+        'buildTeamMessage',
+        'rankUpMessage',
+        'linkMinecraftMessage',
+        'finalMessage'
+    ]) {
+        const start = source.indexOf(`function ${functionName}`);
+        const nextFunction = source.indexOf('\nfunction ', start + 1);
+        const body = source.slice(start, nextFunction === -1 ? source.length : nextFunction);
+
+        assert.match(body, /dismissRow\(/, `${functionName} should include a dismiss X`);
+    }
+});
+
+test('test-mode DM completion routes to the full DM cleanup', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'utils/onboarding.js'), 'utf8');
+
+    assert.match(source, /isTest\s+\?\s+scheduleTestWelcomeDmCleanup\(interaction, targetUserId\)/);
+});

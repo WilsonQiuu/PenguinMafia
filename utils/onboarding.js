@@ -218,7 +218,10 @@ function isWelcomeFlowMessage(message, userId) {
     const hasWelcomeButton = message.components.some(actionRow => {
         return actionRow.components.some(component => {
             return component.customId?.startsWith(`${BUTTON_PREFIX}:`) &&
-                component.customId.includes(`:${userId}:live`);
+                (
+                    component.customId.includes(`:${userId}:live`) ||
+                    component.customId.includes(`:${userId}:test`)
+                );
         });
     });
 
@@ -253,7 +256,8 @@ function introMessage(member, context = {}) {
             parse: []
         },
         components: [
-            row(scopedButton('build_team', member.id, 'Next', ButtonStyle.Success, isTest))
+            row(scopedButton('build_team', member.id, 'Next', ButtonStyle.Success, isTest)),
+            dismissRow(member.id)
         ]
     };
 }
@@ -288,7 +292,8 @@ function buildTeamMessage(userId, isTest = false) {
             `Use \`/graph\` to view your recruit tree at any time.\n\n` +
             `More penguins. More power.`,
         components: [
-            row(scopedButton('rank_up', userId, 'Next', ButtonStyle.Success, isTest))
+            row(scopedButton('rank_up', userId, 'Next', ButtonStyle.Success, isTest)),
+            dismissRow(userId)
         ]
     };
 }
@@ -304,7 +309,8 @@ function rankUpMessage(userId, isTest = false) {
             `Recruit active players and help them grow to unlock higher ranks and better commission bonuses.\n\n` +
             `Check #🐧-rank-info for the full breakdown of how ranks and commissions work.`,
         components: [
-            row(scopedButton('link_minecraft', userId, 'Next', ButtonStyle.Success, isTest))
+            row(scopedButton('link_minecraft', userId, 'Next', ButtonStyle.Success, isTest)),
+            dismissRow(userId)
         ]
     };
 }
@@ -323,7 +329,8 @@ function linkMinecraftMessage(userId, isTest = false) {
                 scopedButton('join_all_ign_java', userId, 'Java', ButtonStyle.Success, isTest),
                 scopedButton('join_all_ign_bedrock', userId, 'Bedrock', ButtonStyle.Success, isTest),
                 scopedButton('join_all_skip', userId, 'Skip', ButtonStyle.Secondary, isTest)
-            )
+            ),
+            dismissRow(userId)
         ]
     };
 }
@@ -344,7 +351,9 @@ function finalMessage(userId, linkedIgn = null, edition = null, options = {}) {
             `🎉 You're now a **${DEFAULT_RANK_NAME}**.\n\n` +
             `Use \`/graph\` anytime to view your recruit tree, and visit #🐧-rank-info to learn how ranks and commissions work.\n\n` +
             `Good luck, and start building your empire!`,
-        components: []
+        components: [
+            dismissRow(userId)
+        ]
     };
 }
 
@@ -468,6 +477,90 @@ async function scheduleWelcomeMessageDelete(interaction, seconds = WELCOME_SELF_
     } else {
         clearPendingWelcomeDmCleanup(channelId);
     }
+}
+
+async function scheduleTestWelcomeDmCleanup(interaction, targetUserId, seconds = WELCOME_SELF_DESTRUCT_SECONDS) {
+    const channel = interaction.channel;
+    let finalMessageId = null;
+
+    try {
+        finalMessageId = interaction.message?.id ||
+            (await interaction.fetchReply().catch(() => null))?.id ||
+            null;
+    } catch (error) {
+        console.error('Failed to resolve test welcome final message id for cleanup tracking:');
+        console.error(error);
+    }
+
+    let countdownMessage = null;
+
+    try {
+        countdownMessage = await interaction.followUp({
+            content: `💣 Test welcome complete — cleaning up this DM in **${seconds}**...`,
+            fetchReply: true
+        });
+    } catch (error) {
+        console.error('Failed to start test welcome DM countdown:');
+        console.error(error);
+    }
+
+    const pendingMessageIds = new Set([finalMessageId, countdownMessage?.id].filter(Boolean));
+    const recentMessages = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+
+    if (recentMessages) {
+        for (const [, message] of recentMessages) {
+            if (
+                message.author.id === interaction.client.user.id &&
+                isWelcomeFlowMessage(message, targetUserId)
+            ) {
+                pendingMessageIds.add(message.id);
+            }
+        }
+    }
+
+    if (pendingMessageIds.size > 0) {
+        recordPendingWelcomeDmCleanup(channel.id, [...pendingMessageIds]);
+    }
+
+    for (let remaining = seconds - 1; remaining >= 1; remaining--) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        if (!countdownMessage) continue;
+
+        try {
+            await countdownMessage.edit({
+                content: `💣 Test welcome complete — cleaning up this DM in **${remaining}**...`
+            });
+        } catch {
+            countdownMessage = null;
+        }
+    }
+
+    if (seconds > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    const remainingMessageIds = [];
+
+    for (const messageId of pendingMessageIds) {
+        try {
+            await channel.messages.delete(messageId);
+        } catch (error) {
+            if (error?.code !== 10008) {
+                remainingMessageIds.push(messageId);
+                console.error(`Failed to delete test welcome DM message ${messageId} in channel ${channel.id}:`);
+                console.error(error);
+            }
+        }
+    }
+
+    if (remainingMessageIds.length > 0) {
+        recordPendingWelcomeDmCleanup(channel.id, remainingMessageIds);
+    } else {
+        clearPendingWelcomeDmCleanup(channel.id);
+    }
+
+    return true;
 }
 
 async function sendWelcomeReminderIfDue(member, context = {}) {
@@ -931,7 +1024,9 @@ async function finishOnboardingInteraction(interaction, options) {
         );
     } finally {
         const cleanupPromise = interaction.channel?.isDMBased?.()
-            ? scheduleWelcomeMessageDelete(interaction)
+            ? (isTest
+                ? scheduleTestWelcomeDmCleanup(interaction, targetUserId)
+                : scheduleWelcomeMessageDelete(interaction))
             : scheduleWelcomeChannelDelete(interaction);
 
         // The database completion flag is the durable source of truth for
@@ -1123,6 +1218,7 @@ module.exports = {
     remindIncompleteWelcomeMembers,
     resumePendingWelcomeDmCleanups,
     scheduleDmOnboardingMessageDelete: scheduleWelcomeMessageDelete,
+    scheduleTestWelcomeDmCleanup,
     startTestOnboardingInDm,
     startOnboardingForMember,
     handleWelcomeButton,
@@ -1130,6 +1226,7 @@ module.exports = {
     _test: {
         acknowledgeWelcomeCompletion,
         clearPendingWelcomeDmCleanup,
+        isWelcomeFlowMessage,
         loadPendingWelcomeDmCleanups,
         recordPendingWelcomeDmCleanup,
         scheduleWelcomeChannelDelete,
