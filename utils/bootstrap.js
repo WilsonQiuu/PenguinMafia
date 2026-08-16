@@ -90,8 +90,6 @@ const TEAM_CHANNEL_CATEGORY_ID = process.env.TEAM_CHANNEL_CATEGORY_ID || '152188
 const ICEBERG_CHANNEL_ID = process.env.ICEBERG_CHANNEL_ID || '1524127345047503100';
 const ICEBERG_MEMBERS_CHANNEL_ID = process.env.ICEBERG_MEMBERS_CHANNEL_ID || '1524138778518749334';
 const ICEBERG_ROLE_ID = process.env.ICEBERG_ROLE_ID || '1524126922295218310';
-const ICEBERG_ENTRY_FEE_CENTS = 30_000_000n;
-const ICEBERG_MIN_PLOT_PRICE_CENTS = 10_000_000n;
 const DONATIONS_LEADERBOARD_CHANNEL_ID = process.env.DONATIONS_LEADERBOARD_CHANNEL_ID || '1512488380280082493';
 const MOD_LOG_CHANNEL_NAME = 'mod-log';
 const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || '1512488393232355522';
@@ -683,6 +681,17 @@ async function ensureDatabaseSchema(sql) {
     `;
 
     await sql`
+        alter table giveaways
+        add column if not exists sponsor_discord_id text references players(discord_id) on delete set null
+    `;
+
+    await sql`
+        update giveaways
+        set sponsor_discord_id = host_discord_id
+        where sponsor_discord_id is null
+    `;
+
+    await sql`
         create table if not exists giveaway_entries (
             giveaway_id bigint not null references giveaways(id) on delete cascade,
             player_discord_id text not null references players(discord_id) on delete cascade,
@@ -725,6 +734,43 @@ async function ensureDatabaseSchema(sql) {
             created_at timestamptz not null default now(),
             paid_at timestamptz,
             updated_at timestamptz not null default now()
+        )
+    `;
+
+    await sql`
+        alter table giveaway_payment_requests
+        add column if not exists sponsor_discord_id text references players(discord_id) on delete cascade
+    `;
+
+    await sql`
+        alter table giveaway_payment_requests
+        add column if not exists accepted_at timestamptz
+    `;
+
+    await sql`
+        update giveaway_payment_requests
+        set sponsor_discord_id = host_discord_id
+        where sponsor_discord_id is null
+    `;
+
+    await sql`
+        alter table giveaway_payment_requests
+        drop constraint if exists giveaway_payment_requests_status_check
+    `;
+
+    await sql`
+        alter table giveaway_payment_requests
+        add constraint giveaway_payment_requests_status_check check (
+            status in (
+                'pending',
+                'awaiting_acceptance',
+                'pending_payment',
+                'processing',
+                'hosted',
+                'rejected',
+                'cancelled',
+                'failed'
+            )
         )
     `;
 
@@ -1844,56 +1890,23 @@ async function ensureDatabaseSchema(sql) {
         create table if not exists iceberg_plots (
             plot_number int primary key check (plot_number > 0),
             owner_discord_id text references players(discord_id) on delete set null,
-            original_price bigint not null check (original_price >= 0),
-            bought_at timestamptz,
-            current_claimer_discord_id text references players(discord_id) on delete set null,
-            claim_expires_at timestamptz,
             updated_at timestamptz not null default now()
         )
     `;
 
     await sql`
-        create table if not exists iceberg_fund (
-            id int primary key default 1 check (id = 1),
-            balance bigint not null default 0 check (balance >= 0),
-            claims_enabled boolean not null default false,
-            updated_at timestamptz not null default now()
-        )
+        alter table iceberg_plots
+        drop column if exists original_price,
+        drop column if exists bought_at,
+        drop column if exists current_claimer_discord_id,
+        drop column if exists claim_expires_at
     `;
 
     await sql`
-        alter table iceberg_fund
-        add column if not exists claims_enabled boolean not null default false
-    `;
-
-    await sql`
-        insert into iceberg_fund (id, balance, claims_enabled) values (1, 0, false)
-        on conflict (id) do nothing
-    `;
-
-    await sql`
-        create table if not exists iceberg_payment_requests (
-            id bigserial primary key,
-            guild_id text not null,
-            player_discord_id text not null references players(discord_id) on delete cascade,
-            player_minecraft_ign text not null,
-            payment_bot_user text not null,
-            amount bigint not null check (amount > 0),
-            purpose text not null check (purpose in ('join', 'claim')),
-            plot_number int references iceberg_plots(plot_number) on delete set null,
-            status text not null default 'pending' check (status in ('pending', 'processing', 'completed', 'cancelled', 'expired')),
-            paid_amount bigint,
-            payment_message text,
-            created_at timestamptz not null default now(),
-            paid_at timestamptz,
-            updated_at timestamptz not null default now()
-        )
-    `;
-
-    await sql`
-        create index if not exists idx_iceberg_payment_requests_pending
-        on iceberg_payment_requests(guild_id, lower(player_minecraft_ign), amount, created_at)
-        where status = 'pending'
+        insert into iceberg_plots (plot_number)
+        select plot_number
+        from generate_series(1, 20) as series(plot_number)
+        on conflict (plot_number) do nothing
     `;
 }
 
@@ -2699,9 +2712,7 @@ module.exports = {
     DONATIONS_LEADERBOARD_CHANNEL_NAME,
     HOURLY_RECRUITS_LEADERBOARD_CHANNEL_ID,
     ICEBERG_CHANNEL_ID,
-    ICEBERG_ENTRY_FEE_CENTS,
     ICEBERG_MEMBERS_CHANNEL_ID,
-    ICEBERG_MIN_PLOT_PRICE_CENTS,
     ICEBERG_ROLE_ID,
     MOD_LOG_CHANNEL_ID,
     MOD_LOG_CHANNEL_NAME,

@@ -16,11 +16,11 @@ const {
 } = require('./donations.js');
 const {
     calculatePayout,
+    formattedMinecraftIgn,
     formatPayoutLine
 } = require('./payouts.js');
 const {
-    enqueueGiveawayPayouts,
-    processPendingGiveawayPayoutsForGuild
+    formatMinecraftPaymentAmountFromCents
 } = require('./commissionPayments.js');
 const {
     postDonationEvent,
@@ -39,6 +39,7 @@ const {
 const {
     setMemberNicknameToIgn
 } = require('./nicknames.js');
+const { isDon } = require('./staff.js');
 
 const GIVEAWAY_CHANNEL_ID =
     process.env.GIVEAWAY_CHANNEL_ID || '1517413426358390814';
@@ -53,6 +54,11 @@ const GIVEAWAY_LEAVE_ALL_BUTTON_ID = 'giveaway_leave_all';
 const GIVEAWAY_NOTIFY_BUTTON_ID = 'giveaway_notify_role';
 const GIVEAWAY_END_BUTTON_PREFIX = 'giveaway_end:';
 const GIVEAWAY_CLOSE_BUTTON_PREFIX = 'giveaway_close:';
+const GIVEAWAY_DISMISS_BUTTON_PREFIX = 'giveaway_dismiss:';
+const GIVEAWAY_HOST_ACCEPT_PREFIX = 'giveaway_host_accept:';
+const GIVEAWAY_HOST_REJECT_PREFIX = 'giveaway_host_reject:';
+const GIVEAWAY_HOST_PAID_PREFIX = 'giveaway_host_paid:';
+const GIVEAWAY_HOST_CANCEL_PREFIX = 'giveaway_host_cancel:';
 const GIVEAWAY_LINK_MODAL_PREFIX = 'giveaway_link:';
 const MIN_GIVEAWAY_DURATION_MS = 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -69,6 +75,84 @@ const GIVEAWAY_MESSAGE_REFRESH_DELAY_MS = 1_250;
 const activeGiveawaysBoardRefreshes = new Map();
 const donationLeaderboardRefreshes = new Map();
 const giveawayMessageRefreshes = new Map();
+const APPROVED_GIVEAWAY_HOSTS = Object.freeze([
+    Object.freeze({ discordId: '352217415905574914', minecraftIgn: 'itsWSQ' }),
+    Object.freeze({ discordId: '719063111008780338', minecraftIgn: 'rainbowbeltzz' })
+]);
+
+function dismissButton(ownerId) {
+    return new ButtonBuilder()
+        .setCustomId(`${GIVEAWAY_DISMISS_BUTTON_PREFIX}${ownerId}`)
+        .setLabel('✕')
+        .setStyle(ButtonStyle.Secondary);
+}
+
+function dismissRow(ownerId) {
+    return new ActionRowBuilder().addComponents(dismissButton(ownerId));
+}
+
+function sponsorName(request) {
+    return `<@${request.sponsor_discord_id}>`;
+}
+
+function sponsoredGiveawayHostRequestPayload(request) {
+    return {
+        content:
+            `# 🎁 Giveaway Hosting Request\n\n` +
+            `${sponsorName(request)} wants to sponsor a **${formatDonationAmount(request.amount)}** giveaway.\n` +
+            `If you are online and ready to receive the payment at **${request.host_minecraft_ign}**, accept below.\n\n` +
+            `The giveaway will not start until you confirm that you received the payment.`,
+        components: [
+            new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`${GIVEAWAY_HOST_ACCEPT_PREFIX}${request.id}`)
+                    .setLabel('Accept')
+                    .setStyle(ButtonStyle.Success),
+                new ButtonBuilder()
+                    .setCustomId(`${GIVEAWAY_HOST_REJECT_PREFIX}${request.id}`)
+                    .setLabel('Reject')
+                    .setStyle(ButtonStyle.Danger),
+                dismissButton(request.host_discord_id)
+            )
+        ],
+        allowedMentions: { users: [request.sponsor_discord_id] }
+    };
+}
+
+function sponsoredGiveawayPaymentPayload(request) {
+    return {
+        content:
+            `# 💰 Giveaway Payment Ready\n\n` +
+            `<@${request.host_discord_id}> accepted your **${formatDonationAmount(request.amount)}** giveaway.\n` +
+            `Send the payment to **${request.host_minecraft_ign}** in DonutSMP:\n\n` +
+            `\`\`\`text\n/pay ${request.host_minecraft_ign} ${formatDonationAmount(request.amount)}\n\`\`\`\n` +
+            `The host will start the giveaway after confirming they received it.`,
+        components: [dismissRow(request.sponsor_discord_id)],
+        allowedMentions: { users: [request.host_discord_id] }
+    };
+}
+
+function sponsoredGiveawayPaymentConfirmationPayload(request) {
+    return {
+        content:
+            `✅ You accepted ${sponsorName(request)}'s **${formatDonationAmount(request.amount)}** giveaway.\n\n` +
+            `Wait until **${request.host_minecraft_ign}** receives the payment, then confirm below to start it.`,
+        components: [
+            new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`${GIVEAWAY_HOST_PAID_PREFIX}${request.id}`)
+                    .setLabel('Payment Received — Start')
+                    .setStyle(ButtonStyle.Success),
+                new ButtonBuilder()
+                    .setCustomId(`${GIVEAWAY_HOST_CANCEL_PREFIX}${request.id}`)
+                    .setLabel('Cancel')
+                    .setStyle(ButtonStyle.Danger),
+                dismissButton(request.host_discord_id)
+            )
+        ],
+        allowedMentions: { users: [request.sponsor_discord_id] }
+    };
+}
 
 function giveawayRegistrationHelpMessage() {
     return (
@@ -336,6 +420,9 @@ function renderGiveaway(giveaway, entrantCount, winnerId = null, options = {}) {
             `# 🎉 PENGUIN MAFIA GIVEAWAY\n\n` +
             `Prize Pool: **${formatDonationAmount(giveaway.amount)}**\n` +
             `Hosted by: <@${giveaway.host_discord_id}>\n` +
+            (giveaway.sponsor_discord_id && giveaway.sponsor_discord_id !== giveaway.host_discord_id
+                ? `Sponsored by: <@${giveaway.sponsor_discord_id}>\n`
+                : '') +
             `${result}\n\n` +
             `Entrants: **${entrantCount}**\n\n` +
             (ended
@@ -423,6 +510,7 @@ async function createGiveaway(options, db = sql) {
             guild_id,
             channel_id,
             host_discord_id,
+            sponsor_discord_id,
             amount,
             ends_at
         )
@@ -430,6 +518,7 @@ async function createGiveaway(options, db = sql) {
             ${options.guildId},
             ${options.channelId},
             ${options.hostDiscordId},
+            ${options.sponsorDiscordId || options.hostDiscordId},
             ${options.amount.toString()}::bigint,
             ${endsAt}
         )
@@ -437,6 +526,55 @@ async function createGiveaway(options, db = sql) {
     `;
 
     return rows[0];
+}
+
+async function createSponsoredGiveawayRequest(options, db = sql) {
+    await db`
+        update giveaway_payment_requests
+        set status = 'cancelled', updated_at = now()
+        where guild_id = ${options.guildId}
+            and sponsor_discord_id = ${options.sponsorDiscordId}
+            and status in ('awaiting_acceptance', 'pending_payment')
+    `;
+
+    const rows = await db`
+        insert into giveaway_payment_requests (
+            guild_id,
+            channel_id,
+            host_discord_id,
+            host_minecraft_ign,
+            payment_bot_user,
+            sponsor_discord_id,
+            amount,
+            duration_ms,
+            status
+        )
+        values (
+            ${options.guildId},
+            ${options.channelId},
+            ${options.hostDiscordId},
+            ${options.hostMinecraftIgn},
+            ${options.hostMinecraftIgn},
+            ${options.sponsorDiscordId},
+            ${options.amount.toString()}::bigint,
+            ${options.durationMs.toString()}::bigint,
+            'awaiting_acceptance'
+        )
+        returning *
+    `;
+
+    return rows[0];
+}
+
+async function sendSponsoredGiveawayHostRequest(guild, request) {
+    const host = guild.client.users.cache.get(request.host_discord_id) ||
+        await guild.client.users.fetch(request.host_discord_id).catch(() => null);
+
+    if (!host) {
+        throw new Error('The selected payment host could not be reached on Discord.');
+    }
+
+    return host.send(sponsoredGiveawayHostRequestPayload(request));
 }
 
 async function createGiveawayPaymentRequest(options, db = sql) {
@@ -817,34 +955,38 @@ async function announceGiveawayStarted(guild, giveaway, boardMessage = null, tot
     return announcementChannel.send({
         content:
             `<@&${GIVEAWAY_PING_ROLE_ID}>\n\n` +
-            `<@${giveaway.host_discord_id}> started a **${formatDonationAmount(giveaway.amount)}** giveaway. ` +
+            (giveaway.sponsor_discord_id && giveaway.sponsor_discord_id !== giveaway.host_discord_id
+                ? `<@${giveaway.sponsor_discord_id}> sponsored a **${formatDonationAmount(giveaway.amount)}** giveaway hosted by <@${giveaway.host_discord_id}>. `
+                : `<@${giveaway.host_discord_id}> started a **${formatDonationAmount(giveaway.amount)}** giveaway. `) +
             `Go to <#${GIVEAWAY_CHANNEL_ID}> to join.` +
             totalLine +
             (boardMessage ? `\n${boardMessage.url}` : ''),
         allowedMentions: {
             roles: [GIVEAWAY_PING_ROLE_ID],
-            users: [giveaway.host_discord_id]
-        }
+            users: [giveaway.host_discord_id, giveaway.sponsor_discord_id].filter(Boolean)
+        },
+        components: [dismissRow(giveaway.host_discord_id)]
     });
 }
 
 async function recordGiveawayDonation(guild, giveaway, db = sql) {
+    const creditedPlayerId = giveaway.sponsor_discord_id || giveaway.host_discord_id;
     const rows = await db`
         update players
         set
             donations = donations + ${BigInt(giveaway.amount).toString()}::bigint,
             updated_at = now()
-        where discord_id = ${giveaway.host_discord_id}
+        where discord_id = ${creditedPlayerId}
         returning donations
     `;
     const donationRow = rows[0];
 
     if (!donationRow) {
-        throw new Error(`Giveaway host ${giveaway.host_discord_id} was not found while recording donation credit.`);
+        throw new Error(`Giveaway sponsor ${creditedPlayerId} was not found while recording donation credit.`);
     }
 
     await postGiveawayDonationEvent(guild, {
-        playerId: giveaway.host_discord_id,
+        playerId: creditedPlayerId,
         amount: BigInt(giveaway.amount),
         newTotal: donationRow.donations
     }).catch(error => {
@@ -1004,6 +1146,7 @@ async function startFundedGiveaway(guild, options, db = sql) {
         guildId: options.guildId,
         channelId: options.channelId,
         hostDiscordId: options.hostDiscordId,
+        sponsorDiscordId: options.sponsorDiscordId || options.hostDiscordId,
         amount: options.amount,
         durationMs: options.durationMs
     }, db);
@@ -1264,6 +1407,125 @@ async function processIncomingGiveawayPayment(guild, payment, db = sql) {
     }
 }
 
+function manualGiveawayPayoutDetails(payoutResult) {
+    const commands = [];
+    const unresolved = [];
+
+    for (const payout of payoutResult?.payouts || []) {
+        const amountCents = BigInt(payout.amountCents || 0);
+
+        if (amountCents <= 0n) {
+            continue;
+        }
+
+        const player = payout.player || {};
+        const validEdition = ['java', 'bedrock'].includes(player.minecraft_edition);
+
+        if (!player.minecraft_ign || !validEdition) {
+            const playerLabel = player.discord_id
+                ? `<@${player.discord_id}>`
+                : player.discord_display_name || player.discord_username || 'Unknown player';
+            unresolved.push(
+                `${playerLabel} — ${formatMinecraftPaymentAmountFromCents(amountCents)} ` +
+                '(missing a complete Minecraft account link)'
+            );
+            continue;
+        }
+
+        commands.push(
+            `/pay ${formattedMinecraftIgn(player)} ` +
+            `${formatMinecraftPaymentAmountFromCents(amountCents)}`
+        );
+    }
+
+    return { commands, unresolved };
+}
+
+function chunkPayoutLines(lines, maxCharacters = 1_500) {
+    const chunks = [];
+    let current = [];
+    let currentLength = 0;
+
+    for (const line of lines) {
+        const additionLength = line.length + (current.length > 0 ? 1 : 0);
+
+        if (current.length > 0 && currentLength + additionLength > maxCharacters) {
+            chunks.push(current);
+            current = [];
+            currentLength = 0;
+        }
+
+        current.push(line);
+        currentLength += line.length + (current.length > 1 ? 1 : 0);
+    }
+
+    if (current.length > 0) {
+        chunks.push(current);
+    }
+
+    return chunks;
+}
+
+function manualGiveawayPayoutDmChunks(giveaway, payoutResult, winnerId) {
+    const { commands, unresolved } = manualGiveawayPayoutDetails(payoutResult);
+    const commandChunks = chunkPayoutLines(commands);
+    const messages = [];
+    const header =
+        `# 🎁 Manual Giveaway Payouts\n\n` +
+        `Giveaway: **#${giveaway.id}**\n` +
+        `Winner: <@${winnerId}>\n` +
+        `Amount: **${formatDonationAmount(giveaway.amount)}**\n\n`;
+
+    if (commandChunks.length === 0) {
+        messages.push(
+            `${header}No copy-ready payment commands could be created. ` +
+            `Review the unresolved recipients below before paying anyone.`
+        );
+    } else {
+        commandChunks.forEach((lines, index) => {
+            const intro = index === 0
+                ? `${header}Copy and paste these commands into Minecraft:\n`
+                : `# 🎁 Manual Giveaway Payouts — Continued\n\n`;
+            messages.push(`${intro}\`\`\`text\n${lines.join('\n')}\n\`\`\``);
+        });
+    }
+
+    for (const unresolvedChunk of chunkPayoutLines(unresolved)) {
+        messages.push(
+            `## ⚠️ Manual review required\n` +
+            `The bot could not safely create commands for these recipients:\n\n` +
+            `${unresolvedChunk.join('\n')}`
+        );
+    }
+
+    return messages;
+}
+
+async function sendManualGiveawayPayoutDm(guild, giveaway, payoutResult, winnerId) {
+    const host = guild.client.users.cache.get(giveaway.host_discord_id) ||
+        await guild.client.users.fetch(giveaway.host_discord_id).catch(() => null);
+
+    if (!host) {
+        return false;
+    }
+
+    for (const content of manualGiveawayPayoutDmChunks(
+        giveaway,
+        payoutResult,
+        winnerId
+    )) {
+        await host.send({
+            content,
+            components: [dismissRow(giveaway.host_discord_id)],
+            allowedMentions: {
+                parse: []
+            }
+        });
+    }
+
+    return true;
+}
+
 function payoutAnnouncementChunks(giveaway, payoutResult, winnerId) {
     const payoutLines = payoutResult.payouts.map((payout, index) => {
         return formatPayoutLine(payout, index, {
@@ -1309,6 +1571,7 @@ async function sendPayoutAnnouncement(channel, giveaway, payoutResult, winnerId)
     for (let index = 0; index < chunks.length; index++) {
         const payload = {
             content: chunks[index],
+            components: [dismissRow(giveaway.host_discord_id)],
             allowedMentions: {
                 users: paidUserIds
             }
@@ -1850,7 +2113,243 @@ async function endGiveawayEarly(interaction, db = sql) {
     return true;
 }
 
+async function fetchSponsoredRequest(requestId, db = sql) {
+    const rows = await db`
+        select *
+        from giveaway_payment_requests
+        where id = ${requestId}
+        limit 1
+    `;
+
+    return rows[0] || null;
+}
+
+async function dmGiveawayUser(client, userId, payload) {
+    const user = client.users.cache.get(userId) ||
+        await client.users.fetch(userId).catch(() => null);
+
+    if (!user) {
+        throw new Error(`Could not reach Discord user ${userId}.`);
+    }
+
+    return user.send(payload);
+}
+
+async function dismissGiveawayMessage(interaction) {
+    if (!interaction.customId.startsWith(GIVEAWAY_DISMISS_BUTTON_PREFIX)) {
+        return false;
+    }
+
+    const ownerId = interaction.customId.slice(GIVEAWAY_DISMISS_BUTTON_PREFIX.length);
+
+    if (interaction.user.id !== ownerId && !isDon(interaction.user.id)) {
+        await interaction.reply({
+            content: '❌ Only the recipient or the Don can remove this message.',
+            ephemeral: true
+        });
+        return true;
+    }
+
+    await interaction.deferUpdate();
+    await interaction.message.delete().catch(() => null);
+    return true;
+}
+
+async function acceptSponsoredGiveaway(interaction, db = sql) {
+    if (!interaction.customId.startsWith(GIVEAWAY_HOST_ACCEPT_PREFIX)) {
+        return false;
+    }
+
+    const requestId = interaction.customId.slice(GIVEAWAY_HOST_ACCEPT_PREFIX.length);
+    const current = await fetchSponsoredRequest(requestId, db);
+
+    if (!current || interaction.user.id !== current.host_discord_id) {
+        await interaction.reply({ content: '❌ This hosting request is not for you.', ephemeral: true });
+        return true;
+    }
+
+    const rows = await db`
+        update giveaway_payment_requests
+        set status = 'pending_payment', accepted_at = now(), updated_at = now()
+        where id = ${requestId}
+            and host_discord_id = ${interaction.user.id}
+            and status = 'awaiting_acceptance'
+        returning *
+    `;
+    const request = rows[0];
+
+    if (!request) {
+        await interaction.reply({ content: 'ℹ️ This request was already handled.', ephemeral: true });
+        return true;
+    }
+
+    try {
+        await dmGiveawayUser(
+            interaction.client,
+            request.sponsor_discord_id,
+            sponsoredGiveawayPaymentPayload(request)
+        );
+    } catch (error) {
+        await db`
+            update giveaway_payment_requests
+            set status = 'failed', updated_at = now()
+            where id = ${request.id} and status = 'pending_payment'
+        `;
+        throw error;
+    }
+
+    await interaction.update(sponsoredGiveawayPaymentConfirmationPayload(request));
+    return true;
+}
+
+async function rejectSponsoredGiveaway(interaction, db = sql) {
+    if (!interaction.customId.startsWith(GIVEAWAY_HOST_REJECT_PREFIX)) {
+        return false;
+    }
+
+    const requestId = interaction.customId.slice(GIVEAWAY_HOST_REJECT_PREFIX.length);
+    const rows = await db`
+        update giveaway_payment_requests
+        set status = 'rejected', updated_at = now()
+        where id = ${requestId}
+            and host_discord_id = ${interaction.user.id}
+            and status = 'awaiting_acceptance'
+        returning *
+    `;
+    const request = rows[0];
+
+    if (!request) {
+        await interaction.reply({ content: 'ℹ️ This request was already handled or is not for you.', ephemeral: true });
+        return true;
+    }
+
+    await interaction.update({
+        content: `❌ You declined ${sponsorName(request)}'s giveaway request.`,
+        components: [dismissRow(request.host_discord_id)],
+        allowedMentions: { users: [request.sponsor_discord_id] }
+    });
+    await dmGiveawayUser(interaction.client, request.sponsor_discord_id, {
+        content: `<@${request.host_discord_id}> declined your giveaway request. You can run \`/giveaway\` again and choose an available host.`,
+        components: [dismissRow(request.sponsor_discord_id)],
+        allowedMentions: { users: [request.host_discord_id] }
+    }).catch(() => null);
+    return true;
+}
+
+async function cancelSponsoredGiveaway(interaction, db = sql) {
+    if (!interaction.customId.startsWith(GIVEAWAY_HOST_CANCEL_PREFIX)) {
+        return false;
+    }
+
+    const requestId = interaction.customId.slice(GIVEAWAY_HOST_CANCEL_PREFIX.length);
+    const rows = await db`
+        update giveaway_payment_requests
+        set status = 'cancelled', updated_at = now()
+        where id = ${requestId}
+            and host_discord_id = ${interaction.user.id}
+            and status = 'pending_payment'
+        returning *
+    `;
+    const request = rows[0];
+
+    if (!request) {
+        await interaction.reply({ content: 'ℹ️ This request was already handled or is not for you.', ephemeral: true });
+        return true;
+    }
+
+    await interaction.update({
+        content: `❌ Giveaway cancelled. Do not accept a payment for this request.`,
+        components: [dismissRow(request.host_discord_id)]
+    });
+    await dmGiveawayUser(interaction.client, request.sponsor_discord_id, {
+        content: '❌ The payment host cancelled your giveaway request. Do not send the payment.',
+        components: [dismissRow(request.sponsor_discord_id)]
+    }).catch(() => null);
+    return true;
+}
+
+async function confirmSponsoredGiveawayPayment(interaction, db = sql) {
+    if (!interaction.customId.startsWith(GIVEAWAY_HOST_PAID_PREFIX)) {
+        return false;
+    }
+
+    const requestId = interaction.customId.slice(GIVEAWAY_HOST_PAID_PREFIX.length);
+    const rows = await db`
+        update giveaway_payment_requests
+        set status = 'processing', paid_at = now(), updated_at = now()
+        where id = ${requestId}
+            and host_discord_id = ${interaction.user.id}
+            and status = 'pending_payment'
+        returning *
+    `;
+    const request = rows[0];
+
+    if (!request) {
+        await interaction.reply({ content: 'ℹ️ This request was already handled or is not for you.', ephemeral: true });
+        return true;
+    }
+
+    await interaction.deferUpdate();
+
+    try {
+        const guild = interaction.client.guilds.cache.get(request.guild_id) ||
+            await interaction.client.guilds.fetch(request.guild_id);
+        const { giveaway } = await startFundedGiveaway(guild, {
+            guildId: request.guild_id,
+            channelId: request.channel_id,
+            hostDiscordId: request.host_discord_id,
+            sponsorDiscordId: request.sponsor_discord_id,
+            amount: BigInt(request.amount),
+            durationMs: Number(request.duration_ms)
+        }, db);
+
+        await db`
+            update giveaway_payment_requests
+            set status = 'hosted', giveaway_id = ${giveaway.id}, updated_at = now()
+            where id = ${request.id}
+        `;
+        await interaction.editReply({
+            content: `✅ Payment confirmed. Giveaway **#${giveaway.id}** is now live.`,
+            components: [dismissRow(request.host_discord_id)]
+        });
+        await dmGiveawayUser(interaction.client, request.sponsor_discord_id, {
+            content: `✅ <@${request.host_discord_id}> confirmed your payment. Giveaway **#${giveaway.id}** is now live.`,
+            components: [dismissRow(request.sponsor_discord_id)],
+            allowedMentions: { users: [request.host_discord_id] }
+        }).catch(() => null);
+    } catch (error) {
+        await db`
+            update giveaway_payment_requests
+            set status = 'failed', updated_at = now()
+            where id = ${request.id}
+        `;
+        throw error;
+    }
+
+    return true;
+}
+
 async function handleGiveawayButton(interaction, db = sql) {
+    if (await dismissGiveawayMessage(interaction)) {
+        return true;
+    }
+
+    if (await acceptSponsoredGiveaway(interaction, db)) {
+        return true;
+    }
+
+    if (await rejectSponsoredGiveaway(interaction, db)) {
+        return true;
+    }
+
+    if (await cancelSponsoredGiveaway(interaction, db)) {
+        return true;
+    }
+
+    if (await confirmSponsoredGiveawayPayment(interaction, db)) {
+        return true;
+    }
+
     if (await addGiveawayPingRole(interaction)) {
         return true;
     }
@@ -1956,10 +2455,6 @@ async function finishGiveaway(guild, giveawayId, db = sql) {
     await refreshActiveGiveawaysBoard(guild, db);
 
     if (winnerId) {
-        await enqueueGiveawayPayouts(guild, giveaway, payoutResult, db);
-    }
-
-    if (winnerId) {
         let announced = false;
 
         for (const resultChannel of resultChannels) {
@@ -1988,9 +2483,10 @@ async function finishGiveaway(guild, giveawayId, db = sql) {
             );
         }
 
-        processPendingGiveawayPayoutsForGuild(guild, db).catch(error => {
-            console.error(`Could not settle giveaway payout ${giveaway.id}:`);
+        await sendManualGiveawayPayoutDm(guild, giveaway, payoutResult, winnerId).catch(error => {
+            console.error(`Could not DM manual payout commands for giveaway ${giveaway.id}:`);
             console.error(error);
+            return false;
         });
     } else {
         for (const resultChannel of resultChannels) {
@@ -1999,6 +2495,7 @@ async function finishGiveaway(guild, giveawayId, db = sql) {
                     content:
                         `Hosted by: <@${giveaway.host_discord_id}>\n` +
                         'The giveaway ended with no entrants, so no winner was chosen.',
+                    components: [dismissRow(giveaway.host_discord_id)],
                     allowedMentions: {
                         users: []
                     }
@@ -2197,6 +2694,7 @@ async function cleanupEndedGiveawaysForGuild(guild, db = sql) {
 }
 
 module.exports = {
+    APPROVED_GIVEAWAY_HOSTS,
     GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID,
     GIVEAWAY_BUTTON_PREFIX,
     GIVEAWAY_CHANNEL_ID,
@@ -2209,6 +2707,7 @@ module.exports = {
     createDonationPaymentRequest,
     createGiveaway,
     createGiveawayPaymentRequest,
+    createSponsoredGiveawayRequest,
     endGiveawayEarly,
     enterGiveaway,
     enterAllActiveGiveawaysForUser,
@@ -2221,10 +2720,15 @@ module.exports = {
     handleGiveawayLinkModal,
     leaveGiveaway,
     maxGiveawayDurationForAmount,
+    manualGiveawayPayoutDetails,
+    manualGiveawayPayoutDmChunks,
     parseGiveawayDuration,
     processIncomingGiveawayPayment,
     renderGiveaway,
     renderGiveawayHostControls,
+    sendSponsoredGiveawayHostRequest,
+    sponsoredGiveawayHostRequestPayload,
+    sponsoredGiveawayPaymentPayload,
     sendWeeklyElectionAndGiveawayReminderForGuild,
     sendWeeklyGiveawayPingReminderForGuild,
     startFundedGiveaway,

@@ -8,12 +8,11 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
-    ICEBERG_ROLE_ID,
     ICEBERG_CHANNEL_ID,
     ICEBERG_MEMBERS_CHANNEL_ID
 } = require('../utils/bootstrap.js');
 const {
-    getIcebergRole,
+    syncIcebergMembershipForGuild,
     updateIcebergChannel,
     updateMembersListChannel
 } = require('../utils/iceberg.js');
@@ -21,7 +20,7 @@ const {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('reseticeberg')
-        .setDescription('Remove Iceberg role from all, reset fund and members. Owner only.'),
+        .setDescription('Clear all Iceberg plot claims and resync eligible members. Don only.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -34,59 +33,42 @@ module.exports = {
         }
 
         try {
-            const role = await getIcebergRole(interaction.guild);
+            const clearedPlots = await sql`
+                update iceberg_plots
+                set
+                    owner_discord_id = null,
+                    updated_at = now()
+                where owner_discord_id is not null
+                returning plot_number
+            `;
+            await sql`delete from iceberg_members`;
+            const membership = await syncIcebergMembershipForGuild(interaction.guild, sql);
 
-            if (role) {
-                const members = await interaction.guild.members.fetch();
-                let removed = 0;
+            // Delete existing bot messages in both channels before recreating the boards.
+            for (const channelId of [ICEBERG_CHANNEL_ID, ICEBERG_MEMBERS_CHANNEL_ID]) {
+                const channel = interaction.guild.channels.cache.get(channelId) ||
+                    (await interaction.guild.channels.fetch(channelId).catch(() => null));
+                if (!channel) continue;
 
-                for (const [, member] of members) {
-                    if (member.roles.cache.has(role.id)) {
-                        await member.roles.remove(role, 'Iceberg reset by Don');
-                        removed++;
-                    }
-                }
-
-                await sql`
-                    delete from iceberg_members
-                `;
-                await sql`
-                    delete from iceberg_plots
-                `;
-                await sql`
-                    update iceberg_fund set balance = 0, updated_at = now() where id = 1
-                `;
-
-                // Delete existing bot messages in both channels
-                for (const channelId of [ICEBERG_CHANNEL_ID, ICEBERG_MEMBERS_CHANNEL_ID]) {
-                    const channel = interaction.guild.channels.cache.get(channelId) ||
-                        (await interaction.guild.channels.fetch(channelId).catch(() => null));
-                    if (!channel) continue;
-
-                    const recent = await channel.messages.fetch({ limit: 20 }).catch(() => null);
-                    if (recent) {
-                        for (const [, msg] of recent) {
-                            if (msg.author.id === interaction.client.user.id) {
-                                await msg.delete().catch(() => {});
-                            }
+                const recent = await channel.messages.fetch({ limit: 20 }).catch(() => null);
+                if (recent) {
+                    for (const [, msg] of recent) {
+                        if (msg.author.id === interaction.client.user.id) {
+                            await msg.delete().catch(() => {});
                         }
                     }
                 }
-
-                await updateIcebergChannel(interaction.guild).catch(() => {});
-                await updateMembersListChannel(interaction.guild).catch(() => {});
-
-                await interaction.editReply(
-                    `✅ **Iceberg reset complete.**\n\n` +
-                    `Role removed from **${removed}** members.\n` +
-                    `Builder's Fund reset to **0**.\n` +
-                    `Plots and members cleared.\n` +
-                    `Channels refreshed.\n\n` +
-                    `Run \`/iceberg claims enable\` when ready for new claims.`
-                );
-            } else {
-                await interaction.editReply('❌ Iceberg role not found.');
             }
+
+            await updateIcebergChannel(interaction.guild, sql).catch(() => {});
+            await updateMembersListChannel(interaction.guild, sql).catch(() => {});
+
+            await interaction.editReply(
+                `✅ **Iceberg reset complete.**\n\n` +
+                `Plot claims cleared: **${clearedPlots.length}**\n` +
+                `Eligible Iceberg Penguins restored: **${membership.eligible}**\n` +
+                `Boards refreshed.`
+            );
         } catch (error) {
             logCommandError(interaction, '/reseticeberg', error);
             await interaction.editReply(`❌ **Reset failed.**\n\`\`\`\n${error.message}\n\`\`\``);

@@ -38,6 +38,7 @@ const STAFF_REVIEW_BUTTON_PREFIX = 'staff_app_review';
 const STAFF_REVIEW_MODAL_PREFIX = 'staff_app_review_modal';
 const STAFF_APPLICATION_REQUIRED_ACCEPTS = 3;
 const STAFF_APPLICATION_MIN_REVIEW_MS = 24 * 60 * 60 * 1000;
+const TICKET_CLOSE_COUNTDOWN_SECONDS = 10;
 const STAFF_RANK_ORDER = [
     'Trial Mod',
     'Moderator',
@@ -48,6 +49,18 @@ const closingTicketChannels = new Set();
 const creatingTicketKeys = new Set();
 
 const TICKET_COOLDOWN_DAYS = 7;
+
+function sleep(ms) {
+    return new Promise(resolve => {
+        setTimeout(resolve, ms);
+    });
+}
+
+function ticketCloseCountdownContent(user, secondsRemaining) {
+    const secondsLabel = secondsRemaining === 1 ? 'second' : 'seconds';
+
+    return `🧨 Ticket closed by ${user}. This channel will self-destruct in **${secondsRemaining} ${secondsLabel}**.`;
+}
 
 async function checkTicketCooldown(userId, type) {
     if (type !== 'media' && type !== 'staff') return null;
@@ -1174,15 +1187,46 @@ async function handleTicketClose(interaction) {
     closingTicketChannels.add(channel.id);
 
     await interaction.reply({
-        content: `🧨 Ticket closed by ${interaction.user}. This channel will self-destruct in **10 seconds**.`,
+        content: ticketCloseCountdownContent(interaction.user, TICKET_CLOSE_COUNTDOWN_SECONDS),
         allowedMentions: {
             users: [interaction.user.id],
             parse: []
         }
     });
+    const closeMessage = await interaction.fetchReply().catch(error => {
+        console.error(`Could not fetch ticket close countdown message for ${channel.id}:`);
+        console.error(error);
+        return null;
+    });
 
-    setTimeout(async () => {
+    void (async () => {
         try {
+            for (
+                let secondsRemaining = TICKET_CLOSE_COUNTDOWN_SECONDS - 1;
+                secondsRemaining > 0;
+                secondsRemaining--
+            ) {
+                await sleep(1_000);
+
+                if (!closingTicketChannels.has(channel.id)) {
+                    return;
+                }
+
+                if (closeMessage) {
+                    await closeMessage.edit({
+                        content: ticketCloseCountdownContent(interaction.user, secondsRemaining),
+                        allowedMentions: {
+                            users: [interaction.user.id],
+                            parse: []
+                        }
+                    }).catch(error => {
+                        console.error(`Could not update ticket close countdown for ${channel.id}:`);
+                        console.error(error);
+                    });
+                }
+            }
+
+            await sleep(1_000);
             await channel.delete(`Penguin Mafia ticket closed by ${interaction.user.tag || interaction.user.username}`);
         } catch (error) {
             console.error(`Could not delete closed ticket channel ${channel.id}:`);
@@ -1190,7 +1234,7 @@ async function handleTicketClose(interaction) {
         } finally {
             closingTicketChannels.delete(channel.id);
         }
-    }, 10_000);
+    })();
 }
 
 module.exports = {
