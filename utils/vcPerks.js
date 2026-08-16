@@ -391,8 +391,34 @@ async function syncAllMemberPerks(guild, db) {
     return { checked, granted, removed };
 }
 
+function perksUnlockedBetween(oldLevel, newLevel) {
+    const normalizedOld = Math.max(0, Math.floor(Number(oldLevel) || 0));
+    const normalizedNew = Math.max(0, Math.floor(Number(newLevel) || 0));
+
+    return PERK_DEFINITIONS
+        .filter(definition =>
+            definition.level() > 0 &&
+            normalizedOld < definition.level() &&
+            definition.level() <= normalizedNew
+        )
+        .sort((a, b) => a.level() - b.level());
+}
+
+function unlockedPerksDmContent(levelUp, unlocked) {
+    const lines = unlocked.map(definition => `- **${definition.label}** — ${definition.description}`);
+
+    return (
+        `🎉🐧 **NEW PERK UNLOCKED!** 🐧🎉\n\n` +
+        `You reached **VC Level ${levelUp.newLevel}** and unlocked:\n` +
+        `${lines.join('\n')}\n\n` +
+        `Keep spending time in voice chat to unlock more perks.\n` +
+        `Use \`/vchours\` to see your progress.`
+    );
+}
+
 async function syncLevelUpPerks(guild, levelUps, db) {
     let granted = 0;
+    let notified = 0;
 
     for (const levelUp of levelUps || []) {
         const member = guild.members.cache.get(levelUp.discordId) ||
@@ -404,13 +430,26 @@ async function syncLevelUpPerks(guild, levelUps, db) {
 
         try {
             granted += (await syncMemberPerks(guild, member, db)).granted;
+
+            const unlocked = perksUnlockedBetween(levelUp.oldLevel, levelUp.newLevel);
+
+            if (unlocked.length > 0) {
+                await member.send({
+                    content: unlockedPerksDmContent(levelUp, unlocked),
+                    components: [dismissRow(member.id)]
+                }).catch(error => {
+                    console.error(`Could not DM ${member.user.tag || member.id} about unlocked perks:`);
+                    console.error(error);
+                });
+                notified += 1;
+            }
         } catch (error) {
             console.error(`Could not sync VC perks for ${levelUp.discordId}:`);
             console.error(error);
         }
     }
 
-    return granted;
+    return { granted, notified };
 }
 
 const requestToSpeakCooldowns = new Map();
@@ -519,8 +558,10 @@ module.exports = {
     perkLevels,
     perksAtLevel,
     perksForReply,
+    perksUnlockedBetween,
     perkSummaryLines,
     syncAllMemberPerks,
     syncLevelUpPerks,
-    syncMemberPerks
+    syncMemberPerks,
+    unlockedPerksDmContent
 };

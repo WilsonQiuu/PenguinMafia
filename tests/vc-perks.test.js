@@ -25,7 +25,10 @@ const {
     perkLevels,
     perksAtLevel,
     perksForReply,
-    perkSummaryLines
+    perksUnlockedBetween,
+    perkSummaryLines,
+    syncLevelUpPerks,
+    unlockedPerksDmContent
 } = require('../utils/vcPerks.js');
 
 test('uses the configured perk unlock levels (defaults 3/5/10, slow mode disabled)', () => {
@@ -114,7 +117,8 @@ function fakeGuildWithStage() {
 
     return {
         channels: { cache: channels },
-        members: { cache: new Collection() }
+        members: { cache: new Collection() },
+        roles: { cache: new Collection() }
     };
 }
 
@@ -223,4 +227,71 @@ test('wires request-to-speak declines into the voice state update path', () => {
 
     assert.match(indexSource, /await handleStageRequestToSpeak\(guild, newState, sql\)/);
     assert.match(perkSource, /setRequestToSpeak\(false\)/);
+});
+
+test('reports only the perks crossed by a level-up', () => {
+    assert.deepEqual(perksUnlockedBetween(0, 2).map(perk => perk.key), []);
+    assert.deepEqual(perksUnlockedBetween(2, 3).map(perk => perk.key), ['activities']);
+    assert.deepEqual(perksUnlockedBetween(2, 5).map(perk => perk.key), ['activities', 'screenShare']);
+    assert.deepEqual(perksUnlockedBetween(4, 10).map(perk => perk.key), ['screenShare', 'stage']);
+    assert.deepEqual(perksUnlockedBetween(10, 15).map(perk => perk.key), []);
+});
+
+test('builds a perk unlock DM naming the unlocked perks', () => {
+    const content = unlockedPerksDmContent(
+        { newLevel: 5 },
+        perksUnlockedBetween(2, 5)
+    );
+
+    assert.match(content, /NEW PERK UNLOCKED/);
+    assert.match(content, /reached \*\*VC Level 5\*\*/);
+    assert.match(content, /\*\*Activities\*\*/);
+    assert.match(content, /\*\*Screen Share\*\*/);
+});
+
+test('DMs the member about perks unlocked on level-up', async () => {
+    const memberId = '900000000000000005';
+    const member = fakeMember(memberId, ['Penguin Soldier']);
+    let dmPayload = null;
+    member.send = async payload => {
+        dmPayload = payload;
+    };
+
+    const guild = fakeGuildWithStage();
+    guild.members.cache.set(memberId, member);
+
+    const result = await syncLevelUpPerks(
+        guild,
+        [{ discordId: memberId, oldLevel: 2, newLevel: 5 }],
+        fakeDbWithVoiceSeconds(0)
+    );
+
+    assert.equal(result.notified, 1);
+    assert.ok(dmPayload);
+    assert.match(dmPayload.content, /NEW PERK UNLOCKED/);
+    assert.match(dmPayload.content, /\*\*Activities\*\*/);
+    assert.match(dmPayload.content, /\*\*Screen Share\*\*/);
+    assert.equal(dmPayload.components.length, 1);
+    assert.equal(dmPayload.components[0].components[0].data.custom_id, `dismiss:${memberId}`);
+});
+
+test('does not DM when a level-up crosses no perk threshold', async () => {
+    const memberId = '900000000000000006';
+    const member = fakeMember(memberId, ['Penguin Soldier']);
+    let dmSent = false;
+    member.send = async () => {
+        dmSent = true;
+    };
+
+    const guild = fakeGuildWithStage();
+    guild.members.cache.set(memberId, member);
+
+    const result = await syncLevelUpPerks(
+        guild,
+        [{ discordId: memberId, oldLevel: 5, newLevel: 6 }],
+        fakeDbWithVoiceSeconds(0)
+    );
+
+    assert.equal(result.notified, 0);
+    assert.equal(dmSent, false);
 });
