@@ -1116,6 +1116,7 @@ async function sendWeeklyElectionAndGiveawayReminderForGuild(guild, db = sql) {
 
         await member.send({
             content: message,
+            components: [dismissRow(member.id)],
             allowedMentions: {
                 parse: []
             }

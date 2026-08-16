@@ -11,6 +11,9 @@ const {
 const {
     isDon
 } = require('./staff.js');
+const {
+    dismissRow
+} = require('./dismissible.js');
 
 const TEAM_CREATE_APPROVE_PREFIX = 'team_create_approve:';
 const TEAM_CREATE_REJECT_PREFIX = 'team_create_reject:';
@@ -380,7 +383,7 @@ async function requestTeamCreation(interaction, options, db = sql) {
                 `Color: **${formatTeamColor(request.color)}**\n` +
                 `Rank: **${owner.rank_name || 'Unknown'}**${replacementLine}\n\n` +
                 `Approve this to create the Discord team role, keep the team ping, and move their eligible tree into the team.`,
-            components: [approvalRow(request.id)]
+            components: [approvalRow(request.id), dismissRow(donDiscordId)]
         });
     } catch (error) {
         await markTeamRequestFailed(db, request.id, donDiscordId, `Could not DM Don: ${error.message}`);

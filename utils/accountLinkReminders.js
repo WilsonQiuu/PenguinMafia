@@ -13,6 +13,9 @@ const sql = require('../db.js');
 const {
     setMemberNicknameToIgn
 } = require('./nicknames.js');
+const {
+    dismissRow
+} = require('./dismissible.js');
 
 const ACCOUNT_LINK_BUTTON_PREFIX = 'account_link_open:';
 const ACCOUNT_LINK_MODAL_PREFIX = 'account_link_submit:';
@@ -86,7 +89,8 @@ function reminderPayload(player) {
                     .setLabel('Link Account')
                     .setEmoji('🔗')
                     .setStyle(ButtonStyle.Primary)
-            )
+            ),
+            dismissRow(player.discord_id)
         ]
     };
 }

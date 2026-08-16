@@ -14,6 +14,9 @@ const {
     GIVEAWAY_WINNER_CHANNEL_ID
 } = require('./giveaways.js');
 const {
+    dismissRow
+} = require('./dismissible.js');
+const {
     calculatePayout,
     formatPayoutLine,
     playerName
@@ -789,6 +792,7 @@ async function sendHourlyRewardPayoutNotification(guild, job, db = sql) {
     if (user) {
         await user.send({
             content: message,
+            components: [dismissRow(record.recipient_discord_id)],
             allowedMentions: {
                 parse: []
             }

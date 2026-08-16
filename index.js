@@ -123,6 +123,15 @@ const {
     voiceXpModLoggingEnabled
 } = require('./utils/voiceLeveling.js');
 const {
+    ensureVcPerkRoles,
+    handleStageRequestToSpeak,
+    syncAllMemberPerks,
+    syncLevelUpPerks
+} = require('./utils/vcPerks.js');
+const {
+    handleDismissInteraction
+} = require('./utils/dismissible.js');
+const {
     emitMinecraftEvent,
     freezeMinecraftBotConnections,
     loadMinecraftBotConnectionFreezeState,
@@ -473,6 +482,16 @@ async function setupGuildOnStartup(guild) {
         console.error(`Could not update members list channel for ${guild.name}:`);
         console.error(error);
     });
+
+    await ensureVcPerkRoles(guild).catch(error => {
+        console.error(`Could not set up VC perk roles for ${guild.name}:`);
+        console.error(error);
+    });
+    await syncAllMemberPerks(guild, sql).catch(error => {
+        console.error(`Could not sync VC perks for ${guild.name}:`);
+        console.error(error);
+    });
+    logStartupStep('VC perk roles ready');
 
     await ensureMinecraftBotLogChannel(guild);
     logStartupStep('private Minecraft bot log channel ready');
@@ -2468,6 +2487,10 @@ client.once(Events.ClientReady, async () => {
                 }
 
                 await postVoiceLevelUps(guild, result.levelUps);
+                await syncLevelUpPerks(guild, result.levelUps, sql).catch(error => {
+                    console.error(`VC perk sync failed for ${guild.name}:`);
+                    console.error(error);
+                });
 
                 if (!result.skippedDuplicate) {
                     await updateVoiceLevelLeaderboardForGuild(guild, sql);
@@ -2653,6 +2676,9 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
 client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isButton()) {
         try {
+            const dismissHandled = await handleDismissInteraction(interaction);
+            if (dismissHandled) return;
+
             const ticketHandled = await handleTicketButton(interaction);
             if (ticketHandled) return;
 
@@ -3136,8 +3162,16 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
     try {
         const trackingResult = await trackVoiceStateUpdate(oldState, newState, sql, eventTime);
 
+        const guild = newState.guild || oldState.guild;
+
+        if (guild) {
+            await handleStageRequestToSpeak(guild, newState, sql).catch(error => {
+                console.error(`Could not handle request to speak for ${guild.name}:`);
+                console.error(error);
+            });
+        }
+
         if (trackingResult.changed) {
-            const guild = newState.guild || oldState.guild;
             const result = await creditVoiceTimeForGuild(guild, sql, eventTime);
 
             if (
@@ -3149,6 +3183,10 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
             }
 
             await postVoiceLevelUps(guild, result.levelUps);
+            await syncLevelUpPerks(guild, result.levelUps, sql).catch(error => {
+                console.error(`VC perk sync failed for ${guild.name}:`);
+                console.error(error);
+            });
             await updateVoiceLevelLeaderboardForGuild(guild, sql);
 
             if (await voiceXpModLoggingEnabled(guild.id, sql)) {

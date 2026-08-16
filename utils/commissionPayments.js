@@ -19,6 +19,9 @@ const {
     payPlayer,
     startMinecraftBot
 } = require('../minecraft-bot.js');
+const {
+    dismissRow
+} = require('./dismissible.js');
 
 const DEFAULT_PAYOUT_CONNECT_TIMEOUT_MS = 120_000;
 const DEFAULT_BUSY_PAYMENT_RETRY_TIMEOUT_MS = 120_000;
@@ -348,6 +351,7 @@ async function sendPayoutNotification(guild, discordId, message) {
 
     await user.send({
         content: message,
+        components: [dismissRow(discordId)],
         allowedMentions: {
             parse: []
         }

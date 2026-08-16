@@ -20,6 +20,9 @@ const {
 const {
     setMemberNicknameToIgn
 } = require('./nicknames.js');
+const {
+    dismissRow
+} = require('./dismissible.js');
 
 const BUTTON_PREFIX = 'welcome';
 const MODAL_PREFIX = 'welcome_ign_submit';
@@ -556,7 +559,8 @@ async function enforceWelcomeMessageGate(message) {
     await message.member.send({
         content:
             `🐧 Your server message was removed because you have not finished onboarding yet.\n\n` +
-            `Finish the welcome buttons in this DM to receive the **${DEFAULT_RANK_NAME}** role and unlock server chat.`
+            `Finish the welcome buttons in this DM to receive the **${DEFAULT_RANK_NAME}** role and unlock server chat.`,
+        components: [dismissRow(message.member.id)]
     }).catch(error => {
         console.log(`Could not DM onboarding gate notice to ${message.member.user.tag}: ${error.message}`);
     });

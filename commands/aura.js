@@ -25,6 +25,9 @@ const {
 const {
     isDon
 } = require('../utils/staff.js');
+const {
+    dismissRow
+} = require('../utils/dismissible.js');
 
 const AURA_REWARD_AMOUNT_CENTS = parseDonationAmount('1m') * 100n;
 
@@ -62,6 +65,7 @@ async function dmAuraCommissionCredit(guild, player, newBalanceCents) {
             `Reward added to unpaid commissions: **${formatCents(AURA_REWARD_AMOUNT_CENTS)}**\n` +
             `New unpaid commission balance: **${formatCents(newBalanceCents)}**\n\n` +
             `To get future Aura rewards paid directly in Minecraft, use \`/penguinlink\` in the server and set your IGN + Java/Bedrock edition.`,
+        components: [dismissRow(player.discord_id)],
         allowedMentions: {
             parse: []
         }

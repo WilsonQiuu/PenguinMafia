@@ -12,6 +12,9 @@ const {
     formatVoiceTime,
     voiceProgress
 } = require('../utils/voiceLeveling.js');
+const {
+    perksForReply
+} = require('../utils/vcPerks.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -61,6 +64,8 @@ module.exports = {
                 `Level progress: **${progress.earnedThisLevel}/${progress.neededThisLevel} VC XP**\n` +
                 `Next level in: **${progress.xpToNextLevel} VC XP** ` +
                 `(**${formatVoiceTime(progress.xpToNextLevel * VOICE_CREDIT_SECONDS)}**)\n\n` +
+                `🎁 **VC PERKS**\n` +
+                `${perksForReply(progress.level)}\n\n` +
                 `VC time is tracked to the second from Discord join, leave, move, and AFK events.`
             );
         } catch (error) {

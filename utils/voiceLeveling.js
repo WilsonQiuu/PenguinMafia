@@ -8,6 +8,9 @@ const {
 const {
     postModLog
 } = require('./modlogs.js');
+const {
+    perkSummaryLines
+} = require('./vcPerks.js');
 
 const VOICE_CREDIT_MINUTES = 10;
 const VOICE_CREDIT_SECONDS = VOICE_CREDIT_MINUTES * 60;
@@ -128,6 +131,7 @@ function voiceLevelInfoPayload() {
             `- Levels 17–31: **2.5L² − 40.5L + 360**\n` +
             `- Levels 32+: **4.5L² − 162.5L + 2220**\n\n` +
             `Every **600 tracked seconds** earns **1 VC XP**. Level 10 takes **26h 40m**, level 20 takes **91h 40m**, and level 30 takes **232h 30m**.\n\n` +
+            `${perkSummaryLines().join('\n')}\n\n` +
             `Use \`/vchours\` to see your tracked call time, VC level, and progress to the next level.`
     };
 }
