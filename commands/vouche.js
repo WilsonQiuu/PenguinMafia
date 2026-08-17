@@ -8,21 +8,21 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
-    TRUSTED_PENGUIN_ROLE_ID,
+    ICEBERG_PENGUIN_ROLE_ID,
     confirmAction,
     ensureActorInDatabase,
     getTrustProfile,
     logTrustCommand,
     playerName,
     requireVouchAccess,
-    syncTrustedPenguinRole,
-    trustedRoleLine,
+    syncIcebergPenguinRole,
+    icebergRoleLine,
     trustSummary,
-    willBeTrustedAfterVouch
+    willBeIcebergAfterVouch
 } = require('../utils/trust.js');
 
 function vouchKind(access) {
-    return access.type === 'admin' ? 'Admin vouch' : 'Trusted Penguin vouch';
+    return access.type === 'admin' ? 'Admin vouch' : 'Iceberg Penguin vouch';
 }
 
 function publicVouchKind(access) {
@@ -34,15 +34,15 @@ async function sendVouchNotification(interaction, targetUser, access, result, ro
         return;
     }
 
-    const trustedLine = roleResult?.status === 'added'
-        ? `\n🎖️ ${targetUser} also received <@&${TRUSTED_PENGUIN_ROLE_ID}>.`
+    const icebergLine = roleResult?.status === 'added'
+        ? `\n🎖️ ${targetUser} also received <@&${ICEBERG_PENGUIN_ROLE_ID}>.`
         : '';
 
     await interaction.channel.send({
         content:
             `📣 ${targetUser}, ${interaction.user} gave you an **${publicVouchKind(access)}**.\n` +
             `Admin vouches: **${result.player.admin_vouches}**\n` +
-            `Total vouches: **${result.player.vouches}**${trustedLine}`,
+            `Total vouches: **${result.player.vouches}**${icebergLine}`,
         allowedMentions: {
             users: [targetUser.id, interaction.user.id],
             parse: []
@@ -56,7 +56,7 @@ async function sendVouchNotification(interaction, targetUser, access, result, ro
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('vouche')
-        .setDescription('Give a player a vouch. Trusted Penguins give regular vouches; Admins give Admin vouches.')
+        .setDescription('Give a player a vouch. Iceberg Penguins give regular vouches; Admins give Admin vouches.')
         .addUserOption(option =>
             option
                 .setName('player')
@@ -118,6 +118,10 @@ module.exports = {
                 return;
             }
 
+            const deltas = access.type === 'admin'
+                ? { admin: 1, total: 1 }
+                : { admin: 0, total: 1 };
+
             const firstConfirmation = await confirmAction(interaction, {
                 customIdPrefix: 'vouche',
                 confirmLabel: `Confirm ${vouchKind(access)}`,
@@ -127,12 +131,10 @@ module.exports = {
                     `${trustSummary(target)}\n\n` +
                     (
                         access.type === 'admin'
-                            ? 'This will add **1 Admin vouch**. Admin vouches count toward Trusted Penguin.'
-                            : 'This will add **1 regular vouch**. Regular vouches are tracked, but do not count toward Trusted Penguin.'
+                            ? 'This will add **1 Admin vouch**. Iceberg Penguin needs **2 Admin vouches** and **3 total vouches**.'
+                            : 'This will add **1 regular vouch**. Regular vouches from Iceberg Penguins count toward the **3 total vouches** needed for Iceberg Penguin.'
                     ),
-                confirmedContent: access.type === 'admin'
-                    ? '⏳ Checking whether this Admin vouch grants Trusted Penguin...'
-                    : '⏳ Recording regular vouch...',
+                confirmedContent: '⏳ Recording vouch...',
                 cancelContent: '❌ Vouch cancelled.',
                 expiredContent: '⏰ Vouch confirmation expired.'
             });
@@ -141,23 +143,24 @@ module.exports = {
                 return;
             }
 
-            if (access.type === 'admin' && willBeTrustedAfterVouch(target)) {
-                const trustedConfirmation = await confirmAction(interaction, {
-                    customIdPrefix: 'vouche_trusted',
-                    confirmLabel: 'Grant Trusted Penguin',
+            if (willBeIcebergAfterVouch(target, deltas)) {
+                const icebergConfirmation = await confirmAction(interaction, {
+                    customIdPrefix: 'vouche_iceberg',
+                    confirmLabel: 'Grant Iceberg Penguin',
                     danger: true,
                     content:
-                        `⚠️ **This Admin vouch will grant Trusted Penguin.**\n\n` +
+                        `⚠️ **This vouch will grant Iceberg Penguin.**\n\n` +
                         `Player: **${playerName(target, targetUser.username)}** ${targetUser}\n` +
                         `Current Admin vouches: **${target.admin_vouches}**\n` +
-                        `After this vouch: **${Number(target.admin_vouches) + 1}**\n\n` +
-                        `Are you sure you want to give them <@&${TRUSTED_PENGUIN_ROLE_ID}>?`,
-                    confirmedContent: '⏳ Recording Admin vouch and updating Trusted Penguin...',
-                    cancelContent: '❌ Vouch cancelled before Trusted Penguin was granted.',
-                    expiredContent: '⏰ Trusted Penguin confirmation expired. No vouch was recorded.'
+                        `Current Total vouches: **${target.vouches}**\n` +
+                        `After this vouch: **${Number(target.admin_vouches) + deltas.admin}** Admin, **${Number(target.vouches) + deltas.total}** Total\n\n` +
+                        `Are you sure you want to give them <@&${ICEBERG_PENGUIN_ROLE_ID}>?`,
+                    confirmedContent: '⏳ Recording vouch and updating Iceberg Penguin...',
+                    cancelContent: '❌ Vouch cancelled before Iceberg Penguin was granted.',
+                    expiredContent: '⏰ Iceberg Penguin confirmation expired. No vouch was recorded.'
                 });
 
-                if (!trustedConfirmation.confirmed) {
+                if (!icebergConfirmation.confirmed) {
                     return;
                 }
             }
@@ -249,19 +252,19 @@ module.exports = {
                 };
             });
 
-            const roleResult = result.added && access.type === 'admin'
-                ? await syncTrustedPenguinRole(
+            const roleResult = result.added
+                ? await syncIcebergPenguinRole(
                     interaction.guild,
                     result.player,
-                    'Penguin Mafia Admin vouch update'
+                    'Penguin Mafia vouch update'
                 ).catch(error => ({
                     status: 'failed',
                     error
                 }))
                 : null;
             const roleLine = roleResult?.status === 'failed'
-                ? `\n⚠️ Admin vouch was recorded, but I could not update Trusted Penguin: \`${roleResult.error.message}\``
-                : trustedRoleLine(roleResult);
+                ? `\n⚠️ Vouch was recorded, but I could not update Iceberg Penguin: \`${roleResult.error.message}\``
+                : icebergRoleLine(roleResult);
 
             if (!result.added) {
                 await interaction.editReply(
@@ -278,7 +281,7 @@ module.exports = {
                 },
                 {
                     name: 'Actor Trust Type',
-                    value: access.type === 'admin' ? access.staffRankName : 'Trusted Penguin'
+                    value: access.type === 'admin' ? access.staffRankName : 'Iceberg Penguin'
                 },
                 {
                     name: 'Admin Vouches',
@@ -289,7 +292,7 @@ module.exports = {
                     value: String(result.player.vouches)
                 },
                 {
-                    name: 'Trusted Penguin Role',
+                    name: 'Iceberg Penguin Role',
                     value: roleResult?.status || 'Not checked'
                 }
             ]);

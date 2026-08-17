@@ -19,7 +19,7 @@ const {
 } = require('../utils/staff.js');
 const {
     removeAdminVouchesByAdmin,
-    syncTrustedPenguinRole
+    syncIcebergPenguinRole
 } = require('../utils/trust.js');
 
 const STAFF_RANK_NAMES = STAFF_RANKS.map(rank => rank.name);
@@ -236,13 +236,13 @@ module.exports = {
                 removedAdminVouchRows = await removeAdminVouchesByAdmin(sql, playerUser.id);
 
                 for (const trustProfile of removedAdminVouchRows) {
-                    await syncTrustedPenguinRole(
+                    await syncIcebergPenguinRole(
                         interaction.guild,
                         trustProfile,
                         'Penguin Mafia Admin demoted; Admin vouches removed'
                     ).catch(error => {
                         trustRoleSyncFailures += 1;
-                        console.error('Trusted Penguin role sync failed after Admin demotion vouch removal:');
+                        console.error('Iceberg Penguin role sync failed after Admin demotion vouch removal:');
                         console.error(error);
                     });
                 }
@@ -261,7 +261,7 @@ module.exports = {
                 (player.staff_rank_name === 'Admin'
                     ? `\nAdmin vouches removed: **${removedAdminVouches}**` +
                     (trustRoleSyncFailures > 0
-                        ? `\nTrusted Penguin role sync failures: **${trustRoleSyncFailures}**`
+                        ? `\nIceberg Penguin role sync failures: **${trustRoleSyncFailures}**`
                         : '')
                     : '')
             );

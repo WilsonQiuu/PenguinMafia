@@ -18,23 +18,23 @@ const {
     isDon
 } = require('../utils/staff.js');
 const {
-    TRUSTED_PENGUIN_ROLE_ID,
+    ICEBERG_PENGUIN_ROLE_ID,
     confirmAction
 } = require('../utils/trust.js');
 
-async function fetchTrustedRole(guild) {
-    return guild.roles.cache.get(TRUSTED_PENGUIN_ROLE_ID) ||
-        await guild.roles.fetch(TRUSTED_PENGUIN_ROLE_ID).catch(() => null);
+async function fetchIcebergRole(guild) {
+    return guild.roles.cache.get(ICEBERG_PENGUIN_ROLE_ID) ||
+        await guild.roles.fetch(ICEBERG_PENGUIN_ROLE_ID).catch(() => null);
 }
 
-function isAlwaysTrustedAdmin(member) {
+function isAlwaysIcebergAdmin(member) {
     const adminRoleId = STAFF_ROLE_IDS.get('Admin');
 
     return isDon(member.id) ||
         Boolean(adminRoleId && member.roles.cache.has(adminRoleId));
 }
 
-async function syncTrustedRolesAfterReset(guild, trustedRole) {
+async function syncIcebergRolesAfterReset(guild, icebergRole) {
     const members = await guild.members.fetch();
     const result = {
         checked: 0,
@@ -48,8 +48,8 @@ async function syncTrustedRolesAfterReset(guild, trustedRole) {
         result.checked++;
 
         try {
-            const shouldAlwaysHaveRole = isAlwaysTrustedAdmin(member);
-            const hasRole = member.roles.cache.has(trustedRole.id);
+            const shouldAlwaysHaveRole = isAlwaysIcebergAdmin(member);
+            const hasRole = member.roles.cache.has(icebergRole.id);
 
             if (shouldAlwaysHaveRole) {
                 if (hasRole) {
@@ -57,18 +57,18 @@ async function syncTrustedRolesAfterReset(guild, trustedRole) {
                     continue;
                 }
 
-                await member.roles.add(trustedRole, 'Penguin Mafia trusted reset: Admins are always Trusted Penguins');
+                await member.roles.add(icebergRole, 'Penguin Mafia iceberg reset: Admins are always Iceberg Penguins');
                 result.addedAdmins++;
                 continue;
             }
 
             if (hasRole) {
-                await member.roles.remove(trustedRole, 'Penguin Mafia trusted reset cleared vouches');
+                await member.roles.remove(icebergRole, 'Penguin Mafia iceberg reset cleared vouches');
                 result.removed++;
             }
         } catch (error) {
             result.failed++;
-            console.error(`Could not sync Trusted Penguin role for ${member.user?.tag || member.id}:`);
+            console.error(`Could not sync Iceberg Penguin role for ${member.user?.tag || member.id}:`);
             console.error(error);
         }
     }
@@ -78,8 +78,8 @@ async function syncTrustedRolesAfterReset(guild, trustedRole) {
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('resettrustedpenguins')
-        .setDescription('Reset all vouches and Trusted Penguin roles. Vetos stay. Owner only.'),
+        .setName('reseticebergpenguins')
+        .setDescription('Reset all vouches and Iceberg Penguin roles. Vetos stay. Owner only.'),
 
     async execute(interaction) {
         await interaction.deferReply({
@@ -92,34 +92,34 @@ module.exports = {
         }
 
         if (!isDon(interaction.user.id)) {
-            await interaction.editReply('❌ Only the owner can use `/resettrustedpenguins`.');
+            await interaction.editReply('❌ Only the owner can use `/reseticebergpenguins`.');
             return;
         }
 
         try {
-            const trustedRole = await fetchTrustedRole(interaction.guild);
+            const icebergRole = await fetchIcebergRole(interaction.guild);
 
-            if (!trustedRole) {
-                await interaction.editReply(`❌ Trusted Penguin role ID \`${TRUSTED_PENGUIN_ROLE_ID}\` was not found.`);
+            if (!icebergRole) {
+                await interaction.editReply(`❌ Iceberg Penguin role ID \`${ICEBERG_PENGUIN_ROLE_ID}\` was not found.`);
                 return;
             }
 
             const confirmation = await confirmAction(interaction, {
-                customIdPrefix: 'resettrustedpenguins',
-                confirmLabel: 'Reset Trusted Penguins',
+                customIdPrefix: 'reseticebergpenguins',
+                confirmLabel: 'Reset Iceberg Penguins',
                 danger: true,
                 content:
-                    `⚠️ **Reset Trusted Penguins?**\n\n` +
+                    `⚠️ **Reset Iceberg Penguins?**\n\n` +
                     `This will:\n` +
                     `• Delete **all regular vouches**\n` +
                     `• Delete **all Admin vouches**\n` +
                     `• Set every player's vouch counters to **0**\n` +
-                    `• Remove <@&${TRUSTED_PENGUIN_ROLE_ID}> from everyone except Staff Admins and the Don\n` +
-                    `• Add/keep <@&${TRUSTED_PENGUIN_ROLE_ID}> for Staff Admins and the Don\n\n` +
+                    `• Remove <@&${ICEBERG_PENGUIN_ROLE_ID}> from everyone except Staff Admins and the Don\n` +
+                    `• Add/keep <@&${ICEBERG_PENGUIN_ROLE_ID}> for Staff Admins and the Don\n\n` +
                     `This will **not** delete or reset any vetoes.`,
-                confirmedContent: '⏳ Resetting vouches and syncing Trusted Penguin roles...',
-                cancelContent: '❌ Trusted Penguin reset cancelled.',
-                expiredContent: '⏰ Trusted Penguin reset confirmation expired.'
+                confirmedContent: '⏳ Resetting vouches and syncing Iceberg Penguin roles...',
+                cancelContent: '❌ Iceberg Penguin reset cancelled.',
+                expiredContent: '⏰ Iceberg Penguin reset confirmation expired.'
             });
 
             if (!confirmation.confirmed) {
@@ -155,12 +155,12 @@ module.exports = {
                 admin_vouches_deleted: 0,
                 players_reset: 0
             };
-            const roleSync = await syncTrustedRolesAfterReset(interaction.guild, trustedRole);
+            const roleSync = await syncIcebergRolesAfterReset(interaction.guild, icebergRole);
 
-            await postModLog(interaction.guild, 'Trusted Penguins Reset', [
+            await postModLog(interaction.guild, 'Iceberg Penguins Reset', [
                 {
                     name: 'Command',
-                    value: '/resettrustedpenguins'
+                    value: '/reseticebergpenguins'
                 },
                 {
                     name: 'Actor',
@@ -179,7 +179,7 @@ module.exports = {
                     value: String(reset.players_reset)
                 },
                 {
-                    name: 'Trusted Role Removed',
+                    name: 'Iceberg Role Removed',
                     value: String(roleSync.removed)
                 },
                 {
@@ -195,25 +195,25 @@ module.exports = {
                     value: String(roleSync.failed)
                 }
             ]).catch(error => {
-                console.error('Could not log trusted reset:');
+                console.error('Could not log iceberg reset:');
                 console.error(error);
             });
 
             await interaction.editReply(
-                `✅ **Trusted Penguins reset.**\n\n` +
+                `✅ **Iceberg Penguins reset.**\n\n` +
                 `Regular vouches deleted: **${reset.regular_vouches_deleted}**\n` +
                 `Admin vouches deleted: **${reset.admin_vouches_deleted}**\n` +
                 `Players with vouch counters reset: **${reset.players_reset}**\n` +
-                `Trusted Penguin roles removed from non-admins: **${roleSync.removed}**\n` +
-                `Admins/Don given Trusted Penguin: **${roleSync.addedAdmins}**\n` +
-                `Admins/Don already trusted: **${roleSync.keptAdmins}**\n` +
+                `Iceberg Penguin roles removed from non-admins: **${roleSync.removed}**\n` +
+                `Admins/Don given Iceberg Penguin: **${roleSync.addedAdmins}**\n` +
+                `Admins/Don already Iceberg Penguins: **${roleSync.keptAdmins}**\n` +
                 `Role sync failures: **${roleSync.failed}**\n\n` +
                 `Vetos were **not** reset.`
             );
         } catch (error) {
-            logCommandError(interaction, '/resettrustedpenguins', error);
+            logCommandError(interaction, '/reseticebergpenguins', error);
             await interaction.editReply(
-                `❌ **Trusted Penguin reset failed.**\n\n` +
+                `❌ **Iceberg Penguin reset failed.**\n\n` +
                 `Error:\n\`\`\`\n${error.message}\n\`\`\``
             );
         }

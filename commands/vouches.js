@@ -8,11 +8,18 @@ const {
     logCommandError
 } = require('../utils/logging.js');
 const {
-    TRUSTED_ADMIN_VOUCHES_REQUIRED,
+    ICEBERG_ADMIN_VOUCHES_REQUIRED,
+    ICEBERG_TOTAL_VOUCHES_REQUIRED,
     getTrustProfile,
+    isIcebergEligible,
     playerName,
     trustSummary
 } = require('../utils/trust.js');
+const {
+    getStaffProfile,
+    isDon,
+    syncInvokerStaffRank
+} = require('../utils/staff.js');
 
 function receiptName(row) {
     return row.discord_display_name ||
@@ -62,6 +69,14 @@ module.exports = {
                 return;
             }
 
+            // Veto sources are staff-only. Anyone else sees the count but
+            // never who vetoed.
+            await syncInvokerStaffRank(sql, interaction.member);
+            const invokerStaff = await getStaffProfile(sql, interaction.user.id);
+            const isAdminViewer =
+                isDon(interaction.user.id) ||
+                invokerStaff?.staff_rank_name === 'Admin';
+
             const [regularVouchRows, adminVouchRows, vetoRows] = await Promise.all([
                 sql`
                     select
@@ -101,25 +116,50 @@ module.exports = {
                 `
             ]);
 
-            const trustedStatus = target.staff_rank_name === 'Admin'
-                ? 'Staff Admin — always Trusted Penguin'
-                : Number(target.admin_vouches || 0) >= TRUSTED_ADMIN_VOUCHES_REQUIRED &&
-                    Number(target.admin_vetoes || 0) === 0
-                    ? 'Eligible / should have Trusted Penguin'
-                    : Number(target.admin_vetoes || 0) > 0
-                        ? 'Blocked by active Admin veto'
-                        : `Needs ${TRUSTED_ADMIN_VOUCHES_REQUIRED - Number(target.admin_vouches || 0)} more Admin vouch${TRUSTED_ADMIN_VOUCHES_REQUIRED - Number(target.admin_vouches || 0) === 1 ? '' : 'es'}`;
+            const adminVouches = Number(target.admin_vouches || 0);
+            const totalVouches = Number(target.vouches || 0);
+            const adminVetoes = Number(target.admin_vetoes || 0);
+
+            let icebergStatus;
+
+            if (target.staff_rank_name === 'Admin') {
+                icebergStatus = 'Staff Admin — always Iceberg Penguin';
+            } else if (adminVetoes > 0) {
+                icebergStatus = 'Blocked by active Admin veto';
+            } else if (isIcebergEligible(target)) {
+                icebergStatus = 'Eligible / should have Iceberg Penguin';
+            } else {
+                const needsAdmin = Math.max(ICEBERG_ADMIN_VOUCHES_REQUIRED - adminVouches, 0);
+                const needsTotal = Math.max(ICEBERG_TOTAL_VOUCHES_REQUIRED - totalVouches, 0);
+                const parts = [];
+
+                if (needsAdmin > 0) {
+                    parts.push(`${needsAdmin} more Admin vouch${needsAdmin === 1 ? '' : 'es'}`);
+                }
+
+                if (needsTotal > 0) {
+                    parts.push(`${needsTotal} more total vouch${needsTotal === 1 ? '' : 'es'}`);
+                }
+
+                icebergStatus = `Needs ${parts.join(' and ')}`;
+            }
+
+            const vetoSection = isAdminViewer
+                ? formatReceiptList(vetoRows, 'No Admin vetoes active.')
+                : vetoRows.length === 0
+                    ? 'No Admin vetoes active.'
+                    : `🔒 **${vetoRows.length}** active Admin veto${vetoRows.length === 1 ? '' : 'es'} — sources are only visible to staff.`;
 
             await interaction.editReply(
                 `**Vouches for ${playerName(target, targetUser.username)}** ${targetUser}\n\n` +
                 `${trustSummary(target)}\n` +
-                `Trusted Penguin status: **${trustedStatus}**\n\n` +
+                `Iceberg Penguin status: **${icebergStatus}**\n\n` +
                 `**Admin vouches**\n` +
                 `${formatReceiptList(adminVouchRows, 'No Admin vouches yet.')}\n\n` +
                 `**Regular vouches**\n` +
                 `${formatReceiptList(regularVouchRows, 'No regular vouches yet.')}\n\n` +
                 `**Admin vetoes**\n` +
-                `${formatReceiptList(vetoRows, 'No Admin vetoes active.')}`
+                `${vetoSection}`
             );
         } catch (error) {
             logCommandError(interaction, '/vouches', error);

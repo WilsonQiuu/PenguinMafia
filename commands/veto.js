@@ -14,15 +14,15 @@ const {
     logTrustCommand,
     playerName,
     requireAdminTrustAccess,
-    syncTrustedPenguinRole,
-    trustedRoleLine,
+    syncIcebergPenguinRole,
+    icebergRoleLine,
     trustSummary
 } = require('../utils/trust.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('veto')
-        .setDescription('Give a player an Admin veto that blocks Trusted Penguin.')
+        .setDescription('Give a player an Admin veto that blocks Iceberg Penguin.')
         .addUserOption(option =>
             option
                 .setName('player')
@@ -84,8 +84,8 @@ module.exports = {
                     `⚠️ **Confirm Admin Veto**\n\n` +
                     `Player: **${playerName(target, targetUser.username)}** ${targetUser}\n` +
                     `${trustSummary(target)}\n\n` +
-                    `This will add **1 Admin veto**. Active Admin vetoes block Trusted Penguin and remove the role if they already have it.`,
-                confirmedContent: '⏳ Recording Admin veto and updating Trusted Penguin...',
+                    `This will add **1 Admin veto**. Active Admin vetoes block Iceberg Penguin and remove the role if they already have it.`,
+                confirmedContent: '⏳ Recording Admin veto and updating Iceberg Penguin...',
                 cancelContent: '❌ Admin veto cancelled.',
                 expiredContent: '⏰ Admin veto confirmation expired.'
             });
@@ -139,7 +139,7 @@ module.exports = {
             });
 
             const roleResult = result.added
-                ? await syncTrustedPenguinRole(
+                ? await syncIcebergPenguinRole(
                     interaction.guild,
                     result.player,
                     'Penguin Mafia Admin veto update'
@@ -149,8 +149,8 @@ module.exports = {
                 }))
                 : null;
             const roleLine = roleResult?.status === 'failed'
-                ? `\n⚠️ Admin veto was recorded, but I could not update Trusted Penguin: \`${roleResult.error.message}\``
-                : trustedRoleLine(roleResult);
+                ? `\n⚠️ Admin veto was recorded, but I could not update Iceberg Penguin: \`${roleResult.error.message}\``
+                : icebergRoleLine(roleResult);
 
             await logTrustCommand(interaction, 'Admin Veto Added', '/veto', [
                 {
@@ -166,7 +166,7 @@ module.exports = {
                     value: String(result.player.admin_vetoes)
                 },
                 {
-                    name: 'Trusted Penguin Role',
+                    name: 'Iceberg Penguin Role',
                     value: roleResult?.status || 'Not checked'
                 }
             ]);

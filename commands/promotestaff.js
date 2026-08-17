@@ -25,7 +25,7 @@ const {
 } = require('../utils/trialModOnboarding.js');
 const {
     promoteRegularVouchesToAdminVouches,
-    syncTrustedPenguinRole
+    syncIcebergPenguinRole
 } = require('../utils/trust.js');
 
 const STAFF_RANK_NAMES = STAFF_RANKS.map(rank => rank.name);
@@ -263,13 +263,13 @@ module.exports = {
                 trustMigrationRows = await promoteRegularVouchesToAdminVouches(sql, playerUser.id);
 
                 for (const trustProfile of trustMigrationRows) {
-                    await syncTrustedPenguinRole(
+                    await syncIcebergPenguinRole(
                         interaction.guild,
                         trustProfile,
                         'Penguin Mafia regular vouch converted to Admin vouch'
                     ).catch(error => {
                         trustRoleSyncFailures += 1;
-                        console.error('Trusted Penguin role sync failed after Admin promotion vouch migration:');
+                        console.error('Iceberg Penguin role sync failed after Admin promotion vouch migration:');
                         console.error(error);
                     });
                 }
@@ -299,7 +299,7 @@ module.exports = {
                     ? `\nRegular vouches converted to Admin vouches: **${convertedVouches}**` +
                     `\nRegular vouch receipts cleared: **${removedRegularVouches}**` +
                     (trustRoleSyncFailures > 0
-                        ? `\nTrusted Penguin role sync failures: **${trustRoleSyncFailures}**`
+                        ? `\nIceberg Penguin role sync failures: **${trustRoleSyncFailures}**`
                         : '')
                     : '') +
                 (trialModOnboardingStarted ? `\nTrial Mod onboarding: **sent by DM**` : '')

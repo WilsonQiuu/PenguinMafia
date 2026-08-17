@@ -14,13 +14,13 @@ const {
     logTrustCommand,
     playerName,
     requireVouchAccess,
-    syncTrustedPenguinRole,
-    trustedRoleLine,
+    syncIcebergPenguinRole,
+    icebergRoleLine,
     trustSummary
 } = require('../utils/trust.js');
 
 function vouchKind(access) {
-    return access.type === 'admin' ? 'Admin vouch' : 'Trusted Penguin vouch';
+    return access.type === 'admin' ? 'Admin vouch' : 'Iceberg Penguin vouch';
 }
 
 module.exports = {
@@ -86,15 +86,15 @@ module.exports = {
             const confirmation = await confirmAction(interaction, {
                 customIdPrefix: 'unvouche',
                 confirmLabel: `Remove ${vouchKind(access)}`,
-                danger: access.type === 'admin',
+                danger: true,
                 content:
                     `⚠️ **Confirm Remove ${vouchKind(access)}**\n\n` +
                     `Player: **${playerName(target, targetUser.username)}** ${targetUser}\n` +
                     `${trustSummary(target)}\n\n` +
                     (
                         access.type === 'admin'
-                            ? 'This may remove Trusted Penguin if they fall below the required Admin vouches.'
-                            : 'This removes your regular vouch only. Trusted Penguin status is not based on regular vouches.'
+                            ? 'This may remove Iceberg Penguin if they fall below the required Admin vouches.'
+                            : 'This removes your regular vouch. Regular vouches count toward the 3 total vouches needed, so Iceberg Penguin may be removed if they fall below.'
                     ),
                 confirmedContent: '⏳ Removing vouch...',
                 cancelContent: '❌ Remove vouch cancelled.',
@@ -180,19 +180,19 @@ module.exports = {
                 };
             });
 
-            const roleResult = result.removed && access.type === 'admin'
-                ? await syncTrustedPenguinRole(
+            const roleResult = result.removed
+                ? await syncIcebergPenguinRole(
                     interaction.guild,
                     result.player,
-                    'Penguin Mafia Admin vouch removed'
+                    'Penguin Mafia vouch removed'
                 ).catch(error => ({
                     status: 'failed',
                     error
                 }))
                 : null;
             const roleLine = roleResult?.status === 'failed'
-                ? `\n⚠️ Admin vouch was removed, but I could not update Trusted Penguin: \`${roleResult.error.message}\``
-                : trustedRoleLine(roleResult);
+                ? `\n⚠️ Vouch was removed, but I could not update Iceberg Penguin: \`${roleResult.error.message}\``
+                : icebergRoleLine(roleResult);
 
             await logTrustCommand(interaction, `${vouchKind(access)} Removed`, '/unvouche', [
                 {
@@ -201,7 +201,7 @@ module.exports = {
                 },
                 {
                     name: 'Actor Trust Type',
-                    value: access.type === 'admin' ? access.staffRankName : 'Trusted Penguin'
+                    value: access.type === 'admin' ? access.staffRankName : 'Iceberg Penguin'
                 },
                 {
                     name: 'Admin Vouches',
@@ -212,7 +212,7 @@ module.exports = {
                     value: String(result.player.vouches)
                 },
                 {
-                    name: 'Trusted Penguin Role',
+                    name: 'Iceberg Penguin Role',
                     value: roleResult?.status || 'Not checked'
                 }
             ]);

@@ -17,9 +17,14 @@ const {
     syncInvokerStaffRank
 } = require('./staff.js');
 
-const TRUSTED_PENGUIN_ROLE_ID =
-    process.env.TRUSTED_PENGUIN_ROLE_ID || '1518113965282955345';
-const TRUSTED_ADMIN_VOUCHES_REQUIRED = 3;
+const ICEBERG_PENGUIN_ROLE_ID =
+    process.env.ICEBERG_PENGUIN_ROLE_ID ||
+    process.env.TRUSTED_PENGUIN_ROLE_ID ||
+    '1518113965282955345';
+// Iceberg Penguin requirement:
+// 2 Admin vouches + 1 more vouch (Admin or Iceberg Penguin vouch) = 3 total.
+const ICEBERG_ADMIN_VOUCHES_REQUIRED = 2;
+const ICEBERG_TOTAL_VOUCHES_REQUIRED = 3;
 
 function playerName(player, fallback = 'Unknown Player') {
     return player?.discord_display_name ||
@@ -29,15 +34,24 @@ function playerName(player, fallback = 'Unknown Player') {
 
 function trustSummary(profile) {
     return (
-        `Admin vouches: **${profile.admin_vouches}/${TRUSTED_ADMIN_VOUCHES_REQUIRED}**\n` +
+        `Admin vouches: **${profile.admin_vouches}/${ICEBERG_ADMIN_VOUCHES_REQUIRED}**\n` +
         `Admin vetoes: **${profile.admin_vetoes}**\n` +
-        `Total vouches: **${profile.vouches}**\n` +
+        `Total vouches: **${profile.vouches}/${ICEBERG_TOTAL_VOUCHES_REQUIRED}**\n` +
         `Total vetoes: **${profile.vetoes}**`
     );
 }
 
-function willBeTrustedAfterVouch(profile) {
-    return Number(profile.admin_vouches || 0) + 1 >= TRUSTED_ADMIN_VOUCHES_REQUIRED &&
+function isIcebergEligible(profile) {
+    return Number(profile.admin_vouches || 0) >= ICEBERG_ADMIN_VOUCHES_REQUIRED &&
+        Number(profile.vouches || 0) >= ICEBERG_TOTAL_VOUCHES_REQUIRED &&
+        Number(profile.admin_vetoes || 0) === 0;
+}
+
+function willBeIcebergAfterVouch(profile, deltas = {}) {
+    const adminDelta = Number(deltas.admin || 0);
+    const totalDelta = Number(deltas.total == null ? adminDelta : deltas.total);
+    return Number(profile.admin_vouches || 0) + adminDelta >= ICEBERG_ADMIN_VOUCHES_REQUIRED &&
+        Number(profile.vouches || 0) + totalDelta >= ICEBERG_TOTAL_VOUCHES_REQUIRED &&
         Number(profile.admin_vetoes || 0) === 0;
 }
 
@@ -82,14 +96,14 @@ async function requireVouchAccess(db, interaction) {
         };
     }
 
-    const role = await getTrustedPenguinRole(interaction.guild);
+    const role = await getIcebergPenguinRole(interaction.guild);
 
     if (!role) {
-        throw new Error(`Trusted Penguin role ID \`${TRUSTED_PENGUIN_ROLE_ID}\` was not found.`);
+        throw new Error(`Iceberg Penguin role ID \`${ICEBERG_PENGUIN_ROLE_ID}\` was not found.`);
     }
 
     if (!interaction.member.roles.cache.has(role.id)) {
-        throw new Error('You need Trusted Penguin or Staff Admin to use `/vouche` right now.');
+        throw new Error('You need Iceberg Penguin or Staff Admin to use `/vouche` right now.');
     }
 
     return {
@@ -232,12 +246,12 @@ async function getTrustProfile(db, playerId) {
     return rows[0] || null;
 }
 
-async function getTrustedPenguinRole(guild) {
-    return guild.roles.cache.get(TRUSTED_PENGUIN_ROLE_ID) ||
-        await guild.roles.fetch(TRUSTED_PENGUIN_ROLE_ID).catch(() => null);
+async function getIcebergPenguinRole(guild) {
+    return guild.roles.cache.get(ICEBERG_PENGUIN_ROLE_ID) ||
+        await guild.roles.fetch(ICEBERG_PENGUIN_ROLE_ID).catch(() => null);
 }
 
-async function syncTrustedPenguinRole(guild, profile, reason) {
+async function syncIcebergPenguinRole(guild, profile, reason) {
     const member = await guild.members.fetch(profile.discord_id).catch(() => null);
 
     if (!member) {
@@ -246,7 +260,7 @@ async function syncTrustedPenguinRole(guild, profile, reason) {
         };
     }
 
-    const role = await getTrustedPenguinRole(guild);
+    const role = await getIcebergPenguinRole(guild);
 
     if (!role) {
         return {
@@ -260,10 +274,7 @@ async function syncTrustedPenguinRole(guild, profile, reason) {
         (adminRoleId && member.roles.cache.has(adminRoleId));
     const shouldHaveRole =
         isAdmin ||
-        (
-            Number(profile.admin_vouches || 0) >= TRUSTED_ADMIN_VOUCHES_REQUIRED &&
-            Number(profile.admin_vetoes || 0) === 0
-        );
+        isIcebergEligible(profile);
     const hasRole = member.roles.cache.has(role.id);
 
     if (shouldHaveRole && !hasRole) {
@@ -290,33 +301,33 @@ async function syncTrustedPenguinRole(guild, profile, reason) {
     };
 }
 
-function trustedRoleLine(result) {
+function icebergRoleLine(result) {
     if (!result) {
         return '';
     }
 
     if (result.status === 'added') {
-        return `\nTrusted Penguin role: **added** <@&${TRUSTED_PENGUIN_ROLE_ID}>`;
+        return `\nIceberg Penguin role: **added** <@&${ICEBERG_PENGUIN_ROLE_ID}>`;
     }
 
     if (result.status === 'removed') {
-        return `\nTrusted Penguin role: **removed** <@&${TRUSTED_PENGUIN_ROLE_ID}>`;
+        return `\nIceberg Penguin role: **removed** <@&${ICEBERG_PENGUIN_ROLE_ID}>`;
     }
 
     if (result.status === 'already_has_role') {
-        return `\nTrusted Penguin role: **already active** <@&${TRUSTED_PENGUIN_ROLE_ID}>`;
+        return `\nIceberg Penguin role: **already active** <@&${ICEBERG_PENGUIN_ROLE_ID}>`;
     }
 
     if (result.status === 'already_without_role') {
-        return '\nTrusted Penguin role: **not active**';
+        return '\nIceberg Penguin role: **not active**';
     }
 
     if (result.status === 'missing_role') {
-        return `\n⚠️ Trusted Penguin role ID \`${TRUSTED_PENGUIN_ROLE_ID}\` was not found.`;
+        return `\n⚠️ Iceberg Penguin role ID \`${ICEBERG_PENGUIN_ROLE_ID}\` was not found.`;
     }
 
     if (result.status === 'missing_member') {
-        return '\n⚠️ Player is not currently in the server, so I could not update the Trusted Penguin role.';
+        return '\n⚠️ Player is not currently in the server, so I could not update the Iceberg Penguin role.';
     }
 
     return '';
@@ -415,19 +426,21 @@ async function confirmAction(interaction, options) {
 }
 
 module.exports = {
-    TRUSTED_ADMIN_VOUCHES_REQUIRED,
-    TRUSTED_PENGUIN_ROLE_ID,
+    ICEBERG_ADMIN_VOUCHES_REQUIRED,
+    ICEBERG_PENGUIN_ROLE_ID,
+    ICEBERG_TOTAL_VOUCHES_REQUIRED,
     confirmAction,
     ensureActorInDatabase,
     getTrustProfile,
+    isIcebergEligible,
     logTrustCommand,
     playerName,
     promoteRegularVouchesToAdminVouches,
     requireAdminTrustAccess,
     requireVouchAccess,
     removeAdminVouchesByAdmin,
-    syncTrustedPenguinRole,
-    trustedRoleLine,
+    syncIcebergPenguinRole,
+    icebergRoleLine,
     trustSummary,
-    willBeTrustedAfterVouch
+    willBeIcebergAfterVouch
 };

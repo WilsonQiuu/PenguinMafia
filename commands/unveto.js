@@ -14,8 +14,8 @@ const {
     logTrustCommand,
     playerName,
     requireAdminTrustAccess,
-    syncTrustedPenguinRole,
-    trustedRoleLine,
+    syncIcebergPenguinRole,
+    icebergRoleLine,
     trustSummary
 } = require('../utils/trust.js');
 
@@ -78,8 +78,8 @@ module.exports = {
                     `⚠️ **Confirm Remove Admin Veto**\n\n` +
                     `Player: **${playerName(target, targetUser.username)}** ${targetUser}\n` +
                     `${trustSummary(target)}\n\n` +
-                    `If this removes the last veto and they have enough Admin vouches, Trusted Penguin may be granted.`,
-                confirmedContent: '⏳ Removing Admin veto and updating Trusted Penguin...',
+                    `If this removes the last veto and they have enough Admin vouches, Iceberg Penguin may be granted.`,
+                confirmedContent: '⏳ Removing Admin veto and updating Iceberg Penguin...',
                 cancelContent: '❌ Remove Admin veto cancelled.',
                 expiredContent: '⏰ Remove Admin veto confirmation expired.'
             });
@@ -127,7 +127,7 @@ module.exports = {
             });
 
             const roleResult = result.removed
-                ? await syncTrustedPenguinRole(
+                ? await syncIcebergPenguinRole(
                     interaction.guild,
                     result.player,
                     'Penguin Mafia Admin veto removed'
@@ -137,8 +137,8 @@ module.exports = {
                 }))
                 : null;
             const roleLine = roleResult?.status === 'failed'
-                ? `\n⚠️ Admin veto was removed, but I could not update Trusted Penguin: \`${roleResult.error.message}\``
-                : trustedRoleLine(roleResult);
+                ? `\n⚠️ Admin veto was removed, but I could not update Iceberg Penguin: \`${roleResult.error.message}\``
+                : icebergRoleLine(roleResult);
 
             await logTrustCommand(interaction, 'Admin Veto Removed', '/unveto', [
                 {
@@ -154,7 +154,7 @@ module.exports = {
                     value: String(result.player.admin_vetoes)
                 },
                 {
-                    name: 'Trusted Penguin Role',
+                    name: 'Iceberg Penguin Role',
                     value: roleResult?.status || 'Not checked'
                 }
             ]);
