@@ -698,6 +698,46 @@ async function fetchGiveawayWinnerChannel(guild) {
     return fetchedChannel;
 }
 
+async function fetchGiveawayAnnouncementChannel(guild) {
+    const configuredChannel = await fetchGiveawayTextChannel(
+        guild,
+        GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID
+    );
+
+    if (configuredChannel) {
+        return configuredChannel;
+    }
+
+    // Discord channel IDs change when a channel is deleted and recreated. Fall
+    // back to the server's general chat by name so a stale environment
+    // variable cannot silently suppress every giveaway-starting announcement
+    // (which is supposed to appear in general chat).
+    const isGeneralChat = channel => channel?.isTextBased() &&
+        /general/i.test(String(channel.name || ''));
+
+    const cachedChannel = guild.channels.cache.find(isGeneralChat);
+
+    if (cachedChannel) {
+        console.warn(
+            `Configured giveaway announcement channel ${GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID} was not found; ` +
+            `using #${cachedChannel.name} (${cachedChannel.id}).`
+        );
+        return cachedChannel;
+    }
+
+    const fetchedChannels = await guild.channels.fetch().catch(() => null);
+    const fetchedChannel = fetchedChannels?.find(isGeneralChat) || null;
+
+    if (fetchedChannel) {
+        console.warn(
+            `Configured giveaway announcement channel ${GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID} was not found; ` +
+            `using #${fetchedChannel.name} (${fetchedChannel.id}).`
+        );
+    }
+
+    return fetchedChannel;
+}
+
 async function fetchGiveawayResultChannels(guild, giveaway) {
     const winnerChannel = await fetchGiveawayWinnerChannel(guild);
     const originalChannel = await fetchGiveawayChannel(guild, giveaway);
@@ -782,6 +822,10 @@ async function upsertActiveGiveawaysBoard(guild, db = sql) {
     const channel = await fetchGiveawayTextChannel(guild, GIVEAWAY_CHANNEL_ID);
 
     if (!channel) {
+        console.error(
+            `Could not post the active giveaways board for ${guild.name}: ` +
+            `configured giveaway channel ${GIVEAWAY_CHANNEL_ID} was not found.`
+        );
         return null;
     }
 
@@ -942,9 +986,13 @@ function scheduleGiveawayMessageRefresh(guild, giveawayId, db = sql, fallbackMes
 }
 
 async function announceGiveawayStarted(guild, giveaway, boardMessage = null, totalActiveAmount = null) {
-    const announcementChannel = await fetchGiveawayTextChannel(guild, GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID);
+    const announcementChannel = await fetchGiveawayAnnouncementChannel(guild);
 
     if (!announcementChannel) {
+        console.error(
+            `Giveaway-starting announcement could not be sent for ${guild.name}: ` +
+            `configured announcement channel ${GIVEAWAY_ANNOUNCEMENT_CHANNEL_ID} was not found and no #general chat exists.`
+        );
         return null;
     }
 
@@ -952,21 +1000,29 @@ async function announceGiveawayStarted(guild, giveaway, boardMessage = null, tot
         ? ''
         : `\nTotal active giveaway money in <#${GIVEAWAY_CHANNEL_ID}>: **${formatDonationAmount(totalActiveAmount)}**.`;
 
-    return announcementChannel.send({
-        content:
-            `<@&${GIVEAWAY_PING_ROLE_ID}>\n\n` +
-            (giveaway.sponsor_discord_id && giveaway.sponsor_discord_id !== giveaway.host_discord_id
-                ? `<@${giveaway.sponsor_discord_id}> sponsored a **${formatDonationAmount(giveaway.amount)}** giveaway hosted by <@${giveaway.host_discord_id}>. `
-                : `<@${giveaway.host_discord_id}> started a **${formatDonationAmount(giveaway.amount)}** giveaway. `) +
-            `Go to <#${GIVEAWAY_CHANNEL_ID}> to join.` +
-            totalLine +
-            (boardMessage ? `\n${boardMessage.url}` : ''),
-        allowedMentions: {
-            roles: [GIVEAWAY_PING_ROLE_ID],
-            users: [giveaway.host_discord_id, giveaway.sponsor_discord_id].filter(Boolean)
-        },
-        components: [dismissRow(giveaway.host_discord_id)]
-    });
+    try {
+        return await announcementChannel.send({
+            content:
+                `<@&${GIVEAWAY_PING_ROLE_ID}>\n\n` +
+                (giveaway.sponsor_discord_id && giveaway.sponsor_discord_id !== giveaway.host_discord_id
+                    ? `<@${giveaway.sponsor_discord_id}> sponsored a **${formatDonationAmount(giveaway.amount)}** giveaway hosted by <@${giveaway.host_discord_id}>. `
+                    : `<@${giveaway.host_discord_id}> started a **${formatDonationAmount(giveaway.amount)}** giveaway. `) +
+                `Go to <#${GIVEAWAY_CHANNEL_ID}> to join.` +
+                totalLine +
+                (boardMessage ? `\n${boardMessage.url}` : ''),
+            allowedMentions: {
+                roles: [GIVEAWAY_PING_ROLE_ID],
+                users: [giveaway.host_discord_id, giveaway.sponsor_discord_id].filter(Boolean)
+            },
+            components: [dismissRow(giveaway.host_discord_id)]
+        });
+    } catch (error) {
+        // A missing/inaccessible announcement channel should log loudly
+        // instead of failing the whole giveaway-creation command.
+        console.error(`Could not post giveaway-starting announcement for ${guild.name}:`);
+        console.error(error);
+        return null;
+    }
 }
 
 async function recordGiveawayDonation(guild, giveaway, db = sql) {
