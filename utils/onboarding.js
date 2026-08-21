@@ -256,8 +256,7 @@ function introMessage(member, context = {}) {
             parse: []
         },
         components: [
-            row(scopedButton('build_team', member.id, 'Next', ButtonStyle.Success, isTest)),
-            dismissRow(member.id)
+            row(scopedButton('build_team', member.id, 'Next', ButtonStyle.Success, isTest))
         ]
     };
 }
@@ -292,8 +291,7 @@ function buildTeamMessage(userId, isTest = false) {
             `Use \`/graph\` to view your recruit tree at any time.\n\n` +
             `More penguins. More power.`,
         components: [
-            row(scopedButton('rank_up', userId, 'Next', ButtonStyle.Success, isTest)),
-            dismissRow(userId)
+            row(scopedButton('rank_up', userId, 'Next', ButtonStyle.Success, isTest))
         ]
     };
 }
@@ -309,8 +307,7 @@ function rankUpMessage(userId, isTest = false) {
             `Recruit active players and help them grow to unlock higher ranks and better commission bonuses.\n\n` +
             `Check #🐧-rank-info for the full breakdown of how ranks and commissions work.`,
         components: [
-            row(scopedButton('link_minecraft', userId, 'Next', ButtonStyle.Success, isTest)),
-            dismissRow(userId)
+            row(scopedButton('link_minecraft', userId, 'Next', ButtonStyle.Success, isTest))
         ]
     };
 }
@@ -329,8 +326,7 @@ function linkMinecraftMessage(userId, isTest = false) {
                 scopedButton('join_all_ign_java', userId, 'Java', ButtonStyle.Success, isTest),
                 scopedButton('join_all_ign_bedrock', userId, 'Bedrock', ButtonStyle.Success, isTest),
                 scopedButton('join_all_skip', userId, 'Skip', ButtonStyle.Secondary, isTest)
-            ),
-            dismissRow(userId)
+            )
         ]
     };
 }
@@ -350,10 +346,7 @@ function finalMessage(userId, linkedIgn = null, edition = null, options = {}) {
             `${linkedLine}${giveawayLine}\n\n` +
             `🎉 You're now a **${DEFAULT_RANK_NAME}**.\n\n` +
             `Use \`/graph\` anytime to view your recruit tree, and visit #🐧-rank-info to learn how ranks and commissions work.\n\n` +
-            `Good luck, and start building your empire!`,
-        components: [
-            dismissRow(userId)
-        ]
+            `Good luck, and start building your empire!`
     };
 }
 
@@ -435,6 +428,18 @@ async function scheduleWelcomeMessageDelete(interaction, seconds = WELCOME_SELF_
     }
 
     const pendingMessageIds = [finalMessageId, countdownMessage?.id].filter(Boolean);
+    const recentMessages = await interaction.channel.messages.fetch({ limit: 100 }).catch(() => null);
+
+    if (recentMessages) {
+        for (const [, message] of recentMessages) {
+            if (
+                message.author.id === interaction.client.user.id &&
+                isWelcomeFlowMessage(message, interaction.user.id)
+            ) {
+                pendingMessageIds.push(message.id);
+            }
+        }
+    }
 
     if (pendingMessageIds.length > 0) {
         recordPendingWelcomeDmCleanup(channelId, pendingMessageIds);

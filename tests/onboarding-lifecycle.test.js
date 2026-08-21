@@ -476,7 +476,7 @@ test('/welcome runs a Don-only test flow in DMs', () => {
     assert.doesNotMatch(source, /startOnboardingForMember/);
 });
 
-test('every welcome flow message carries a dismiss X', () => {
+test('welcome tutorial messages are auto-deleted and carry no dismiss X', () => {
     const source = fs.readFileSync(path.join(__dirname, '..', 'utils/onboarding.js'), 'utf8');
 
     for (const functionName of [
@@ -488,9 +488,20 @@ test('every welcome flow message carries a dismiss X', () => {
     ]) {
         const start = source.indexOf(`function ${functionName}`);
         const nextFunction = source.indexOf('\nfunction ', start + 1);
-        const body = source.slice(start, nextFunction === -1 ? source.length : nextFunction);
+        const nextAsyncFunction = source.indexOf('\nasync function ', start + 1);
+        let end = source.length;
 
-        assert.match(body, /dismissRow\(/, `${functionName} should include a dismiss X`);
+        if (nextFunction !== -1) {
+            end = Math.min(end, nextFunction);
+        }
+
+        if (nextAsyncFunction !== -1) {
+            end = Math.min(end, nextAsyncFunction);
+        }
+
+        const body = source.slice(start, end);
+
+        assert.doesNotMatch(body, /dismissRow\(/, `${functionName} should not carry a dismiss X`);
     }
 });
 

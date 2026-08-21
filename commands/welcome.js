@@ -34,7 +34,7 @@ module.exports = {
             await interaction.editReply(
                 `✅ **Test welcome flow opened** in ${channel}.\n\n` +
                 `Finish the flow and the bot cleans the DM up automatically. ` +
-                `If anything is left behind, tap **✕** on any message to remove it.`
+                `If the bot is offline when the timer ends, it finishes deleting everything when it comes back online.`
             );
         } catch (error) {
             logCommandError(interaction, '/welcome', error);
