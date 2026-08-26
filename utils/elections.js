@@ -180,9 +180,10 @@ function renderPreStartAnnouncement() {
             `@everyone\n\n` +
             `# 🐧🗳️ PENGUIN MAFIA ELECTION STARTING SOON\n\n` +
             `The iceberg is rumbling. The colony is getting ready to vote for the next **DON**.\n\n` +
-            `## 📅 Weekly Schedule\n` +
-            `Elections begin every **Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time).\n` +
-            `The weekly recruit leaderboard resets at the same time.\n\n` +
+            `## 📅 Schedule\n` +
+            `Elections begin **every other Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time).\n` +
+            `The weekly recruit leaderboard resets at the same time.\n` +
+            `The winning **Don serves for 2 weeks** until the next election.\n\n` +
             `The election runs for **24 hours**.\n` +
             `When the election opens, use \`/vote player:@Player\` to send your **1 vote** to one penguin.\n\n` +
             `## 🧊 Voting Rule\n` +
@@ -202,7 +203,7 @@ function renderElectionCommandsMessage() {
         content:
             `# 🐧🗳️ PENGUIN MAFIA VOTING COMMANDS\n\n` +
             `The election ice can get slippery, so here is the official flipper guide.\n\n` +
-            `Elections automatically begin every **Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time) when weekly recruits reset.\n\n` +
+            `Elections automatically begin **every other Friday at 12:00 PM Eastern Time** (**EDT** during daylight saving time) when weekly recruits reset.\n\nThe winning **Don serves for 2 weeks** until the next election.\n\n` +
             `## 🗳️ Player Commands\n` +
             `\`/vote player:@Player\`\n` +
             `Cast your 1 vote for one penguin. Voters stay anonymous.\n\n` +

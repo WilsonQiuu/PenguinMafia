@@ -53,6 +53,39 @@ function fridayScheduleStateKey(guildId, dateKey) {
     return `friday_noon_cycle:${guildId}:${dateKey}`;
 }
 
+// Don elections open every OTHER Friday. The cadence is anchored to the first
+// biweekly election Friday (2026-09-04) and recurs every 14 days: Sep 4,
+// Sep 18, Oct 2, ... Weekly recruit resets still happen every Friday; only the
+// election opening is gated behind this check.
+const ELECTION_ANCHOR_DATE = '2026-09-04';
+const DAY_MS = 86_400_000;
+
+function isElectionFriday(now = new Date()) {
+    const eastern = easternDateParts(now);
+
+    if (eastern.weekday !== 'Fri') {
+        return false;
+    }
+
+    const [anchorYear, anchorMonth, anchorDay] = ELECTION_ANCHOR_DATE
+        .split('-')
+        .map(Number);
+
+    const anchor = Date.UTC(anchorYear, anchorMonth - 1, anchorDay, 12, 0, 0);
+    const current = Date.UTC(
+        Number(eastern.year),
+        Number(eastern.month) - 1,
+        Number(eastern.day),
+        12,
+        0,
+        0
+    );
+
+    const dayDifference = Math.round((current - anchor) / DAY_MS);
+
+    return dayDifference >= 0 && dayDifference % 14 === 0;
+}
+
 function saturdayWelcomeMaintenanceStateKey(guildId, dateKey) {
     return `saturday_noon_welcome:${guildId}:${dateKey}`;
 }
@@ -232,15 +265,20 @@ async function runFridayNoonScheduleForGuild(guild, db = sql, now = new Date()) 
         }
 
         if (!state.electionStarted) {
-            const activeElection = await getActiveElection(db);
+            // Elections open every OTHER Friday (biweekly). Weekly recruit reset
+            // still happens every Friday; only the election opening is gated on
+            // the cadence so it does not start on the off Fridays.
+            if (isElectionFriday(now)) {
+                const activeElection = await getActiveElection(db);
 
-            if (!activeElection) {
-                await startElection(
-                    guild,
-                    process.env.DON_DISCORD_ID || guild.client.user.id,
-                    db
-                );
-                electionStarted = true;
+                if (!activeElection) {
+                    await startElection(
+                        guild,
+                        process.env.DON_DISCORD_ID || guild.client.user.id,
+                        db
+                    );
+                    electionStarted = true;
+                }
             }
 
             state = {
@@ -276,6 +314,7 @@ module.exports = {
     EASTERN_TIME_ZONE,
     easternDateParts,
     fridayScheduleStateKey,
+    isElectionFriday,
     runFridayNoonScheduleForGuild,
     runSaturdayNoonWelcomeMaintenanceForGuild,
     saturdayWelcomeMaintenanceStateKey
