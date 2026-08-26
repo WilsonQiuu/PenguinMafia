@@ -24,6 +24,15 @@ test('announcement post no longer fails silently', () => {
     assert.match(giveaways, /Could not post giveaway-starting announcement/);
 });
 
+test('announcement dedupes allowedMentions.users so a Don-hosted giveaway (host === sponsor) does not 400', () => {
+    const giveaways = source('utils/giveaways.js');
+
+    // Discord rejects allowed_mentions.users containing the same user twice
+    // (DiscordAPIError 50035 "SET_TYPE_ALREADY_CONTAINS_VALUE"). When the Don
+    // hosts, host_discord_id === sponsor_discord_id, so the array must be deduped.
+    assert.match(giveaways, /users:\s*\[\.\.\.new Set\(\s*\[giveaway\.host_discord_id, giveaway\.sponsor_discord_id\]\.filter\(Boolean\)\s*\)\s*\]/);
+});
+
 test('the active giveaways board warns instead of silently vanishing when the channel is missing', () => {
     const giveaways = source('utils/giveaways.js');
 
