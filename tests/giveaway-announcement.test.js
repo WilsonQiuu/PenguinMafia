@@ -33,6 +33,18 @@ test('announcement dedupes allowedMentions.users so a Don-hosted giveaway (host 
     assert.match(giveaways, /users:\s*\[\.\.\.new Set\(\s*\[giveaway\.host_discord_id, giveaway\.sponsor_discord_id\]\.filter\(Boolean\)\s*\)\s*\]/);
 });
 
+test('the general-chat announcement carries no dismiss X (X is DM-only)', () => {
+    const giveaways = source('utils/giveaways.js');
+
+    const start = giveaways.indexOf('async function announceGiveawayStarted');
+    const end = giveaways.indexOf('async function recordGiveawayDonation');
+    const body = giveaways.slice(start, end);
+
+    // The announcement is a public channel message; it must not offer a dismiss button.
+    assert.doesNotMatch(body, /dismissRow\(/, 'announceGiveawayStarted should not render a dismiss X');
+    assert.doesNotMatch(body, /components:\s*\[dismissRow/, 'no dismiss row in the announcement send');
+});
+
 test('the active giveaways board warns instead of silently vanishing when the channel is missing', () => {
     const giveaways = source('utils/giveaways.js');
 

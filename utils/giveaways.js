@@ -1015,8 +1015,7 @@ async function announceGiveawayStarted(guild, giveaway, boardMessage = null, tot
                 users: [...new Set(
                     [giveaway.host_discord_id, giveaway.sponsor_discord_id].filter(Boolean)
                 )]
-            },
-            components: [dismissRow(giveaway.host_discord_id)]
+            }
         });
     } catch (error) {
         // A missing/inaccessible announcement channel should log loudly
