@@ -8,6 +8,7 @@ const {
     formatVoiceMinutes,
     formatVoiceTime,
     levelForXp,
+    postVoiceLevelUps,
     voiceLevelInfoPayload,
     voiceProgress,
     voiceStateIsEligible,
@@ -82,6 +83,38 @@ test('promotion-channel info explains the scan, formula, and hours command', () 
     assert.match(content, /L² \+ 6L/);
     assert.match(content, /\/vchours/);
     assert.ok(content.length <= 2_000);
+});
+
+test('VC level-up notifications use the dedicated level-up channel', async () => {
+    const promotionChannel = {
+        type: 0,
+        name: '🎉-promotion-events',
+        send: test.mock.fn()
+    };
+    const levelUpChannel = {
+        type: 0,
+        name: 'vc-level-ups',
+        send: test.mock.fn()
+    };
+    const guild = {
+        channels: {
+            fetch: async () => new Map([
+                ['1512488373145702430', promotionChannel],
+                ['1549446780809379840', levelUpChannel]
+            ])
+        }
+    };
+
+    const sent = await postVoiceLevelUps(guild, [{
+        discordId: 'player-1',
+        newLevel: 7,
+        voiceSeconds: 12_000
+    }]);
+
+    assert.equal(sent, 1);
+    assert.equal(promotionChannel.send.mock.callCount(), 0);
+    assert.equal(levelUpChannel.send.mock.callCount(), 1);
+    assert.match(levelUpChannel.send.mock.calls[0].arguments[0].content, /VC Level 7/);
 });
 
 test('voice eligibility stops when a member disconnects or enters AFK', () => {

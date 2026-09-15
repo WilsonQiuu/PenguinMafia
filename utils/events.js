@@ -16,9 +16,16 @@ const {
 
 async function findPromotionEventsChannel(guild) {
     const channels = await guild.channels.fetch();
-    const channel = channels.get(PROMOTION_EVENTS_CHANNEL_ID);
+    const configuredChannel = channels.get(PROMOTION_EVENTS_CHANNEL_ID);
 
-    return channel?.type === ChannelType.GuildText ? channel : null;
+    if (configuredChannel?.type === ChannelType.GuildText) {
+        return configuredChannel;
+    }
+
+    return channels.find(channel => {
+        return channel.type === ChannelType.GuildText &&
+            channel.name === PROMOTION_EVENTS_CHANNEL_NAME;
+    }) || null;
 }
 
 function uniqueMentions(...ids) {

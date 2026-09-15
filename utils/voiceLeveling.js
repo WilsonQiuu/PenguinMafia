@@ -16,6 +16,7 @@ const VOICE_CREDIT_MINUTES = 10;
 const VOICE_CREDIT_SECONDS = VOICE_CREDIT_MINUTES * 60;
 const VOICE_CREDIT_XP = 1;
 const VOICE_LEVEL_INFO_MARKER = 'VC TIME LEVELING';
+const VOICE_LEVEL_UP_CHANNEL_ID = process.env.VOICE_LEVEL_UP_CHANNEL_ID || '1549446780809379840';
 
 function voiceXpModLoggingStateKey(guildId) {
     return `vc_xp_mod_logging:${guildId}`;
@@ -148,6 +149,13 @@ async function findPromotionEventsChannel(guild) {
         return channel.type === ChannelType.GuildText &&
             channel.name === PROMOTION_EVENTS_CHANNEL_NAME;
     }) || null;
+}
+
+async function findVoiceLevelUpChannel(guild) {
+    const channels = await guild.channels.fetch();
+    const channel = channels.get(VOICE_LEVEL_UP_CHANNEL_ID);
+
+    return channel?.type === ChannelType.GuildText ? channel : null;
 }
 
 async function ensureVoiceLevelInfoBoard(guild, db) {
@@ -540,7 +548,7 @@ async function postVoiceLevelUps(guild, levelUps) {
         return 0;
     }
 
-    const channel = await findPromotionEventsChannel(guild);
+    const channel = await findVoiceLevelUpChannel(guild);
 
     if (!channel) {
         return 0;
