@@ -54,6 +54,12 @@ test('startup resumes and deletes any messages left pending by a crash', () => {
     assert.match(index, /resumePendingWelcomeDmCleanups\(client\)/);
 });
 
+test('Discord client subscribes to DM events for welcome buttons and modals', () => {
+    const index = source('index.js');
+
+    assert.match(index, /GatewayIntentBits\.DirectMessages/);
+});
+
 test('welcome command no longer references the dismiss X', () => {
     const welcome = source('commands/welcome.js');
 
