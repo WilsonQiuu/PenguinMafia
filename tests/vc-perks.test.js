@@ -80,6 +80,20 @@ test('VC perk setup uses valid discord.js permission flags', async () => {
         typeof overwrite.permissions.allow === 'bigint' &&
         typeof overwrite.permissions.deny === 'bigint'
     ));
+    assert.ok(createdOverwrites.every(overwrite =>
+        !(overwrite.permissions.allow & PermissionFlagsBits.Connect) &&
+        !(overwrite.permissions.deny & PermissionFlagsBits.Connect) &&
+        !(overwrite.permissions.allow & PermissionFlagsBits.ViewChannel) &&
+        !(overwrite.permissions.deny & PermissionFlagsBits.ViewChannel)
+    ));
+});
+
+test('the bot never changes who can join voice channels', () => {
+    const vcPerks = fs.readFileSync(path.join(__dirname, '..', 'utils/vcPerks.js'), 'utf8');
+    const bootstrap = fs.readFileSync(path.join(__dirname, '..', 'utils/bootstrap.js'), 'utf8');
+
+    assert.doesNotMatch(vcPerks, /PermissionFlagsBits\.Connect/);
+    assert.doesNotMatch(bootstrap, /PermissionFlagsBits\.Connect/);
 });
 
 test('uses the configured perk unlock levels (defaults 3/5/10, slow mode disabled)', () => {

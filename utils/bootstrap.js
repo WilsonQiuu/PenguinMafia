@@ -2351,7 +2351,6 @@ function botOverwrite(guild) {
             PermissionFlagsBits.SendMessages,
             PermissionFlagsBits.ManageMessages,
             PermissionFlagsBits.ManageChannels,
-            PermissionFlagsBits.Connect,
             PermissionFlagsBits.Speak
         ]
     };
