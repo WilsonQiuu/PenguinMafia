@@ -453,10 +453,18 @@ async function setupGuildOnStartup(guild) {
         updateIcebergChannel,
         updateMembersListChannel
     } = require('./utils/iceberg.js');
-    await syncIcebergMembershipForGuild(guild, sql).catch(error => {
-        console.error(`Could not sync Iceberg membership for ${guild.name}:`);
-        console.error(error);
-    });
+    const runAuxiliaryMemberSync = process.env.STARTUP_AUXILIARY_MEMBER_SYNC === 'true';
+
+    if (runAuxiliaryMemberSync) {
+        logStartupStep('starting auxiliary Iceberg member sync');
+        await syncIcebergMembershipForGuild(guild, sql).catch(error => {
+            console.error(`Could not sync Iceberg membership for ${guild.name}:`);
+            console.error(error);
+        });
+        logStartupStep('auxiliary Iceberg member sync complete');
+    } else {
+        logStartupStep('auxiliary Iceberg member sync skipped');
+    }
     await updateIcebergChannel(guild).catch(error => {
         console.error(`Could not update iceberg channel for ${guild.name}:`);
         console.error(error);
@@ -470,10 +478,17 @@ async function setupGuildOnStartup(guild) {
         console.error(`Could not set up VC perk roles for ${guild.name}:`);
         console.error(error);
     });
-    await syncAllMemberPerks(guild, sql).catch(error => {
-        console.error(`Could not sync VC perks for ${guild.name}:`);
-        console.error(error);
-    });
+
+    if (runAuxiliaryMemberSync) {
+        logStartupStep('starting auxiliary VC perk member sync');
+        await syncAllMemberPerks(guild, sql).catch(error => {
+            console.error(`Could not sync VC perks for ${guild.name}:`);
+            console.error(error);
+        });
+        logStartupStep('auxiliary VC perk member sync complete');
+    } else {
+        logStartupStep('auxiliary VC perk member sync skipped');
+    }
     logStartupStep('VC perk roles ready');
 
     await ensureMinecraftBotLogChannel(guild);
