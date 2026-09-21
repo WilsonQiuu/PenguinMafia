@@ -259,6 +259,9 @@ async function ensureVcPerkRoles(guild, db, options = {}) {
 
     for (const [, channel] of stageChannels) {
         if (stageRole && (stageChannelIds.length === 0 || stageChannelIds.includes(channel.id))) {
+            await upsertChannelOverwrite(channel, stageRole.id, {
+                allow: [PermissionFlagsBits.Connect]
+            });
             // The bot needs MUTE_MEMBERS to decline request-to-speak requests.
             await upsertChannelOverwrite(channel, guild.client.user.id, {
                 allow: [PermissionFlagsBits.MuteMembers],

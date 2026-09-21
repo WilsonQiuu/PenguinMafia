@@ -88,12 +88,61 @@ test('VC perk setup uses valid discord.js permission flags', async () => {
     ));
 });
 
-test('the bot never changes who can join voice channels', () => {
+test('only the Stage perk setup changes who can join voice channels', () => {
     const vcPerks = fs.readFileSync(path.join(__dirname, '..', 'utils/vcPerks.js'), 'utf8');
     const bootstrap = fs.readFileSync(path.join(__dirname, '..', 'utils/bootstrap.js'), 'utf8');
 
-    assert.doesNotMatch(vcPerks, /PermissionFlagsBits\.Connect/);
+    assert.equal((vcPerks.match(/PermissionFlagsBits\.Connect/g) || []).length, 1);
     assert.doesNotMatch(bootstrap, /PermissionFlagsBits\.Connect/);
+});
+
+test('Stage perk setup grants Connect only to the Stage perk role', async () => {
+    const createdOverwrites = [];
+    const stageChannel = {
+        id: 'stage-1',
+        type: ChannelType.GuildStageVoice,
+        permissionOverwrites: {
+            cache: new Collection(),
+            async create(targetId, permissions) {
+                createdOverwrites.push({ targetId, permissions });
+            }
+        }
+    };
+    const roles = new Collection([
+        ['everyone', { id: 'everyone', name: '@everyone' }],
+        ['activities', { id: 'activities', name: 'VC Perks · Activities (Lv 3)' }],
+        ['screen', { id: 'screen', name: 'VC Perks · Screen Share (Lv 5)' }],
+        ['stage', { id: 'stage', name: 'VC Perks · Event Stage (Lv 10)' }]
+    ]);
+    const guild = {
+        roles: {
+            cache: roles,
+            everyone: roles.get('everyone'),
+            async fetch() {
+                return null;
+            },
+            async create() {
+                throw new Error('configured perk roles should be reused');
+            }
+        },
+        channels: {
+            async fetch() {
+                return new Collection([['stage-1', stageChannel]]);
+            }
+        },
+        client: { user: { id: 'bot-1' } }
+    };
+
+    await ensureVcPerkRoles(guild);
+
+    const connectOverwrites = createdOverwrites.filter(overwrite =>
+        overwrite.permissions.allow & PermissionFlagsBits.Connect
+    );
+    assert.deepEqual(connectOverwrites.map(overwrite => overwrite.targetId), ['stage']);
+    assert.ok(createdOverwrites.every(overwrite =>
+        !(overwrite.permissions.allow & PermissionFlagsBits.ViewChannel) &&
+        !(overwrite.permissions.deny & PermissionFlagsBits.ViewChannel)
+    ));
 });
 
 test('uses the configured perk unlock levels (defaults 3/5/10, slow mode disabled)', () => {
