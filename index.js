@@ -52,8 +52,7 @@ const {
     enforceWelcomeMessageGate,
     handleWelcomeButton,
     handleWelcomeModal,
-    resumePendingWelcomeDmCleanups,
-    startOnboardingForMember
+    resumePendingWelcomeDmCleanups
 } = require('./utils/onboarding.js');
 const {
     handleAccountLinkButton,
@@ -695,7 +694,8 @@ async function syncGuildMembersOnStartup(startupContext) {
 
             console.log(
                 `Startup member scan complete for ${guild.name}: ` +
-                `members checked=${missingRankScan.checkedCount}, missing rank welcomes started=${missingRankScan.onboardingStarted}, bots skipped=${missingRankScan.skippedBots}. ` +
+                `members checked=${missingRankScan.checkedCount}, missing rank welcomes started=${missingRankScan.onboardingStarted}, ` +
+                `welcome DMs blocked=${missingRankScan.onboardingDmBlocked}, bots skipped=${missingRankScan.skippedBots}. ` +
                 `Full member sync skipped because FULL_STARTUP_SYNC is not true.`
             );
             return;
@@ -716,6 +716,7 @@ async function syncGuildMembersOnStartup(startupContext) {
     let rankRolesAssigned = 0;
     let staffRanksSynced = 0;
     let onboardingStarted = 0;
+    let onboardingDmBlocked = 0;
     let failedMemberSyncs = 0;
 
     const members = await guild.members.fetch();
@@ -863,11 +864,24 @@ async function syncGuildMembersOnStartup(startupContext) {
                 logStartupMemberStep(guild, memberIndex, members.size, member, 'starting onboarding', memberStartedAt);
             }
 
-            await startOnboardingForMember(member, {
+            const welcomeDelivery = await deliverOnboardingForMember(member, {
                 channelCache: await getStartupChannelCache(),
                 recruiterId: rows[0].parent_discord_id,
                 refresh: true
             });
+
+            if (!welcomeDelivery.delivered) {
+                if (welcomeDelivery.dmBlocked) {
+                    onboardingDmBlocked++;
+                }
+
+                if (shouldLogMemberSync) {
+                    logStartupMemberStep(guild, memberIndex, members.size, member, 'onboarding DM unavailable', memberStartedAt);
+                }
+
+                logMemberSyncProgress(guild, progressState, memberIndex, members.size);
+                continue;
+            }
 
             if (shouldLogMemberSync) {
                 logStartupMemberStep(guild, memberIndex, members.size, member, 'onboarding ready', memberStartedAt);
@@ -927,7 +941,8 @@ async function syncGuildMembersOnStartup(startupContext) {
         `staff roles created=${staffRolesCreated}, staff roles updated=${staffRolesUpdated}, ` +
         `players added=${addedCount}, players updated=${updatedCount}, ` +
         `rank roles assigned=${rankRolesAssigned}, staff ranks synced=${staffRanksSynced}, onboarding started=${onboardingStarted}, ` +
-        `bots skipped=${skippedBots}, member sync failures=${failedMemberSyncs}, missing soldiers removed=${removedMissingSoldiers.length}.`
+        `onboarding DMs blocked=${onboardingDmBlocked}, bots skipped=${skippedBots}, ` +
+        `member sync failures=${failedMemberSyncs}, missing soldiers removed=${removedMissingSoldiers.length}.`
     );
 
     const deletedWelcomeChannels = await cleanupWelcomeChannelsForMissingMembers(guild, members);
@@ -962,6 +977,7 @@ async function startOnboardingForMembersMissingRankRole(guild, rankRoles) {
     let checkedCount = 0;
     let skippedBots = 0;
     let onboardingStarted = 0;
+    let onboardingDmBlocked = 0;
 
     for (const [, member] of members) {
         if (member.user.bot) {
@@ -1021,18 +1037,24 @@ async function startOnboardingForMembersMissingRankRole(guild, rankRoles) {
             channelCache = await guild.channels.fetch();
         }
 
-        await startOnboardingForMember(member, {
+        const welcomeDelivery = await deliverOnboardingForMember(member, {
             channelCache,
             recruiterId: rows[0]?.parent_discord_id,
             refresh: true
         });
-        onboardingStarted++;
+
+        if (welcomeDelivery.delivered) {
+            onboardingStarted++;
+        } else if (welcomeDelivery.dmBlocked) {
+            onboardingDmBlocked++;
+        }
     }
 
     return {
         checkedCount,
         skippedBots,
-        onboardingStarted
+        onboardingStarted,
+        onboardingDmBlocked
     };
 }
 

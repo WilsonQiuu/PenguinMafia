@@ -76,9 +76,10 @@ test('new joins refresh welcome DMs and report blocked delivery publicly', () =>
 
 test('startup recovery refreshes welcome DMs for currently affected members', () => {
     const index = source('index.js');
-    const startupCalls = index.match(/startOnboardingForMember\(member, \{[\s\S]*?refresh: true[\s\S]*?\}\);/g) || [];
+    const startupCalls = index.match(/deliverOnboardingForMember\(member, \{[\s\S]*?refresh: true[\s\S]*?\}\);/g) || [];
 
     assert.ok(startupCalls.length >= 2);
+    assert.match(index, /onboarding DMs blocked=/);
 });
 
 test('welcome command no longer references the dismiss X', () => {
