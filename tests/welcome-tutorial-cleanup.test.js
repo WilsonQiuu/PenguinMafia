@@ -2,6 +2,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const {
+    GatewayIntentBits,
+    Partials
+} = require('discord.js');
+const {
+    discordClientOptions
+} = require('../utils/discordClientOptions.js');
 
 function source(relativePath) {
     return fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf8');
@@ -55,9 +62,23 @@ test('startup resumes and deletes any messages left pending by a crash', () => {
 });
 
 test('Discord client subscribes to DM events for welcome buttons and modals', () => {
+    assert.ok(discordClientOptions.intents.includes(GatewayIntentBits.DirectMessages));
+    assert.ok(discordClientOptions.partials.includes(Partials.Channel));
+});
+
+test('new joins refresh welcome DMs and report blocked delivery publicly', () => {
     const index = source('index.js');
 
-    assert.match(index, /GatewayIntentBits\.DirectMessages/);
+    assert.match(index, /deliverOnboardingForMember\(member, \{/);
+    assert.match(index, /refresh: true/);
+    assert.match(index, /Enable \*\*Direct Messages\*\*/);
+});
+
+test('startup recovery refreshes welcome DMs for currently affected members', () => {
+    const index = source('index.js');
+    const startupCalls = index.match(/startOnboardingForMember\(member, \{[\s\S]*?refresh: true[\s\S]*?\}\);/g) || [];
+
+    assert.ok(startupCalls.length >= 2);
 });
 
 test('welcome command no longer references the dismiss X', () => {

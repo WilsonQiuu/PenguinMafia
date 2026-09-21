@@ -48,6 +48,7 @@ const {
     cleanupLegacyOnboardingChannels,
     cleanupWelcomeChannelForMember,
     cleanupWelcomeChannelsForMissingMembers,
+    deliverOnboardingForMember,
     enforceWelcomeMessageGate,
     handleWelcomeButton,
     handleWelcomeModal,
@@ -147,8 +148,6 @@ const {
     REST,
     Routes,
     Client,
-    GatewayIntentBits,
-    Partials,
     Collection,
     ActivityType,
     PresenceUpdateStatus,
@@ -157,27 +156,11 @@ const {
     AuditLogEvent,
     ChannelType
 } = require('discord.js');
+const {
+    discordClientOptions
+} = require('./utils/discordClientOptions.js');
 
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.GuildMessageReactions,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildInvites,
-        GatewayIntentBits.GuildModeration,
-        GatewayIntentBits.GuildVoiceStates,
-        GatewayIntentBits.DirectMessages
-    ],
-    partials: [
-        Partials.Channel,
-        Partials.GuildMember,
-        Partials.Message,
-        Partials.Reaction,
-        Partials.User
-    ]
-});
+const client = new Client(discordClientOptions);
 
 client.commands = new Collection();
 client.invites = new Collection();
@@ -882,7 +865,8 @@ async function syncGuildMembersOnStartup(startupContext) {
 
             await startOnboardingForMember(member, {
                 channelCache: await getStartupChannelCache(),
-                recruiterId: rows[0].parent_discord_id
+                recruiterId: rows[0].parent_discord_id,
+                refresh: true
             });
 
             if (shouldLogMemberSync) {
@@ -1039,7 +1023,8 @@ async function startOnboardingForMembersMissingRankRole(guild, rankRoles) {
 
         await startOnboardingForMember(member, {
             channelCache,
-            recruiterId: rows[0]?.parent_discord_id
+            recruiterId: rows[0]?.parent_discord_id,
+            refresh: true
         });
         onboardingStarted++;
     }
@@ -1269,6 +1254,21 @@ function welcomeMemberName(member) {
     return escapeDiscordMarkdown(member?.displayName || member?.user?.globalName || member?.user?.username || 'New player');
 }
 
+function welcomeDmStatusLine(delivery) {
+    if (delivery.delivered) {
+        return '\n📬 Check your DMs to begin the welcome tutorial.';
+    }
+
+    if (delivery.dmBlocked) {
+        return (
+            '\n⚠️ I could not send your welcome DM. Enable **Direct Messages** in this server’s ' +
+            'Privacy Settings, then send a message in the server to retry.'
+        );
+    }
+
+    return '\n⚠️ Your welcome DM could not be delivered. Please ask Staff to retry it.';
+}
+
 async function processJoinBatch(guild) {
     const guildId = guild.id;
     const batch = client.joinBatches.get(guildId);
@@ -1360,12 +1360,15 @@ async function processJoinBatch(guild) {
                 return '';
             });
 
+            let welcomeDelivery = { delivered: true };
+
             if (welcomeCompleted) {
                 await syncMemberRoleFromDatabase(member);
             } else {
-                await startOnboardingForMember(member, {
+                welcomeDelivery = await deliverOnboardingForMember(member, {
                     recruiterId: inviterId,
-                    inviterDisplayName
+                    inviterDisplayName,
+                    refresh: true
                 });
             }
 
@@ -1377,7 +1380,8 @@ async function processJoinBatch(guild) {
                         `You are member **#${guild.memberCount}** in the server.\n` +
                         `You were recruited by **${inviter}**.\n\n` +
                         `**${welcomeMemberName(member)}** is now a recruit of **${safeInviterDisplayName}**.\n` +
-                        `${recruiterTeamLine}`,
+                        `${recruiterTeamLine}` +
+                        `${welcomeCompleted ? '' : welcomeDmStatusLine(welcomeDelivery)}`,
                     allowedMentions: {
                         users: [member.id, inviter.id],
                         parse: []
@@ -1433,10 +1437,14 @@ async function processJoinBatch(guild) {
                 welcomeCompleted
             } = await saveMemberAsOrphan(member);
 
+            let welcomeDelivery = { delivered: true };
+
             if (welcomeCompleted) {
                 await syncMemberRoleFromDatabase(member);
             } else {
-                await startOnboardingForMember(member);
+                welcomeDelivery = await deliverOnboardingForMember(member, {
+                    refresh: true
+                });
             }
 
             await sendWelcomeMessage(
@@ -1446,7 +1454,8 @@ async function processJoinBatch(guild) {
                         `🐧🎉 Welcome **${welcomeMemberName(member)}** ${member} to the **Penguin Mafia**!\n\n` +
                         `You are member **#${guild.memberCount}** in the server.\n\n` +
                         `**${welcomeMemberName(member)}** joined the server.\n\n` +
-                        `If you invited them, please tell them to join your team with \`/join recruiter:@YourDiscord\`.`,
+                        `If you invited them, please tell them to join your team with \`/join recruiter:@YourDiscord\`.` +
+                        `${welcomeCompleted ? '' : welcomeDmStatusLine(welcomeDelivery)}`,
                     allowedMentions: {
                         users: [member.id],
                         parse: []

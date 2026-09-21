@@ -192,6 +192,74 @@ test('live onboarding starts in DMs and never creates a guild channel', async ()
     assert.match(sent[0].content, /Welcome to the Penguin Mafia/);
 });
 
+test('welcome delivery identifies Discord privacy blocks without throwing', async () => {
+    const originalConsoleError = console.error;
+    console.error = () => {};
+
+    try {
+        const result = await onboarding.deliverOnboardingForMember({
+            id: '123456789012345',
+            user: {
+                tag: 'PrivatePenguin'
+            },
+            async createDM() {
+                throw Object.assign(new Error('Cannot send messages to this user'), {
+                    code: 50007
+                });
+            }
+        });
+
+        assert.equal(result.delivered, false);
+        assert.equal(result.dmBlocked, true);
+        assert.equal(result.error.code, 50007);
+    } finally {
+        console.error = originalConsoleError;
+    }
+});
+
+test('refreshed welcome delivery removes stale tutorial messages before sending', async () => {
+    const calls = [];
+    const botUser = { id: 'bot-1' };
+    const staleMessage = {
+        id: 'stale-welcome',
+        author: botUser,
+        client: { user: botUser },
+        content: '',
+        components: [{ components: [{ customId: 'welcome:rank_up:123456789012345:live' }] }],
+        async delete() {
+            calls.push('delete-stale');
+        }
+    };
+    const dm = {
+        messages: {
+            async fetch() {
+                return new Collection([['stale-welcome', staleMessage]]);
+            }
+        },
+        async send() {
+            calls.push('send-fresh');
+        }
+    };
+    const member = {
+        id: '123456789012345',
+        user: {
+            id: '123456789012345',
+            username: 'ReturningPenguin',
+            tag: 'ReturningPenguin'
+        },
+        async createDM() {
+            return dm;
+        }
+    };
+
+    const result = await onboarding.deliverOnboardingForMember(member, {
+        refresh: true
+    });
+
+    assert.equal(result.delivered, true);
+    assert.deepEqual(calls, ['delete-stale', 'send-fresh']);
+});
+
 test('legacy welcome, trainer, and trial-mod rooms are deleted with an empty processing category', async () => {
     const deleted = [];
     const category = {

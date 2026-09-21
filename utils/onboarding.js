@@ -637,6 +637,31 @@ async function startOnboardingForMember(member, context = {}) {
     return channel;
 }
 
+async function deliverOnboardingForMember(member, context = {}) {
+    try {
+        const channel = await startOnboardingForMember(member, context);
+        return {
+            channel,
+            delivered: true,
+            dmBlocked: false,
+            error: null
+        };
+    } catch (error) {
+        const dmBlocked = error?.code === 50007;
+        const reason = dmBlocked
+            ? 'Discord blocked the DM because the member does not accept direct messages from this server'
+            : error?.message || 'Unknown DM delivery error';
+
+        console.error(`Could not deliver welcome DM to ${member.user.tag}: ${reason}`);
+        return {
+            channel: null,
+            delivered: false,
+            dmBlocked,
+            error
+        };
+    }
+}
+
 async function enforceWelcomeMessageGate(message) {
     if (!message?.guild || !message.member || message.author?.bot || message.webhookId) {
         return false;
@@ -1226,6 +1251,7 @@ module.exports = {
     scheduleTestWelcomeDmCleanup,
     startTestOnboardingInDm,
     startOnboardingForMember,
+    deliverOnboardingForMember,
     handleWelcomeButton,
     handleWelcomeModal,
     _test: {

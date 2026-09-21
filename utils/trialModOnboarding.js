@@ -194,7 +194,9 @@ async function startTrialModOnboardingForMember(member, context = {}) {
     return channel;
 }
 
-async function handleTrialModButton(interaction) {
+async function handleTrialModButton(interaction, dependencies = {}) {
+    const scheduleDmDelete = dependencies.scheduleDmDelete || scheduleDmOnboardingMessageDelete;
+    const scheduleChannelDelete = dependencies.scheduleChannelDelete || scheduleTrialModChannelDelete;
     const parts = interaction.customId.split(':');
 
     if (parts[0] !== BUTTON_PREFIX) return false;
@@ -246,9 +248,9 @@ async function handleTrialModButton(interaction) {
             components: []
         });
         if (interaction.channel?.isDMBased?.()) {
-            await scheduleDmOnboardingMessageDelete(interaction, 10);
+            await scheduleDmDelete(interaction, 10);
         } else {
-            await scheduleTrialModChannelDelete(interaction);
+            await scheduleChannelDelete(interaction);
         }
         return true;
     }

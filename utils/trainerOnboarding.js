@@ -254,7 +254,12 @@ async function resolveTrainerMember(interaction, targetUserId) {
     throw new Error('Could not find this Trainer in a shared Penguin Mafia server.');
 }
 
-async function handleTrainerButton(interaction) {
+async function handleTrainerButton(interaction, dependencies = {}) {
+    const scheduleDmDelete = dependencies.scheduleDmDelete || scheduleDmOnboardingMessageDelete;
+    const scheduleChannelDelete = dependencies.scheduleChannelDelete || scheduleTrainerChannelDelete;
+    const resolveMember = dependencies.resolveMember || resolveTrainerMember;
+    const ensureRole = dependencies.ensureRole || ensureTrainerRole;
+    const postPromotionEvent = dependencies.postPromotionEvent || postTrainerPromotionEvent;
     const parts = interaction.customId.split(':');
 
     if (parts[0] !== BUTTON_PREFIX) return false;
@@ -276,22 +281,22 @@ async function handleTrainerButton(interaction) {
             components: []
         });
         if (interaction.channel?.isDMBased?.()) {
-            await scheduleDmOnboardingMessageDelete(interaction, 10);
+            await scheduleDmDelete(interaction, 10);
         } else {
-            await scheduleTrainerChannelDelete(interaction, 'Penguin Mafia Trainer onboarding rejected');
+            await scheduleChannelDelete(interaction, 'Penguin Mafia Trainer onboarding rejected');
         }
         return true;
     }
 
     if (action === 'accept') {
-        const member = await resolveTrainerMember(interaction, targetUserId);
-        const { trainerRole } = await ensureTrainerRole(member.guild);
+        const member = await resolveMember(interaction, targetUserId);
+        const { trainerRole } = await ensureRole(member.guild);
         const wasAlreadyTrainer = member.roles.cache.has(trainerRole.id);
 
         if (!wasAlreadyTrainer) {
             await member.roles.add(trainerRole, 'Penguin Mafia Trainer accepted onboarding');
 
-            await postTrainerPromotionEvent(member.guild, {
+            await postPromotionEvent(member.guild, {
                 playerId: targetUserId
             }).catch(error => {
                 console.error('Promotion event channel post failed after Trainer acceptance:');
@@ -340,9 +345,9 @@ async function handleTrainerButton(interaction) {
             components: []
         });
         if (interaction.channel?.isDMBased?.()) {
-            await scheduleDmOnboardingMessageDelete(interaction, 10);
+            await scheduleDmDelete(interaction, 10);
         } else {
-            await scheduleTrainerChannelDelete(interaction);
+            await scheduleChannelDelete(interaction);
         }
         return true;
     }
