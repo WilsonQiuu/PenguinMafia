@@ -4,7 +4,8 @@ const path = require('node:path');
 const test = require('node:test');
 const {
     ChannelType,
-    Collection
+    Collection,
+    PermissionFlagsBits
 } = require('discord.js');
 
 // Ensure deterministic defaults regardless of the environment running the tests.
@@ -19,6 +20,7 @@ for (const key of [
 }
 
 const {
+    ensureVcPerkRoles,
     handleStageRequestToSpeak,
     isPerkStageChannel,
     nextPerkAtLevel,
@@ -30,6 +32,55 @@ const {
     syncLevelUpPerks,
     unlockedPerksDmContent
 } = require('../utils/vcPerks.js');
+
+test('VC perk setup uses valid discord.js permission flags', async () => {
+    const createdOverwrites = [];
+    const channel = {
+        id: 'voice-1',
+        type: ChannelType.GuildVoice,
+        permissionOverwrites: {
+            cache: new Collection(),
+            async create(targetId, permissions) {
+                createdOverwrites.push({ targetId, permissions });
+            }
+        }
+    };
+    const roles = new Collection([
+        ['everyone', { id: 'everyone', name: '@everyone' }],
+        ['activities', { id: 'activities', name: 'VC Perks · Activities (Lv 3)' }],
+        ['screen', { id: 'screen', name: 'VC Perks · Screen Share (Lv 5)' }],
+        ['stage', { id: 'stage', name: 'VC Perks · Event Stage (Lv 10)' }]
+    ]);
+    const guild = {
+        roles: {
+            cache: roles,
+            everyone: roles.get('everyone'),
+            async fetch() {
+                return null;
+            },
+            async create() {
+                throw new Error('configured perk roles should be reused');
+            }
+        },
+        channels: {
+            async fetch() {
+                return new Collection([['voice-1', channel]]);
+            }
+        },
+        client: { user: { id: 'bot-1' } }
+    };
+
+    const result = await ensureVcPerkRoles(guild);
+    const everyoneOverwrite = createdOverwrites.find(overwrite => overwrite.targetId === 'everyone');
+
+    assert.equal(result.channelsUpdated, 1);
+    assert.ok(everyoneOverwrite.permissions.deny & PermissionFlagsBits.Stream);
+    assert.ok(everyoneOverwrite.permissions.deny & PermissionFlagsBits.UseEmbeddedActivities);
+    assert.ok(createdOverwrites.every(overwrite =>
+        typeof overwrite.permissions.allow === 'bigint' &&
+        typeof overwrite.permissions.deny === 'bigint'
+    ));
+});
 
 test('uses the configured perk unlock levels (defaults 3/5/10, slow mode disabled)', () => {
     assert.deepEqual(perkLevels(), {

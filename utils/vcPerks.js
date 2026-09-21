@@ -228,28 +228,28 @@ async function ensureVcPerkRoles(guild, db, options = {}) {
     for (const [, channel] of voiceChannels) {
         await upsertChannelOverwrite(channel, everyoneId, {
             deny: [
-                PermissionFlagsBits.STREAM,
-                PermissionFlagsBits.USE_EMBEDDED_ACTIVITIES
+                PermissionFlagsBits.Stream,
+                PermissionFlagsBits.UseEmbeddedActivities
             ]
         });
 
         if (screenShareRole) {
             await upsertChannelOverwrite(channel, screenShareRole.id, {
-                allow: [PermissionFlagsBits.STREAM]
+                allow: [PermissionFlagsBits.Stream]
             });
         }
 
         if (activitiesRole) {
             await upsertChannelOverwrite(channel, activitiesRole.id, {
-                allow: [PermissionFlagsBits.USE_EMBEDDED_ACTIVITIES]
+                allow: [PermissionFlagsBits.UseEmbeddedActivities]
             });
         }
 
         for (const roleId of protectedRoleIds) {
             await upsertChannelOverwrite(channel, roleId, {
                 allow: [
-                    PermissionFlagsBits.STREAM,
-                    PermissionFlagsBits.USE_EMBEDDED_ACTIVITIES
+                    PermissionFlagsBits.Stream,
+                    PermissionFlagsBits.UseEmbeddedActivities
                 ]
             });
         }
@@ -260,11 +260,11 @@ async function ensureVcPerkRoles(guild, db, options = {}) {
     for (const [, channel] of stageChannels) {
         if (stageRole && (stageChannelIds.length === 0 || stageChannelIds.includes(channel.id))) {
             await upsertChannelOverwrite(channel, stageRole.id, {
-                allow: [PermissionFlagsBits.CONNECT]
+                allow: [PermissionFlagsBits.Connect]
             });
             // The bot needs MUTE_MEMBERS to decline request-to-speak requests.
             await upsertChannelOverwrite(channel, guild.client.user.id, {
-                allow: [PermissionFlagsBits.MUTE_MEMBERS],
+                allow: [PermissionFlagsBits.MuteMembers],
                 type: 1
             });
             channelsUpdated++;
@@ -274,7 +274,7 @@ async function ensureVcPerkRoles(guild, db, options = {}) {
     for (const [, channel] of textChannels) {
         if (slowModeRole && (slowModeChannelIds.length === 0 || slowModeChannelIds.includes(channel.id))) {
             await upsertChannelOverwrite(channel, slowModeRole.id, {
-                allow: [PermissionFlagsBits.MANAGE_MESSAGES]
+                allow: [PermissionFlagsBits.ManageMessages]
             });
             channelsUpdated++;
         }
