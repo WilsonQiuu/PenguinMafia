@@ -536,12 +536,14 @@ test('test-mode completion cleans up every welcome message in the DM', async () 
     assert.deepEqual(loadPendingWelcomeDmCleanups(), {}, 'cleanup state cleared after success');
 });
 
-test('/welcome runs a Don-only test flow in DMs', () => {
+test('/welcome supports self-service and Don-targeted DM recovery', () => {
     const source = fs.readFileSync(path.join(__dirname, '..', 'commands/welcome.js'), 'utf8');
 
-    assert.match(source, /startTestOnboardingInDm/);
+    assert.match(source, /deliverOnboardingForMember/);
+    assert.match(source, /\.setName\('player'\)/);
     assert.match(source, /isDon\(interaction\.user\.id\)/);
-    assert.doesNotMatch(source, /startOnboardingForMember/);
+    assert.match(source, /refresh: true/);
+    assert.match(source, /must enable \*\*Direct Messages\*\*/);
 });
 
 test('welcome tutorial messages are auto-deleted and carry no dismiss X', () => {

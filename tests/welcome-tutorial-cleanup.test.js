@@ -85,6 +85,6 @@ test('welcome command no longer references the dismiss X', () => {
     const welcome = source('commands/welcome.js');
 
     assert.doesNotMatch(welcome, /✕/);
-    assert.match(welcome, /cleans the DM up automatically/);
-    assert.match(welcome, /when it comes back online/);
+    assert.match(welcome, /fresh welcome tutorial was sent/);
+    assert.match(welcome, /Welcome DM could not be delivered/);
 });
