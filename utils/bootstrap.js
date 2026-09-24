@@ -297,6 +297,9 @@ async function ensureDatabaseSchema(sql) {
             staff_rank_name text references staff_ranks(name),
             ban_points_remaining int not null default 0 check (ban_points_remaining >= 0),
             status text not null default 'active',
+            is_in_server boolean not null default true,
+            left_server_at timestamptz,
+            last_full_synced_at timestamptz,
             welcome_reminder_sent_at timestamptz,
             account_link_reminder_sent_at timestamptz,
             account_link_reminders_disabled boolean not null default false,
@@ -383,6 +386,21 @@ async function ensureDatabaseSchema(sql) {
     await sql`
         alter table players
         add column if not exists payout_notifications_enabled boolean not null default true
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists is_in_server boolean not null default true
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists left_server_at timestamptz
+    `;
+
+    await sql`
+        alter table players
+        add column if not exists last_full_synced_at timestamptz
     `;
 
     await sql`

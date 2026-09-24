@@ -728,6 +728,7 @@ async function syncGuildMembersOnStartup(startupContext) {
     let addedCount = 0;
     let updatedCount = 0;
     let skippedBots = 0;
+    let skippedRecentSync = 0;
     let rankRolesAssigned = 0;
     let staffRanksSynced = 0;
     let onboardingStarted = 0;
@@ -736,6 +737,30 @@ async function syncGuildMembersOnStartup(startupContext) {
 
     const members = await guild.members.fetch();
     logStartupStep(`fetched ${members.size} members`);
+
+    // Full member sync used to do a DB upsert plus Discord role/onboarding
+    // calls for every member on every startup, even when nothing had
+    // changed - with ~900 members at 1-2.5s each that's many minutes of
+    // pure overhead on a routine restart. Batch-fetch who was already
+    // synced recently so unchanged members can skip straight through.
+    const memberIds = [...members.keys()];
+    const recentSyncWindowMs = Number(
+        process.env.STARTUP_MEMBER_RESYNC_INTERVAL_MS || 7 * 24 * 60 * 60 * 1000
+    );
+    const recentSyncCutoff = new Date(Date.now() - recentSyncWindowMs);
+    const existingPlayerRows = memberIds.length > 0
+        ? await sql`
+            select discord_id, is_in_server, last_full_synced_at
+            from players
+            where discord_id in ${sql(memberIds)}
+        `
+        : [];
+    const existingPlayerByDiscordId = new Map(
+        existingPlayerRows.map(row => [row.discord_id, row])
+    );
+    logStartupStep(
+        `fetched ${existingPlayerByDiscordId.size} existing player records for recent-sync check`
+    );
 
     let memberIndex = 0;
     const progressState = {
@@ -760,6 +785,22 @@ async function syncGuildMembersOnStartup(startupContext) {
             skippedBots++;
             if (shouldLogMemberSync) {
                 logStartupMemberStep(guild, memberIndex, members.size, member, 'skipped bot');
+            }
+            logMemberSyncProgress(guild, progressState, memberIndex, members.size);
+            continue;
+        }
+
+        const existingPlayerRow = existingPlayerByDiscordId.get(member.user.id);
+        const recentlySynced =
+            existingPlayerRow != null &&
+            existingPlayerRow.is_in_server === true &&
+            existingPlayerRow.last_full_synced_at != null &&
+            existingPlayerRow.last_full_synced_at > recentSyncCutoff;
+
+        if (recentlySynced) {
+            skippedRecentSync++;
+            if (shouldLogMemberSync) {
+                logStartupMemberStep(guild, memberIndex, members.size, member, 'skipped (synced recently)');
             }
             logMemberSyncProgress(guild, progressState, memberIndex, members.size);
             continue;
@@ -792,7 +833,8 @@ async function syncGuildMembersOnStartup(startupContext) {
                 claims_available,
                 rank_name,
                 status,
-                welcome_completed
+                welcome_completed,
+                last_full_synced_at
             )
             values (
                 ${member.user.id},
@@ -803,12 +845,16 @@ async function syncGuildMembersOnStartup(startupContext) {
                 0,
                 ${DEFAULT_RANK_NAME},
                 ${isDon ? 'active' : 'orphan'},
-                ${isDon}
+                ${isDon},
+                now()
             )
             on conflict (discord_id) do update
             set
                 discord_username = excluded.discord_username,
                 discord_display_name = excluded.discord_display_name,
+                is_in_server = true,
+                left_server_at = null,
+                last_full_synced_at = now(),
                 updated_at = now()
             returning
                 rank_name,
@@ -957,6 +1003,7 @@ async function syncGuildMembersOnStartup(startupContext) {
         `players added=${addedCount}, players updated=${updatedCount}, ` +
         `rank roles assigned=${rankRolesAssigned}, staff ranks synced=${staffRanksSynced}, onboarding started=${onboardingStarted}, ` +
         `onboarding DMs blocked=${onboardingDmBlocked}, bots skipped=${skippedBots}, ` +
+        `skipped (synced within ${Math.round(recentSyncWindowMs / (24 * 60 * 60 * 1000))}d)=${skippedRecentSync}, ` +
         `member sync failures=${failedMemberSyncs}, missing soldiers removed=${removedMissingSoldiers.length}.`
     );
 
